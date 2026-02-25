@@ -1,6 +1,6 @@
 import * as React from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
-import { Menu, Bell, Home, Map, User, Settings, LogOut, ChevronRight, FolderOpen, MessageCircle, Info } from "lucide-react";
+import { Menu, Bell, Home, Map, User, Settings, LogOut, ChevronRight, FolderOpen, MessageCircle, Info, Sun, Moon, Laptop } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
@@ -44,6 +44,66 @@ export function Navbar() {
     width: number;
     left: number;
   }>({ width: 0, left: 0 });
+
+  type ThemeMode = "light" | "dark" | "system";
+  const [themeMode, setThemeMode] = React.useState<ThemeMode>("system");
+
+  // Инициализация темы из localStorage / системы
+  React.useEffect(() => {
+    const stored = window.localStorage.getItem("theme-mode") as ThemeMode | null;
+    const systemPrefersDark = window.matchMedia?.("(prefers-color-scheme: dark)").matches;
+    const initial: ThemeMode = stored || "system";
+
+    const apply = (mode: ThemeMode) => {
+      const root = document.documentElement;
+      if (mode === "dark" || (mode === "system" && systemPrefersDark)) {
+        root.classList.add("dark");
+      } else {
+        root.classList.remove("dark");
+      }
+    };
+
+    setThemeMode(initial);
+    apply(initial);
+
+    if (!window.matchMedia) return;
+
+    const listener = (e: MediaQueryListEvent) => {
+      if (themeMode === "system") {
+        const root = document.documentElement;
+        if (e.matches) {
+          root.classList.add("dark");
+        } else {
+          root.classList.remove("dark");
+        }
+      }
+    };
+
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    mq.addEventListener("change", listener);
+
+    return () => mq.removeEventListener("change", listener);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleThemeChange = (mode: ThemeMode) => {
+    setThemeMode(mode);
+    window.localStorage.setItem("theme-mode", mode);
+
+    const root = document.documentElement;
+    if (mode === "dark") {
+      root.classList.add("dark");
+    } else if (mode === "light") {
+      root.classList.remove("dark");
+    } else {
+      const systemPrefersDark = window.matchMedia?.("(prefers-color-scheme: dark)").matches;
+      if (systemPrefersDark) {
+        root.classList.add("dark");
+      } else {
+        root.classList.remove("dark");
+      }
+    }
+  };
 
   const updateIndicator = React.useCallback(() => {
     if (rafIdRef.current !== null) {
@@ -226,6 +286,38 @@ export function Navbar() {
                       >
                         О проекте
                       </NavLink>
+
+                      {/* Тема оформления */}
+                      <div className="px-4 pt-4 pb-2 mt-1">
+                        <span className="text-xs font-medium text-blue-400 uppercase tracking-wider">
+                          Тема
+                        </span>
+                      </div>
+                      <div className="px-4 pb-2">
+                        <div className="flex items-center justify-between rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-800">
+                          {(["light", "system", "dark"] as ThemeMode[]).map((mode) => (
+                            <button
+                              key={mode}
+                              type="button"
+                              onClick={() => handleThemeChange(mode)}
+                              className={`flex-1 py-2 text-xs font-semibold rounded-xl transition-all duration-150 ${
+                                themeMode === mode
+                                  ? "bg-white text-slate-900 dark:bg-slate-800 dark:text-slate-50 shadow-sm"
+                                  : "text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100"
+                              }`}
+                            >
+                              <span className="flex items-center justify-center gap-1">
+                                {mode === "light" && <Sun className="h-4 w-4" />}
+                                {mode === "dark" && <Moon className="h-4 w-4" />}
+                                {mode === "system" && <Laptop className="h-4 w-4" />}
+                                {mode === "light" && "Светлая"}
+                                {mode === "dark" && "Тёмная"}
+                                {mode === "system" && "Авто"}
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
 
                       {isAuthenticated && (
                         <>
