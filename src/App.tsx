@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { Navbar } from './components/Layout/Navbar';
 import RubricsScreen from './pages/Rubrics/RubricsScreen';
+import ProfileScreen from './pages/Profile/ProfileScreen';
 import './index.css';
 
 // Если хочешь свой фон — укажи путь к картинке здесь.
@@ -24,12 +25,13 @@ function App() {
         {/* Контент поверх фона */}
         <div className="relative z-10 min-h-screen bg-white/50 dark:bg-slate-900/70">
           <Navbar />
-          <main className="pt-16 pb-24">
+          <main className="pt-8 pb-24">
             <Routes>
               <Route 
                 path="/" 
                 element={<RubricsScreen onRubricSelect={handleRubricSelect} />} 
               />
+              <Route path="/profile" element={<ProfileScreen />} />
               <Route path="/map" element={<div className="p-8">Карта</div>} />
               <Route path="/about" element={<div className="p-8">О проекте</div>} />
               <Route path="/incidents" element={<div className="p-8">Все обращения</div>} />

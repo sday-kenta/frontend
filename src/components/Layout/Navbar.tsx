@@ -1,9 +1,16 @@
 import * as React from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
-import { Menu, Bell, Home, Map, User, Settings, LogOut, ChevronRight, FolderOpen, MessageCircle, Info, Sun, Moon, Laptop } from "lucide-react";
+import { Menu, Bell, Home, Map, Settings, LogOut, ChevronRight, FolderOpen, MessageCircle, Info, Sun, Moon, Laptop } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
+
+type StoredProfile = {
+  nickname: string;
+  avatarDataUrl: string | null;
+};
+
+const PROFILE_STORAGE_KEY = "user-profile";
 export function Navbar() {
   const [isOpen, setIsOpen] = React.useState(false);
   const [notifications] = React.useState(3);
@@ -36,7 +43,7 @@ export function Navbar() {
     [bottomNavItems, location.pathname]
   );
 
-  const indicatorIndex = activeIndex === -1 ? 0 : activeIndex;
+  const indicatorIndex = activeIndex;
   const itemRefs = React.useRef<(HTMLAnchorElement | null)[]>([]);
   const containerRef = React.useRef<HTMLDivElement | null>(null);
   const rafIdRef = React.useRef<number | null>(null);
@@ -44,6 +51,8 @@ export function Navbar() {
     width: number;
     left: number;
   }>({ width: 0, left: 0 });
+  const [profileAvatarUrl, setProfileAvatarUrl] = React.useState<string | null>(null);
+  const [profileNickname, setProfileNickname] = React.useState("");
 
   type ThemeMode = "light" | "dark" | "system";
   const [themeMode, setThemeMode] = React.useState<ThemeMode>("system");
@@ -86,6 +95,11 @@ export function Navbar() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const profileInitials = React.useMemo(() => {
+    if (!profileNickname.trim()) return "👤";
+    return profileNickname.trim()[0]?.toUpperCase() ?? "👤";
+  }, [profileNickname]);
+
   const handleThemeChange = (mode: ThemeMode) => {
     setThemeMode(mode);
     window.localStorage.setItem("theme-mode", mode);
@@ -104,6 +118,37 @@ export function Navbar() {
       }
     }
   };
+
+  React.useEffect(() => {
+    const loadProfile = () => {
+      try {
+        const raw = window.localStorage.getItem(PROFILE_STORAGE_KEY);
+        if (!raw) {
+          setProfileAvatarUrl(null);
+          setProfileNickname("");
+          return;
+        }
+
+        const parsed = JSON.parse(raw) as Partial<StoredProfile>;
+        setProfileAvatarUrl(parsed.avatarDataUrl ?? null);
+        setProfileNickname(parsed.nickname ?? "");
+      } catch {
+        // игнорируем ошибки чтения профиля
+      }
+    };
+
+    loadProfile();
+
+    const handleProfileUpdated = () => {
+      loadProfile();
+    };
+
+    window.addEventListener("profile-updated", handleProfileUpdated as EventListener);
+
+    return () => {
+      window.removeEventListener("profile-updated", handleProfileUpdated as EventListener);
+    };
+  }, []);
 
   const updateIndicator = React.useCallback(() => {
     if (rafIdRef.current !== null) {
@@ -145,7 +190,7 @@ export function Navbar() {
     };
   }, [updateIndicator]);
   
-  const isAuthenticated = false;
+  const isAuthenticated = true;
 
   const handleAvatarClick = () => {
     if (isAuthenticated) {
@@ -171,8 +216,15 @@ export function Navbar() {
           {/* Слева - аватар */}
           <button onClick={handleAvatarClick} className="focus:outline-none group">
             <Avatar className="h-9 w-9 cursor-pointer ring-2 ring-white/50 dark:ring-slate-700 group-hover:ring-blue-300 transition-all duration-300">
+              {profileAvatarUrl ? (
+                <AvatarImage
+                  src={profileAvatarUrl}
+                  alt="Аватар пользователя"
+                  className="object-cover"
+                />
+              ) : null}
               <AvatarFallback className="bg-gradient-to-br from-blue-500/90 to-blue-600/90 text-white text-sm backdrop-blur-sm">
-                👤
+                {profileInitials}
               </AvatarFallback>
             </Avatar>
           </button>
@@ -227,22 +279,24 @@ export function Navbar() {
             ref={containerRef}
             className="relative flex items-center justify-around h-16 px-2 overflow-hidden"
           >
-            <div className="pointer-events-none absolute bottom-1 left-0 h-[3px] w-full">
-              <div
-                className="h-full bg-blue-500/90 rounded-full transition-all duration-200 ease-out will-change-transform"
-                style={{
-                  width: indicatorStyle.width,
-                  transform: `translateX(${indicatorStyle.left}px)`,
-                }}
-              />
-            </div>
+            {activeIndex !== -1 && (
+              <div className="pointer-events-none absolute bottom-1 left-0 h-[3px] w-full">
+                <div
+                  className="h-full bg-blue-500/90 rounded-full transition-all duration-200 ease-out will-change-transform"
+                  style={{
+                    width: indicatorStyle.width,
+                    transform: `translateX(${indicatorStyle.left}px)`,
+                  }}
+                />
+              </div>
+            )}
             {bottomNavItems.map((item, index) => (
               <BottomNavItem
                 key={item.to}
                 to={item.to}
                 icon={item.icon}
                 label={item.label}
-                isActive={index === indicatorIndex}
+                isActive={index === activeIndex}
                 innerRef={(el: HTMLAnchorElement | null) => {
                   itemRefs.current[index] = el;
                 }}
@@ -327,13 +381,6 @@ export function Navbar() {
                             </span>
                           </div>
 
-                          <NavLink
-                            to="/profile"
-                            icon={<User className="h-4 w-4" />}
-                            onClick={() => setIsOpen(false)}
-                          >
-                            Профиль
-                          </NavLink>
                           <NavLink
                             to="/settings"
                             icon={<Settings className="h-4 w-4" />}
