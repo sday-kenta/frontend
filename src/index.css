@@ -114,11 +114,117 @@
     --sidebar-ring: oklch(0.551 0.027 264.364);
 }
 
+/* Упрощенный фон — без лагов */
+.animated-bg {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 0;
+    overflow: hidden;
+    pointer-events: none;
+    background:
+        radial-gradient(circle at -10% -20%, rgba(255, 182, 193, 0.35) 0%, transparent 55%),
+        radial-gradient(circle at 40% -10%, rgba(250, 250, 210, 0.4) 0%, transparent 55%),
+        radial-gradient(circle at 90% -5%, rgba(125, 211, 252, 0.35) 0%, transparent 55%),
+        linear-gradient(180deg, #f9fafb 0%, #f5f3ff 40%, #eff6ff 75%, #f9fafb 100%);
+}
+
+.animated-bg::before {
+    content: '';
+    position: absolute;
+    top: -50%;
+    left: -50%;
+    right: -50%;
+    bottom: -50%;
+    background:
+        radial-gradient(circle at 20% 20%, rgba(244, 114, 182, 0.24) 0%, transparent 55%),
+        radial-gradient(circle at 55% 5%, rgba(251, 191, 36, 0.2) 0%, transparent 55%),
+        radial-gradient(circle at 85% 25%, rgba(59, 130, 246, 0.24) 0%, transparent 55%);
+    filter: blur(32px);
+}
+
+.dark .animated-bg {
+    background:
+        radial-gradient(circle at -5% -15%, rgba(59, 130, 246, 0.36) 0%, transparent 55%),
+        radial-gradient(circle at 35% -10%, rgba(147, 51, 234, 0.4) 0%, transparent 55%),
+        radial-gradient(circle at 95% -10%, rgba(56, 189, 248, 0.34) 0%, transparent 55%),
+        linear-gradient(180deg, #020617 0%, #020617 40%, #020617 100%);
+}
+
+.dark .animated-bg::before {
+    background:
+        radial-gradient(circle at 25% 10%, rgba(244, 114, 182, 0.32) 0%, transparent 60%),
+        radial-gradient(circle at 60% 5%, rgba(250, 204, 21, 0.24) 0%, transparent 60%),
+        radial-gradient(circle at 90% 25%, rgba(59, 130, 246, 0.34) 0%, transparent 60%);
+    filter: blur(36px);
+.custom-bg {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 0;
+    overflow: hidden;
+    pointer-events: none;
+    background-color: #020617;
+}
+
+}
+
+@keyframes simpleFloat {
+    0%, 100% {
+        transform: translate(0, 0) rotate(0deg);
+    }
+    50% {
+        transform: translate(1%, 1%) rotate(1deg);
+    }
+}
+
 @layer base {
-  * {
-    @apply border-border outline-ring/50;
+    * {
+        @apply border-border outline-ring/50;
     }
-  body {
-    @apply bg-background text-foreground;
+    body {
+        @apply text-foreground bg-background;
     }
+}
+
+/* Заметная пульсация */
+@keyframes pulse-notice {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.7;
+    transform: scale(1.15);
+  }
+}
+
+.animate-pulse-notice {
+  animation: pulse-notice 1.5s ease-in-out infinite;
+  will-change: opacity, transform;
+}
+
+/* Для бейджа уведомлений */
+.notification-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 18px;
+  height: 18px;
+  background: linear-gradient(135deg, #ef4444, #f87171);
+  color: white;
+  font-size: 10px;
+  font-weight: bold;
+  border-radius: 9999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding-left: 4px;
+  padding-right: 4px;
+  border: 2px solid white;
+  /* без постоянной анимации для снижения INP */
 }
