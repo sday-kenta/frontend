@@ -1,35 +1,45 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from '/vite.svg'
-import './App.css'
+import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { Navbar } from './components/Layout/Navbar';
+import RubricsScreen from './pages/Rubrics/RubricsScreen';
+import './index.css';
+
+// Если хочешь свой фон — укажи путь к картинке здесь.
+// Например: const customBackgroundUrl = "/images/backgrounds/photo1.jpg";
+const customBackgroundUrl: string | null = null;
 
 function App() {
-  const [count, setCount] = useState(0)
+  const handleRubricSelect = (rubric: any) => {
+    console.log('Выбрана рубрика:', rubric);
+  };
 
   return (
-    <>
-      <div>
-        <a href="https://vite.dev" target="_blank">
-          <img src={viteLogo} className="logo" alt="Vite logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
+    <BrowserRouter>
+      <div className="min-h-screen relative overflow-hidden bg-gray-50 dark:bg-slate-950">
+        {/* Упрощенный фон — один градиентный слой */}
+        <div
+          className="animated-bg"
+          style={customBackgroundUrl ? { backgroundImage: `url(${customBackgroundUrl})` } : undefined}
+        />
+        
+        {/* Контент поверх фона */}
+        <div className="relative z-10 min-h-screen bg-white/50 dark:bg-slate-900/70">
+          <Navbar />
+          <main className="pt-16 pb-24">
+            <Routes>
+              <Route 
+                path="/" 
+                element={<RubricsScreen onRubricSelect={handleRubricSelect} />} 
+              />
+              <Route path="/map" element={<div className="p-8">Карта</div>} />
+              <Route path="/about" element={<div className="p-8">О проекте</div>} />
+              <Route path="/incidents" element={<div className="p-8">Все обращения</div>} />
+              <Route path="/create" element={<div className="p-8">Создать обращение</div>} />
+            </Routes>
+          </main>
+        </div>
       </div>
-      <h1>Vite + React</h1>
-      <div className="card">
-        <button onClick={() => setCount((count) => count + 1)}>
-          count is {count}
-        </button>
-        <p>
-          Edit <code>src/App.tsx</code> and save to test HMR
-        </p>
-      </div>
-      <p className="read-the-docs">
-        Click on the Vite and React logos to learn more
-      </p>
-    </>
-  )
+    </BrowserRouter>
+  );
 }
 
-export default App
+export default App;
