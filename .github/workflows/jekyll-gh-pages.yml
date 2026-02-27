@@ -51,7 +51,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: ./build # Стандартная папка для сборки Create React App
+          path: ./dist # Стандартная папка для сборки Create React App
           # Если используете Vite, обычно это ./dist
 
   # Job для деплоя на GitHub Pages
