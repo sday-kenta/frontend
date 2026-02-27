@@ -49,10 +49,10 @@ const RubricsScreen: React.FC<RubricsScreenProps> = ({ onRubricSelect }) => {
     <div className="max-w-2xl mx-auto px-4 py-6">
       {/* Заголовок в твоем стиле */}
       <div className="mb-8">
-        <h1 className="text-2xl font-semibold text-gray-900 mb-2">
+        <h1 className="text-2xl font-semibold text-gray-900 dark:text-slate-50 mb-2">
           Выберите тип инцидента
         </h1>
-        <p className="text-sm text-gray-500">
+        <p className="text-sm text-gray-500 dark:text-slate-400">
           Выберите тип проблемы, и мы поможем составить обращение
         </p>
       </div>
@@ -63,7 +63,7 @@ const RubricsScreen: React.FC<RubricsScreenProps> = ({ onRubricSelect }) => {
           <button
             key={rubric.id}
             onClick={() => handleRubricClick(rubric)}
-            className="w-full group relative bg-white rounded-2xl border border-gray-100 shadow-sm hover:shadow-md transition-all duration-300 overflow-hidden"
+            className="w-full group relative bg-white dark:bg-slate-900 rounded-2xl border border-gray-100 dark:border-slate-800 shadow-sm hover:shadow-md transition-all duration-300 overflow-hidden"
           >
             {/* Градиентная полоска слева */}
             <div className={`absolute left-0 top-0 bottom-0 w-1.5 bg-gradient-to-b ${rubric.color}`} />
@@ -76,16 +76,16 @@ const RubricsScreen: React.FC<RubricsScreenProps> = ({ onRubricSelect }) => {
 
               {/* Текст */}
               <div className="flex-1 text-left ml-4">
-                <h3 className="text-base font-medium text-gray-900 group-hover:text-blue-600 transition-colors duration-300">
+                <h3 className="text-base font-medium text-gray-900 dark:text-slate-50 group-hover:text-blue-600 dark:group-hover:text-sky-400 transition-colors duration-300">
                   {rubric.title}
                 </h3>
-                <p className="text-sm text-gray-500 mt-0.5 line-clamp-2">
+                <p className="text-sm text-gray-500 dark:text-slate-400 mt-0.5 line-clamp-2">
                   {rubric.description}
                 </p>
               </div>
 
               {/* Стрелка */}
-              <div className="flex-shrink-0 ml-2 text-gray-400 group-hover:text-blue-600 group-hover:translate-x-1 transition-all duration-300">
+              <div className="flex-shrink-0 ml-2 text-gray-400 dark:text-slate-500 group-hover:text-blue-600 dark:group-hover:text-sky-400 group-hover:translate-x-1 transition-all duration-300">
                 <ArrowRight className="h-5 w-5" />
               </div>
             </div>
