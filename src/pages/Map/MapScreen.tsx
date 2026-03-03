@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import maplibregl, { type MapMouseEvent } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import {
@@ -65,7 +64,6 @@ type Tab = 'home' | 'my' | 'all' | 'profile' | 'settings';
 type SheetMode = 'tabs' | 'marker' | 'rubric' | null;
 
 export default function MapScreen() {
-  const navigate = useNavigate();
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<maplibregl.Map | null>(null);
   const markerInstanceRef = useRef<maplibregl.Marker | null>(null);
@@ -88,6 +86,7 @@ export default function MapScreen() {
   const [sheetMode, setSheetMode] = useState<SheetMode>(null);
   const [settingsView, setSettingsView] = useState<'main' | 'about' | 'feedback'>('main');
   const [themeMode, setThemeMode] = useState<'light' | 'dark'>('dark');
+  const [selectedRubric, setSelectedRubric] = useState<Rubric | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const suggestionsRef = useRef<HTMLDivElement>(null);
@@ -272,6 +271,7 @@ export default function MapScreen() {
 
   const handleCreateReport = () => {
     if (!marker) return;
+    setSelectedRubric(null);
     setSheetMode('rubric');
   };
 
@@ -751,47 +751,71 @@ export default function MapScreen() {
               </div>
             ) : sheetMode === 'rubric' && marker ? (
               <div className="flex-1 overflow-y-auto pb-2 sheet-swap-enter">
-                <p className="text-[11px] uppercase tracking-wide text-[#64748b] mb-2">
-                  Выбор рубрики
-                </p>
-                <h2 className="text-base font-semibold text-slate-900 dark:text-white mb-1">
-                  Выберите тип инцидента
-                </h2>
-                <p className="text-xs text-slate-600 dark:text-[#94a3b8] mb-4">
-                  По адресу {marker.address ?? 'адрес уточняется'}:{" "}
-                  {marker.lat.toFixed(6)}, {marker.lng.toFixed(6)}
-                </p>
+                {!selectedRubric ? (
+                  <>
+                    <p className="text-[11px] uppercase tracking-wide text-[#64748b] mb-2">
+                      Выбор рубрики
+                    </p>
+                    <h2 className="text-base font-semibold text-slate-900 dark:text-white mb-1">
+                      Выберите тип инцидента
+                    </h2>
+                    <p className="text-xs text-slate-600 dark:text-[#94a3b8] mb-4">
+                      По адресу {marker.address ?? 'адрес уточняется'}:{" "}
+                      {marker.lat.toFixed(6)}, {marker.lng.toFixed(6)}
+                    </p>
 
-                <div className="space-y-3">
-                  {rubrics.map((rubric) => (
-                    <button
-                      key={rubric.id}
-                      type="button"
-                      onClick={() => handleRubricClick(rubric)}
-                      className="w-full group relative bg-white rounded-2xl border border-slate-200 hover:border-slate-300 dark:bg-[#020617] dark:border-white/10 dark:hover:border-white/20 transition-all overflow-hidden text-left"
-                    >
-                      <div
-                        className={`absolute left-0 top-0 bottom-0 w-1.5 bg-gradient-to-b ${rubric.color}`}
-                      />
-                      <div className="flex items-center p-5 pl-7">
-                        <div
-                          className={`flex-shrink-0 w-14 h-14 rounded-2xl bg-gradient-to-br ${rubric.color} flex items-center justify-center text-white opacity-90`}
+                    <div className="space-y-3">
+                      {rubrics.map((rubric) => (
+                        <button
+                          key={rubric.id}
+                          type="button"
+                          onClick={() => setSelectedRubric(rubric)}
+                          className="w-full group relative bg-white rounded-2xl border border-slate-200 hover:border-slate-300 dark:bg-[#020617] dark:border-white/10 dark:hover:border-white/20 transition-all overflow-hidden text-left"
                         >
-                          {rubric.icon}
-                        </div>
-                        <div className="flex-1 text-left ml-4">
-                          <h3 className="text-sm font-medium text-slate-900 dark:text-white group-hover:text-sky-500 dark:group-hover:text-sky-400 transition-colors">
-                            {rubric.title}
-                          </h3>
-                          <p className="text-xs text-[#94a3b8] mt-0.5 line-clamp-2">
-                            {rubric.description}
-                          </p>
-                        </div>
-                        <ChevronRight className="h-4 w-4 text-[#64748b] group-hover:text-sky-400 group-hover:translate-x-1 transition-all" />
-                      </div>
+                          <div
+                            className={`absolute left-0 top-0 bottom-0 w-1.5 bg-gradient-to-b ${rubric.color}`}
+                          />
+                          <div className="flex items-center p-5 pl-7">
+                            <div
+                              className={`flex-shrink-0 w-14 h-14 rounded-2xl bg-gradient-to-br ${rubric.color} flex items-center justify-center text-white opacity-90`}
+                            >
+                              {rubric.icon}
+                            </div>
+                            <div className="flex-1 text-left ml-4">
+                              <h3 className="text-sm font-medium text-slate-900 dark:text-white group-hover:text-sky-500 dark:group-hover:text-sky-400 transition-colors">
+                                {rubric.title}
+                              </h3>
+                              <p className="text-xs text-[#94a3b8] mt-0.5 line-clamp-2">
+                                {rubric.description}
+                              </p>
+                            </div>
+                            <ChevronRight className="h-4 w-4 text-[#64748b] group-hover:text-sky-400 group-hover:translate-x-1 transition-all" />
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                ) : (
+                  <div className="space-y-3">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedRubric(null)}
+                      className="text-xs text-slate-600 hover:text-slate-900 dark:text-[#94a3b8] dark:hover:text-white"
+                    >
+                      ← Назад к выбору рубрики
                     </button>
-                  ))}
-                </div>
+                    <p className="text-[11px] uppercase tracking-wide text-[#64748b] mb-1">
+                      Рубрика обращения
+                    </p>
+                    <h2 className="text-base font-semibold text-slate-900 dark:text-white">
+                      {selectedRubric.title}
+                    </h2>
+                    <p className="text-xs text-slate-600 dark:text-[#94a3b8]">
+                      Заглушка страницы. Здесь позже появится подробное описание этой рубрики,
+                      примеры ситуаций, когда её нужно выбирать, и подсказки по оформлению обращения.
+                    </p>
+                  </div>
+                )}
               </div>
             ) : (
               <>
