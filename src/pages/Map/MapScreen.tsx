@@ -20,7 +20,8 @@ import {
   Car,
   ShoppingBag,
 } from 'lucide-react';
-import { cn } from '@/lib/utils';
+import { cn, resolveAvatarUrl } from '@/lib/utils';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import ProfileTabComponent from '@/components/ProfileTab';
 
 const ProfileTab = ProfileTabComponent as ComponentType<{ userId: number }>;
@@ -91,6 +92,11 @@ export default function MapScreen() {
   const [settingsView, setSettingsView] = useState<'main' | 'about' | 'feedback'>('main');
   const [themeMode, setThemeMode] = useState<'light' | 'dark'>('dark');
   const [selectedRubric, setSelectedRubric] = useState<Rubric | null>(null);
+  const [userProfile, setUserProfile] = useState<{
+    first_name?: string;
+    last_name?: string;
+    avatar_url?: string | null;
+  } | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const suggestionsRef = useRef<HTMLDivElement>(null);
@@ -169,6 +175,19 @@ export default function MapScreen() {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
   }, [query, fetchSuggestions]);
+
+  useEffect(() => {
+    fetch('/v1/users/1')
+      .then(async (res) => (res.ok ? res.json() : null))
+      .then((json: unknown) => {
+        if (!json) return;
+        const raw =
+          Array.isArray(json) ? json[0] : (json as { data?: unknown }).data ?? json;
+        if (raw && typeof raw === 'object')
+          setUserProfile(raw as { first_name?: string; last_name?: string; avatar_url?: string | null });
+      })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -568,9 +587,14 @@ export default function MapScreen() {
         )}
       >
         <span className="inline-flex rounded-full bg-gradient-to-tr from-rose-500 via-fuchsia-500 to-indigo-500 p-[2px]">
-          <span className="flex h-10 w-10 items-center justify-center rounded-full bg-white text-slate-900">
-            <User className="h-5 w-5" />
-          </span>
+          <Avatar className="h-10 w-10 rounded-full overflow-hidden bg-white dark:bg-slate-800">
+            {userProfile?.avatar_url && (
+              <AvatarImage src={resolveAvatarUrl(userProfile.avatar_url) ?? ''} alt="" className="object-cover" />
+            )}
+            <AvatarFallback className="rounded-full bg-white text-slate-900 dark:bg-slate-800 dark:text-white">
+              <User className="h-5 w-5" />
+            </AvatarFallback>
+          </Avatar>
         </span>
       </button>
 

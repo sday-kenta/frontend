@@ -1,9 +1,11 @@
-import { useEffect, useState } from 'react';
-import type { FC, FormEvent } from 'react';
-import { Mail, Lock, Check, X } from 'lucide-react';
+import { useEffect, useState, useRef } from 'react';
+import type { FC, FormEvent, ChangeEvent } from 'react';
+import { Mail, Lock, Check, X, Camera } from 'lucide-react';
 
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { resolveAvatarUrl } from '@/lib/utils';
 
 type UserProfile = {
   id: number;
@@ -21,6 +23,7 @@ type UserProfile = {
   role: string;
   created_at: string;
   updated_at: string;
+  avatar_url?: string | null;
 };
 
 type ProfileTabProps = {
@@ -75,6 +78,8 @@ const ProfileTab: FC<ProfileTabProps> = ({ userId }) => {
 
   const [status, setStatus] = useState<'idle' | 'success' | 'error'>('idle');
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [avatarUploading, setAvatarUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const hasEmailChanged =
     !!profile && !!initialProfile && profile.email !== initialProfile.email;
@@ -180,6 +185,52 @@ const ProfileTab: FC<ProfileTabProps> = ({ userId }) => {
     await handleSaveProfile();
   };
 
+  const handleAvatarChange = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !profile) return;
+    if (file.size > 2 * 1024 * 1024) {
+      setStatus('error');
+      setStatusMessage('Файл слишком большой (макс. 2 МБ).');
+      return;
+    }
+    const ok = /^image\/(jpeg|jpg|png)$/i.test(file.type);
+    if (!ok) {
+      setStatus('error');
+      setStatusMessage('Разрешены только JPEG и PNG.');
+      return;
+    }
+    e.target.value = '';
+    try {
+      setAvatarUploading(true);
+      setStatusMessage(null);
+      const formData = new FormData();
+      formData.append('avatar', file);
+      const res = await fetch(`${API_PREFIX}/users/${profile.id}/avatar`, {
+        method: 'POST',
+        body: formData,
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error((err as { message?: string })?.message || 'Ошибка загрузки');
+      }
+      const profileRes = await fetch(`${API_PREFIX}/users/${profile.id}`);
+      if (profileRes.ok) {
+        const json = await profileRes.json();
+        const raw: any = Array.isArray(json) ? json[0] : (json?.data ?? json);
+        const newUrl = raw?.avatar_url ?? raw?.avatar ?? raw?.avatarUrl ?? profile.avatar_url;
+        setProfile((p) => (p ? { ...p, avatar_url: newUrl } : p));
+        setInitialProfile((p) => (p ? { ...p, avatar_url: newUrl } : p));
+      }
+      setStatus('success');
+      setStatusMessage('Аватар обновлён.');
+    } catch (err) {
+      setStatus('error');
+      setStatusMessage(err instanceof Error ? err.message : 'Не удалось загрузить аватар.');
+    } finally {
+      setAvatarUploading(false);
+    }
+  };
+
   const initials = profile
     ? [profile.last_name, profile.first_name]
         .filter(Boolean)
@@ -190,9 +241,30 @@ const ProfileTab: FC<ProfileTabProps> = ({ userId }) => {
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-3 rounded-2xl bg-gradient-to-r from-sky-500/10 via-sky-500/5 to-transparent px-3 py-2.5">
-        <div className="flex h-11 w-11 items-center justify-center rounded-full bg-gradient-to-br from-sky-500 to-blue-600 text-sm font-semibold text-white shadow-md shadow-sky-500/40">
-          <span>{initials || '👤'}</span>
-        </div>
+        <label className="relative cursor-pointer group/avatar">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/jpeg,image/jpg,image/png"
+            className="sr-only"
+            onChange={handleAvatarChange}
+            disabled={avatarUploading || !profile}
+          />
+          <Avatar className="h-11 w-11 shadow-md shadow-sky-500/40 ring-2 ring-white/50 dark:ring-slate-700">
+            {profile?.avatar_url && <AvatarImage src={resolveAvatarUrl(profile.avatar_url) ?? ''} alt="" className="object-cover" />}
+            <AvatarFallback className="bg-gradient-to-br from-sky-500 to-blue-600 text-sm font-semibold text-white">
+              {initials || '👤'}
+            </AvatarFallback>
+          </Avatar>
+          <span className="absolute inset-0 flex items-center justify-center rounded-full bg-black/40 opacity-0 group-hover/avatar:opacity-100 transition-opacity">
+            <Camera className="h-5 w-5 text-white" />
+          </span>
+          {avatarUploading && (
+            <span className="absolute inset-0 flex items-center justify-center rounded-full bg-black/50">
+              <span className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+            </span>
+          )}
+        </label>
         <div className="min-w-0 flex-1">
           <h2 className="text-sm font-semibold text-slate-900 dark:text-white tracking-tight">
             Профиль
