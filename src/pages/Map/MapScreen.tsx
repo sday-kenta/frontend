@@ -99,6 +99,9 @@ export default function MapScreen() {
     coords: { lat: number; lng: number } | null;
   }>({ timer: null, coords: null });
   const closeSheetTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const sheetDragStartYRef = useRef<number | null>(null);
+  const [sheetDragY, setSheetDragY] = useState(0);
+  const [isSheetDragging, setIsSheetDragging] = useState(false);
 
   type Rubric = {
     id: number;
@@ -226,6 +229,38 @@ export default function MapScreen() {
     if (sheetMode === 'marker') {
       setSheetMode(null);
     }
+  };
+
+  const handleSheetTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (!isSheetOpen) return;
+    const touch = e.touches[0];
+    sheetDragStartYRef.current = touch.clientY;
+    setIsSheetDragging(true);
+  };
+
+  const handleSheetTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (!isSheetOpen || sheetDragStartYRef.current === null) return;
+    const touch = e.touches[0];
+    const delta = touch.clientY - sheetDragStartYRef.current;
+    setSheetDragY(delta > 0 ? delta : 0);
+  };
+
+  const handleSheetTouchEnd = () => {
+    if (!isSheetOpen) {
+      setSheetDragY(0);
+      setIsSheetDragging(false);
+      sheetDragStartYRef.current = null;
+      return;
+    }
+
+    const threshold = 80;
+    if (sheetDragY > threshold) {
+      closeSheet();
+    }
+
+    setSheetDragY(0);
+    setIsSheetDragging(false);
+    sheetDragStartYRef.current = null;
   };
 
   const handleLocateMe = () => {
@@ -692,10 +727,17 @@ export default function MapScreen() {
 
         {/* сама «простыня» */}
         <div
-          className={cn(
-            'relative w-full max-w-xl pointer-events-auto transform transition-transform duration-350 ease-[cubic-bezier(0.22,0.61,0.36,1)]',
-            isSheetOpen ? 'translate-y-0' : 'translate-y-[calc(100%+32px)]'
-          )}
+          className="relative w-full max-w-xl pointer-events-auto transform transition-transform duration-350 ease-[cubic-bezier(0.22,0.61,0.36,1)]"
+          style={{
+            transform: isSheetOpen
+              ? `translateY(${sheetDragY}px)`
+              : 'translateY(calc(100% + 32px))',
+            transition: isSheetDragging ? 'none' : undefined,
+            touchAction: 'none',
+          }}
+          onTouchStart={handleSheetTouchStart}
+          onTouchMove={handleSheetTouchMove}
+          onTouchEnd={handleSheetTouchEnd}
         >
           <div
             className={cn(
