@@ -7,6 +7,11 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/co
 export function Navbar() {
   const [isOpen, setIsOpen] = React.useState(false);
   const [notifications] = React.useState(3);
+  const [userProfile, setUserProfile] = React.useState<{
+    id: number;
+    first_name?: string;
+    last_name?: string;
+  } | null>(null);
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -144,8 +149,31 @@ export function Navbar() {
       }
     };
   }, [updateIndicator]);
-  
-  const isAuthenticated = false;
+
+  // Временный пользователь для теста (id = 1)
+  React.useEffect(() => {
+    fetch("/v1/users/1")
+      .then(async (res) => {
+        if (!res.ok) return null;
+        const json = await res.json();
+        const raw: any = Array.isArray(json) ? json[0] : (json?.data ?? json);
+        return raw;
+      })
+      .then((user) => {
+        if (user) setUserProfile(user);
+      })
+      .catch(() => {});
+  }, []);
+
+  const isAuthenticated = !!userProfile;
+
+  const avatarInitials = React.useMemo(() => {
+    if (!userProfile) return "";
+    const parts = [userProfile.last_name, userProfile.first_name]
+      .filter(Boolean)
+      .map((s) => String(s).trim()[0]?.toUpperCase());
+    return parts.join("");
+  }, [userProfile]);
 
   const handleAvatarClick = () => {
     if (isAuthenticated) {
@@ -172,7 +200,7 @@ export function Navbar() {
           <button onClick={handleAvatarClick} className="focus:outline-none group">
             <Avatar className="h-9 w-9 cursor-pointer ring-2 ring-white/50 dark:ring-slate-700 group-hover:ring-blue-300 transition-all duration-300">
               <AvatarFallback className="bg-gradient-to-br from-blue-500/90 to-blue-600/90 text-white text-sm backdrop-blur-sm">
-                👤
+                {avatarInitials || "👤"}
               </AvatarFallback>
             </Avatar>
           </button>

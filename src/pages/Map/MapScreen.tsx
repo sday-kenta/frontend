@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import type { ComponentType } from 'react';
 import maplibregl, { type MapMouseEvent } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import {
@@ -20,6 +21,9 @@ import {
   ShoppingBag,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import ProfileTabComponent from '@/components/ProfileTab';
+
+const ProfileTab = ProfileTabComponent as ComponentType<{ userId: number }>;
 
 interface GeocodingResult {
   lat: number;
@@ -898,19 +902,7 @@ export default function MapScreen() {
                       </div>
                     </div>
                   )}
-                  {activeTab === 'profile' && (
-                    <div className="space-y-3">
-                      <h2 className="text-base font-semibold text-slate-900 dark:text-white">Профиль</h2>
-                      <p className="text-sm text-slate-600 dark:text-[#94a3b8]">
-                        Заглушка страницы. Тут будут данные профиля пользователя.
-                      </p>
-                      <div className="mt-2 rounded-2xl border border-slate-200 bg-white dark:border-white/10 dark:bg-[#020617] p-4">
-                        <p className="text-sm text-slate-600 dark:text-[#94a3b8]">
-                          Авторизацию и редактирование профиля добавим позже.
-                        </p>
-                      </div>
-                    </div>
-                  )}
+                  {activeTab === 'profile' && <ProfileTab userId={1} />}
                   {activeTab === 'settings' && (
                     <div className="space-y-4">
                       {settingsView === 'main' && (
