@@ -28,6 +28,7 @@ type UserProfile = {
 
 type ProfileTabProps = {
   userId: number;
+  onAvatarChange?: (url: string | null) => void;
 };
 
 function formatPhone(input: string): string {
@@ -64,7 +65,7 @@ function formatPhone(input: string): string {
   return result;
 }
 
-const ProfileTab: FC<ProfileTabProps> = ({ userId }) => {
+const ProfileTab: FC<ProfileTabProps> = ({ userId, onAvatarChange }) => {
   // Используем тот же прокси, что и в админке: /v1 -> VITE_API_PROXY_TARGET
   const API_PREFIX = '/v1';
 
@@ -112,6 +113,7 @@ const ProfileTab: FC<ProfileTabProps> = ({ userId }) => {
         if (!isMounted) return;
         setInitialProfile(user);
         setProfile(user);
+        onAvatarChange?.(user.avatar_url ?? null);
       })
       .catch(() => {
         if (!isMounted) return;
@@ -163,6 +165,7 @@ const ProfileTab: FC<ProfileTabProps> = ({ userId }) => {
       const updated = (await res.json()) as UserProfile;
       setInitialProfile(updated);
       setProfile(updated);
+      onAvatarChange?.(updated.avatar_url ?? null);
 
       setStatus('success');
       setStatusMessage('Данные профиля обновлены.');
@@ -220,6 +223,7 @@ const ProfileTab: FC<ProfileTabProps> = ({ userId }) => {
         const newUrl = raw?.avatar_url ?? raw?.avatar ?? raw?.avatarUrl ?? profile.avatar_url;
         setProfile((p) => (p ? { ...p, avatar_url: newUrl } : p));
         setInitialProfile((p) => (p ? { ...p, avatar_url: newUrl } : p));
+        onAvatarChange?.(newUrl ?? null);
       }
       setStatus('success');
       setStatusMessage('Аватар обновлён.');

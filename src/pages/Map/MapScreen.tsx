@@ -24,7 +24,10 @@ import { cn, resolveAvatarUrl } from '@/lib/utils';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import ProfileTabComponent from '@/components/ProfileTab';
 
-const ProfileTab = ProfileTabComponent as ComponentType<{ userId: number }>;
+const ProfileTab = ProfileTabComponent as ComponentType<{
+  userId: number;
+  onAvatarChange?: (url: string | null) => void;
+}>;
 
 interface GeocodingResult {
   lat: number;
@@ -968,7 +971,16 @@ export default function MapScreen() {
                       </div>
                     </div>
                   )}
-                  {activeTab === 'profile' && <ProfileTab userId={1} />}
+                  {activeTab === 'profile' && (
+                    <ProfileTab
+                      userId={1}
+                      onAvatarChange={(url) =>
+                        setUserProfile((prev) =>
+                          prev ? { ...prev, avatar_url: url ?? prev.avatar_url ?? null } : { avatar_url: url ?? null }
+                        )
+                      }
+                    />
+                  )}
                   {activeTab === 'settings' && (
                     <div className="space-y-4">
                       {settingsView === 'main' && (
