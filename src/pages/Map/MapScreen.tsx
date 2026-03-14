@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import type { ComponentType } from 'react';
 import maplibregl, { type MapMouseEvent } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import {
@@ -114,6 +115,9 @@ export default function MapScreen() {
     coords: { lat: number; lng: number } | null;
   }>({ timer: null, coords: null });
   const closeSheetTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const sheetDragStartYRef = useRef<number | null>(null);
+  const [sheetDragY, setSheetDragY] = useState(0);
+  const [isSheetDragging, setIsSheetDragging] = useState(false);
 
   type Rubric = {
     id: number;
@@ -183,6 +187,19 @@ export default function MapScreen() {
   }, [query, fetchSuggestions]);
 
   useEffect(() => {
+    fetch('/v1/users/1')
+      .then(async (res) => (res.ok ? res.json() : null))
+      .then((json: unknown) => {
+        if (!json) return;
+        const raw =
+          Array.isArray(json) ? json[0] : (json as { data?: unknown }).data ?? json;
+        if (raw && typeof raw === 'object')
+          setUserProfile(raw as { first_name?: string; last_name?: string; avatar_url?: string | null });
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (
         suggestionsRef.current &&
@@ -241,6 +258,38 @@ export default function MapScreen() {
     if (sheetMode === 'marker') {
       setSheetMode(null);
     }
+  };
+
+  const handleSheetTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (!isSheetOpen) return;
+    const touch = e.touches[0];
+    sheetDragStartYRef.current = touch.clientY;
+    setIsSheetDragging(true);
+  };
+
+  const handleSheetTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (!isSheetOpen || sheetDragStartYRef.current === null) return;
+    const touch = e.touches[0];
+    const delta = touch.clientY - sheetDragStartYRef.current;
+    setSheetDragY(delta > 0 ? delta : 0);
+  };
+
+  const handleSheetTouchEnd = () => {
+    if (!isSheetOpen) {
+      setSheetDragY(0);
+      setIsSheetDragging(false);
+      sheetDragStartYRef.current = null;
+      return;
+    }
+
+    const threshold = 80;
+    if (sheetDragY > threshold) {
+      closeSheet();
+    }
+
+    setSheetDragY(0);
+    setIsSheetDragging(false);
+    sheetDragStartYRef.current = null;
   };
 
   const handleLocateMe = () => {
@@ -799,9 +848,14 @@ export default function MapScreen() {
         )}
       >
         <span className="inline-flex rounded-full bg-gradient-to-tr from-rose-500 via-fuchsia-500 to-indigo-500 p-[2px]">
-          <span className="flex h-10 w-10 items-center justify-center rounded-full bg-white text-slate-900">
-            <User className="h-5 w-5" />
-          </span>
+          <Avatar className="h-10 w-10 rounded-full overflow-hidden bg-white dark:bg-slate-800">
+            {userProfile?.avatar_url && (
+              <AvatarImage src={resolveAvatarUrl(userProfile.avatar_url) ?? ''} alt="" className="object-cover" />
+            )}
+            <AvatarFallback className="rounded-full bg-white text-slate-900 dark:bg-slate-800 dark:text-white">
+              <User className="h-5 w-5" />
+            </AvatarFallback>
+          </Avatar>
         </span>
       </button>
 
@@ -958,10 +1012,17 @@ export default function MapScreen() {
 
         {/* сама «простыня» */}
         <div
-          className={cn(
-            'relative w-full max-w-xl pointer-events-auto transform transition-transform duration-350 ease-[cubic-bezier(0.22,0.61,0.36,1)]',
-            isSheetOpen ? 'translate-y-0' : 'translate-y-[calc(100%+32px)]'
-          )}
+          className="relative w-full max-w-xl pointer-events-auto transform transition-transform duration-350 ease-[cubic-bezier(0.22,0.61,0.36,1)]"
+          style={{
+            transform: isSheetOpen
+              ? `translateY(${sheetDragY}px)`
+              : 'translateY(calc(100% + 32px))',
+            transition: isSheetDragging ? 'none' : undefined,
+            touchAction: 'none',
+          }}
+          onTouchStart={handleSheetTouchStart}
+          onTouchMove={handleSheetTouchMove}
+          onTouchEnd={handleSheetTouchEnd}
         >
           <div
             className={cn(
@@ -1415,7 +1476,6 @@ export default function MapScreen() {
                         )
                       }
                     />
-                  </div>
                   )}
                   {activeTab === 'settings' && (
                     <div className="space-y-4">
