@@ -252,7 +252,7 @@ export function Navbar() {
       </div>
 
       {/* Нижняя навигация */}
-      <nav className="fixed bottom-6 left-4 right-4 z-30 md:hidden">
+      <nav className="fixed bottom-2 left-3 right-3 z-30 md:hidden">
         <div className="relative">
           <div className="absolute inset-0 bg-white/25 dark:bg-slate-900/80 backdrop-blur-md rounded-2xl shadow-lg border border-white/20 dark:border-slate-800" />
 
@@ -423,8 +423,8 @@ export function Navbar() {
         </div>
       </nav>
 
-      {/* Отступ снизу */}
-      <div className="h-24 md:h-0" />
+      {/* Отступ снизу, учитывая нижнюю навигацию и safe-area на телефонах */}
+      <div className="h-20 md:h-0" />
     </>
   );
 }
