@@ -19,6 +19,8 @@ import {
   Car,
   ShoppingBag,
 } from 'lucide-react';
+import jsPDF from 'jspdf';
+import html2canvas from 'html2canvas';
 import { cn } from '@/lib/utils';
 
 interface GeocodingResult {
@@ -332,14 +334,131 @@ export default function MapScreen() {
     photos: reportPhotos,
   });
 
+  const buildReportHtml = () => {
+    const payload = getCurrentReportPayload();
+    const createdAt = new Date().toLocaleString('ru-RU');
+
+    const rubric = payload.rubric ? payload.rubric.title : 'Не выбрана';
+    const address = payload.marker?.address ?? 'Адрес не указан';
+    const coords = payload.marker
+      ? `${payload.marker.lat.toFixed(6)}, ${payload.marker.lng.toFixed(6)}`
+      : 'Не указаны';
+
+    const title = payload.title || 'Без темы';
+    const text = payload.text || 'Текст не указан';
+
+    return [
+      '<p style="margin:0 0 4px 0; font-weight:600;">Обращение гражданина</p>',
+      '<p style="margin:0 0 12px 0;">=====================</p>',
+      `<p style="margin:0 0 4px 0;"><strong>Дата создания:</strong> ${createdAt}</p>`,
+      '',
+      `<p style="margin:8px 0 4px 0;"><strong>Рубрика:</strong> ${rubric}</p>`,
+      `<p style="margin:0 0 4px 0;"><strong>Адрес:</strong> ${address}</p>`,
+      `<p style="margin:0 0 4px 0;"><strong>Координаты:</strong> ${coords}</p>`,
+      '',
+      `<p style="margin:12px 0 4px 0;"><strong>Тема:</strong> ${title}</p>`,
+      '',
+      '<p style="margin:12px 0 4px 0;"><strong>Текст обращения:</strong></p>',
+      `<p style="margin:0;">${text}</p>`,
+    ]
+      .filter(Boolean)
+      .join('\n');
+  };
+
   const handleSaveDraft = () => {
     // Заглушка: сохранение черновика внутри приложения
     console.log('Сохранить черновик обращения', getCurrentReportPayload());
   };
 
-  const handleSaveToFiles = () => {
-    // Заглушка: сохранение документа в файловую систему смартфона
-    console.log('Сохранить обращение в документы смартфона', getCurrentReportPayload());
+  const handleSaveToFiles = async () => {
+    try {
+      const html = buildReportHtml();
+      const safeTitle = reportTitle.trim() || 'obrashenie';
+      const timestamp = new Date()
+        .toISOString()
+        .replace(/[:.]/g, '-')
+        .slice(0, 19);
+
+      const container = document.createElement('div');
+      container.style.position = 'fixed';
+      container.style.left = '-10000px';
+      container.style.top = '0';
+      container.style.width = '600px';
+      container.style.padding = '24px';
+      container.style.background = '#ffffff';
+      container.style.color = '#111827';
+      container.style.fontFamily =
+        'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+      container.style.fontSize = '12px';
+      container.style.lineHeight = '1.5';
+      container.style.whiteSpace = 'pre-wrap';
+      container.innerHTML = html;
+
+      if (reportPhotoPreviews[0]) {
+        const photoTitle = document.createElement('div');
+        photoTitle.style.marginTop = '16px';
+        photoTitle.style.fontWeight = 'bold';
+        photoTitle.textContent = 'Фото:';
+        container.appendChild(photoTitle);
+
+        const img = document.createElement('img');
+        img.src = reportPhotoPreviews[0];
+        img.alt = 'Фото из обращения';
+        img.style.display = 'block';
+        img.style.marginTop = '8px';
+        img.style.maxWidth = '100%';
+        img.style.maxHeight = '500px';
+        container.appendChild(img);
+      }
+      document.body.appendChild(container);
+
+      const canvas = await html2canvas(container, {
+        scale: 2,
+        backgroundColor: '#ffffff',
+      });
+
+      document.body.removeChild(container);
+
+      const imgData = canvas.toDataURL('image/png');
+
+      const doc = new jsPDF({
+        unit: 'pt',
+        format: 'a4',
+      });
+
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
+      const margin = 40;
+
+      const availableWidth = pageWidth - margin * 2;
+      const availableHeight = pageHeight - margin * 2;
+
+      const imgWidth = canvas.width;
+      const imgHeight = canvas.height;
+      const ratio = Math.min(
+        availableWidth / imgWidth,
+        availableHeight / imgHeight
+      );
+
+      const renderWidth = imgWidth * ratio;
+      const renderHeight = imgHeight * ratio;
+      const offsetX = (pageWidth - renderWidth) / 2;
+      const offsetY = margin;
+
+      doc.addImage(
+        imgData,
+        'PNG',
+        offsetX,
+        offsetY,
+        renderWidth,
+        renderHeight
+      );
+
+      const filename = `${safeTitle}-${timestamp}.pdf`;
+      doc.save(filename);
+    } catch (error) {
+      console.error('Не удалось сохранить обращение в файлы устройства', error);
+    }
   };
 
   const handleSendEmail = () => {
@@ -348,8 +467,76 @@ export default function MapScreen() {
   };
 
   const handlePrint = () => {
-    // Заглушка: отправка документа на печать
-    console.log('Отправить обращение на печать', getCurrentReportPayload());
+    try {
+      const baseHtml = buildReportHtml();
+      const firstPhoto = reportPhotoPreviews[0];
+      const photoHtml = firstPhoto
+        ? `<div style="margin-top:16px;">
+             <img src="${firstPhoto}" alt="Фото из обращения" style="max-width:100%;max-height:500px;margin-top:8px;" />
+           </div>`
+        : '';
+
+      const printableHtml = `${baseHtml}${photoHtml}`;
+
+      const iframe = document.createElement('iframe');
+      iframe.style.position = 'fixed';
+      iframe.style.right = '0';
+      iframe.style.bottom = '0';
+      iframe.style.width = '0';
+      iframe.style.height = '0';
+      iframe.style.border = '0';
+      document.body.appendChild(iframe);
+
+      const frameWindow = iframe.contentWindow;
+      if (!frameWindow) {
+        document.body.removeChild(iframe);
+        console.error('Не удалось инициализировать окно печати');
+        return;
+      }
+
+      frameWindow.document.open();
+      frameWindow.document.write(`<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charSet="utf-8" />
+    <title>Обращение для печати</title>
+    <style>
+      body {
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        font-size: 14px;
+        line-height: 1.5;
+        color: #111827;
+        padding: 24px;
+      }
+      h1 {
+        font-size: 20px;
+        margin-bottom: 16px;
+      }
+      .content {
+        white-space: normal;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Обращение гражданина</h1>
+    <div class="content">${printableHtml}</div>
+  </body>
+</html>`);
+      frameWindow.document.close();
+
+      iframe.onload = () => {
+        try {
+          frameWindow.focus();
+          frameWindow.print();
+        } finally {
+          setTimeout(() => {
+            document.body.removeChild(iframe);
+          }, 1000);
+        }
+      };
+    } catch (error) {
+      console.error('Не удалось отправить обращение на печать', error);
+    }
   };
 
   const zoomIn = () => {
