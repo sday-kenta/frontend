@@ -21,7 +21,14 @@ import {
 } from 'lucide-react';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
-import { cn } from '@/lib/utils';
+import { cn, resolveAvatarUrl } from '@/lib/utils';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import ProfileTabComponent from '@/components/ProfileTab';
+
+const ProfileTab = ProfileTabComponent as ComponentType<{
+  userId: number;
+  onAvatarChange?: (url: string | null) => void;
+}>;
 
 interface GeocodingResult {
   lat: number;
@@ -94,6 +101,11 @@ export default function MapScreen() {
   const [reportText, setReportText] = useState('');
   const [reportPhotos, setReportPhotos] = useState<File[]>([]);
   const [reportPhotoPreviews, setReportPhotoPreviews] = useState<string[]>([]);
+  const [userProfile, setUserProfile] = useState<{
+    first_name?: string;
+    last_name?: string;
+    avatar_url?: string | null;
+  } | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const suggestionsRef = useRef<HTMLDivElement>(null);
@@ -1380,29 +1392,30 @@ export default function MapScreen() {
                     </div>
                   )}
                   {activeTab === 'profile' && (
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between gap-3">
-                        <h2 className="text-base font-semibold text-slate-900 dark:text-white">
-                          Профиль
-                        </h2>
-                        <button
-                          type="button"
-                          onClick={closeSheet}
-                          className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 shadow-sm border border-slate-300 hover:bg-slate-300 hover:text-slate-800 dark:bg-black/40 dark:text-[#9ca3af] dark:border-transparent dark:hover:bg-black/60"
-                          aria-label="Закрыть"
-                        >
-                          <X className="h-4 w-4" />
-                        </button>
-                      </div>
-                      <p className="text-sm text-slate-600 dark:text-[#94a3b8]">
-                        Заглушка страницы. Тут будут данные профиля пользователя.
-                      </p>
-                      <div className="mt-2 rounded-2xl border border-slate-200 bg-white dark:border-white/10 dark:bg-[#020617] p-4">
-                        <p className="text-sm text-slate-600 dark:text-[#94a3b8]">
-                          Авторизацию и редактирование профиля добавим позже.
-                        </p>
-                      </div>
+                                      <div className="space-y-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <h2 className="text-base font-semibold text-slate-900 dark:text-white">
+                        Профиль
+                      </h2>
+                      <button
+                        type="button"
+                        onClick={closeSheet}
+                        className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 shadow-sm border border-slate-300 hover:bg-slate-300 hover:text-slate-800 dark:bg-black/40 dark:text-[#9ca3af] dark:border-transparent dark:hover:bg-black/60"
+                        aria-label="Закрыть"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
                     </div>
+
+                    <ProfileTab
+                      userId={1}
+                      onAvatarChange={(url) =>
+                        setUserProfile((prev) =>
+                          prev ? { ...prev, avatar_url: url ?? prev.avatar_url ?? null } : { avatar_url: url ?? null }
+                        )
+                      }
+                    />
+                  </div>
                   )}
                   {activeTab === 'settings' && (
                     <div className="space-y-4">
