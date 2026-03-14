@@ -1453,29 +1453,32 @@ export default function MapScreen() {
                     </div>
                   )}
                   {activeTab === 'profile' && (
-                                      <div className="space-y-3">
-                    <div className="flex items-center justify-between gap-3">
-                      <h2 className="text-base font-semibold text-slate-900 dark:text-white">
-                        Профиль
-                      </h2>
-                      <button
-                        type="button"
-                        onClick={closeSheet}
-                        className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 shadow-sm border border-slate-300 hover:bg-slate-300 hover:text-slate-800 dark:bg-black/40 dark:text-[#9ca3af] dark:border-transparent dark:hover:bg-black/60"
-                        aria-label="Закрыть"
-                      >
-                        <X className="h-4 w-4" />
-                      </button>
-                    </div>
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <h2 className="text-base font-semibold text-slate-900 dark:text-white">
+                          Профиль
+                        </h2>
+                        <button
+                          type="button"
+                          onClick={closeSheet}
+                          className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 shadow-sm border border-slate-300 hover:bg-slate-300 hover:text-slate-800 dark:bg-black/40 dark:text-[#9ca3af] dark:border-transparent dark:hover:bg-black/60"
+                          aria-label="Закрыть"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      </div>
 
-                    <ProfileTab
-                      userId={1}
-                      onAvatarChange={(url) =>
-                        setUserProfile((prev) =>
-                          prev ? { ...prev, avatar_url: url ?? prev.avatar_url ?? null } : { avatar_url: url ?? null }
-                        )
-                      }
-                    />
+                      <ProfileTab
+                        userId={1}
+                        onAvatarChange={(url) =>
+                          setUserProfile((prev) =>
+                            prev
+                              ? { ...prev, avatar_url: url ?? prev.avatar_url ?? null }
+                              : { avatar_url: url ?? null }
+                          )
+                        }
+                      />
+                    </div>
                   )}
                   {activeTab === 'settings' && (
                     <div className="space-y-4">
