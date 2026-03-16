@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
 import type { FC, FormEvent, ChangeEvent } from 'react';
-import { Mail, Lock, Check, X, Camera } from 'lucide-react';
+import { Lock, Check, X, Camera } from 'lucide-react';
 
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -298,78 +298,87 @@ const ProfileTab: FC<ProfileTabProps> = ({ userId, onAvatarChange }) => {
       {!isLoading && profile && (
         <form
           onSubmit={handleSubmit}
-          className="mt-1 rounded-2xl border border-slate-200/90 bg-white shadow-sm shadow-slate-200/70 dark:border-white/10 dark:bg-[#020617] p-4 space-y-4"
+          className="mt-1 rounded-2xl border border-slate-200/90 bg-white shadow-sm shadow-slate-200/70 dark:border-white/10 dark:bg-[#020617] p-4 space-y-3"
         >
-        <div className="space-y-1.5">
-          <label className="text-xs font-semibold text-slate-500 dark:text-[#94a3b8] uppercase tracking-wide">
+        <div className="space-y-1">
+          <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
             Логин
-          </label>
+          </p>
           <Input
             value={profile.login}
             disabled
-            className="bg-slate-50 dark:bg-black/40 border-slate-200 dark:border-white/10 text-sm text-slate-900 dark:text-slate-50"
+            className="bg-slate-50 dark:bg-black/40 border-slate-200 dark:border-white/10 text-base text-slate-900 dark:text-slate-50"
           />
         </div>
 
-        <div className="space-y-1.5">
-          <label className="text-xs font-semibold text-slate-500 dark:text-[#94a3b8] uppercase tracking-wide flex items-center gap-1.5">
-            <Mail className="h-3.5 w-3.5 text-slate-500 dark:text-[#64748b]" />
+        <div className="space-y-1">
+          <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
             Почта
-          </label>
+          </p>
           <Input
             type="email"
             value={profile.email}
             onChange={(e) => setProfile((p) => (p ? { ...p, email: e.target.value } : null))}
-            className="bg-slate-50 dark:bg-black/30 border-slate-200 dark:border-white/10 text-sm text-slate-900 dark:text-slate-50"
+            className="bg-slate-50 dark:bg-black/30 border-slate-200 dark:border-white/10 text-base text-slate-900 dark:text-slate-50"
             placeholder="you@example.com"
             required
           />
           {hasEmailChanged && (
-            <p className="text-xs text-amber-600 dark:text-amber-400">
+            <p className="text-[11px] text-amber-600 dark:text-amber-400">
               При изменении почты понадобится подтверждение.
             </p>
           )}
         </div>
 
-        <div className="space-y-1.5">
-          <label className="text-xs font-semibold text-slate-500 dark:text-[#94a3b8] uppercase tracking-wide">
-            ФИО
-          </label>
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+          <div className="space-y-1">
+            <p className="text-[11px] font-medium text-slate-500 dark:text-[#94a3b8]">
+              Фамилия
+            </p>
             <Input
               type="text"
               value={profile.last_name}
               onChange={(e) =>
                 setProfile((p) => (p ? { ...p, last_name: e.target.value } : p))
               }
-              className="bg-slate-50 dark:bg-black/30 border-slate-200 dark:border-white/10 text-sm text-slate-900 dark:text-slate-50"
+              className="bg-slate-50 dark:bg-black/30 border-slate-200 dark:border-white/10 text-base text-slate-900 dark:text-slate-50"
               placeholder="Фамилия"
             />
+          </div>
+          <div className="space-y-1">
+            <p className="text-[11px] font-medium text-slate-500 dark:text-[#94a3b8]">
+              Имя
+            </p>
             <Input
               type="text"
               value={profile.first_name}
               onChange={(e) =>
                 setProfile((p) => (p ? { ...p, first_name: e.target.value } : p))
               }
-              className="bg-slate-50 dark:bg-black/30 border-slate-200 dark:border-white/10 text-sm text-slate-900 dark:text-slate-50"
+              className="bg-slate-50 dark:bg-black/30 border-slate-200 dark:border-white/10 text-base text-slate-900 dark:text-slate-50"
               placeholder="Имя"
             />
+          </div>
+          <div className="space-y-1">
+            <p className="text-[11px] font-medium text-slate-500 dark:text-[#94a3b8]">
+              Отчество
+            </p>
             <Input
               type="text"
               value={profile.middle_name}
               onChange={(e) =>
                 setProfile((p) => (p ? { ...p, middle_name: e.target.value } : p))
               }
-              className="bg-slate-50 dark:bg-black/30 border-slate-200 dark:border-white/10 text-sm text-slate-900 dark:text-slate-50"
+              className="bg-slate-50 dark:bg-black/30 border-slate-200 dark:border-white/10 text-base text-slate-900 dark:text-slate-50"
               placeholder="Отчество"
             />
           </div>
         </div>
 
-        <div className="space-y-1.5">
-          <label className="text-xs font-semibold text-slate-500 dark:text-[#94a3b8] uppercase tracking-wide">
+        <div className="space-y-1">
+          <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] uppercase tracking-wide">
             Номер телефона
-          </label>
+          </p>
           <Input
             type="tel"
             value={profile.phone}
@@ -378,51 +387,66 @@ const ProfileTab: FC<ProfileTabProps> = ({ userId, onAvatarChange }) => {
                 p ? { ...p, phone: formatPhone(e.target.value) } : p,
               )
             }
-            className="bg-slate-50 dark:bg-black/30 border-slate-200 dark:border-white/10 text-sm text-slate-900 dark:text-slate-50"
+            className="bg-slate-50 dark:bg-black/30 border-slate-200 dark:border-white/10 text-base text-slate-900 dark:text-slate-50"
             placeholder="+79991234567"
           />
         </div>
 
-        <div className="space-y-1.5">
-          <label className="text-xs font-semibold text-slate-500 dark:text-[#94a3b8] uppercase tracking-wide">
-            Адрес
-          </label>
-          <div className="space-y-2">
+        <div className="space-y-2">
+          <div className="space-y-1">
+            <p className="text-[11px] font-medium text-slate-500 dark:text-[#94a3b8]">
+              Город
+            </p>
             <Input
               type="text"
               value={profile.city}
               onChange={(e) =>
                 setProfile((p) => (p ? { ...p, city: e.target.value } : p))
               }
-              className="bg-slate-50 dark:bg-black/30 border-slate-200 dark:border-white/10 text-sm text-slate-900 dark:text-slate-50"
+              className="bg-slate-50 dark:bg-black/30 border-slate-200 dark:border-white/10 text-base text-slate-900 dark:text-slate-50"
               placeholder="Город"
             />
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+          </div>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+            <div className="space-y-1">
+              <p className="text-[11px] font-medium text-slate-500 dark:text-[#94a3b8]">
+                Улица
+              </p>
               <Input
                 type="text"
                 value={profile.street}
                 onChange={(e) =>
                   setProfile((p) => (p ? { ...p, street: e.target.value } : p))
                 }
-                className="bg-slate-50 dark:bg-black/30 border-slate-200 dark:border-white/10 text-sm text-slate-900 dark:text-slate-50"
+                className="bg-slate-50 dark:bg-black/30 border-slate-200 dark:border-white/10 text-base text-slate-900 dark:text-slate-50"
                 placeholder="Улица"
               />
+            </div>
+            <div className="space-y-1">
+              <p className="text-[11px] font-medium text-slate-500 dark:text-[#94a3b8]">
+                Дом
+              </p>
               <Input
                 type="text"
                 value={profile.house}
                 onChange={(e) =>
                   setProfile((p) => (p ? { ...p, house: e.target.value } : p))
                 }
-                className="bg-slate-50 dark:bg-black/30 border-slate-200 dark:border-white/10 text-sm text-slate-900 dark:text-slate-50"
+                className="bg-slate-50 dark:bg-black/30 border-slate-200 dark:border-white/10 text-base text-slate-900 dark:text-slate-50"
                 placeholder="Дом"
               />
+            </div>
+            <div className="space-y-1">
+              <p className="text-[11px] font-medium text-slate-500 dark:text-[#94a3b8]">
+                Квартира
+              </p>
               <Input
                 type="text"
                 value={profile.apartment}
                 onChange={(e) =>
                   setProfile((p) => (p ? { ...p, apartment: e.target.value } : p))
                 }
-                className="bg-slate-50 dark:bg-black/30 border-slate-200 dark:border-white/10 text-sm text-slate-900 dark:text-slate-50"
+                className="bg-slate-50 dark:bg-black/30 border-slate-200 dark:border-white/10 text-base text-slate-900 dark:text-slate-50"
                 placeholder="Кв."
               />
             </div>
@@ -445,7 +469,7 @@ const ProfileTab: FC<ProfileTabProps> = ({ userId, onAvatarChange }) => {
           <Button
             type="submit"
             disabled={isSaving}
-            className="px-5 py-2 rounded-xl bg-sky-500 hover:bg-sky-600 text-xs font-semibold text-white shadow-md shadow-sky-500/40"
+            className="w-full md:w-auto px-5 py-2 rounded-xl bg-sky-500 hover:bg-sky-600 text-xs font-semibold text-white shadow-md shadow-sky-500/40"
           >
             {isSaving ? 'Сохранение…' : 'Сохранить изменения'}
           </Button>
