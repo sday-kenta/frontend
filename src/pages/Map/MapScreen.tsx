@@ -262,6 +262,13 @@ export default function MapScreen() {
 
   const handleSheetTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
     if (!isSheetOpen) return;
+
+    // Если пользователь начинает жест внутри прокручиваемой области,
+    // даём ему скроллить контент и не запускаем drag для закрытия слайда
+    const target = e.target as HTMLElement | null;
+    if (target && target.closest('[data-sheet-scrollable="true"]')) {
+      return;
+    }
     const touch = e.touches[0];
     sheetDragStartYRef.current = touch.clientY;
     setIsSheetDragging(true);
@@ -1018,7 +1025,7 @@ export default function MapScreen() {
               ? `translateY(${sheetDragY}px)`
               : 'translateY(calc(100% + 32px))',
             transition: isSheetDragging ? 'none' : undefined,
-            touchAction: 'none',
+            touchAction: 'pan-y',
           }}
           onTouchStart={handleSheetTouchStart}
           onTouchMove={handleSheetTouchMove}
@@ -1033,23 +1040,13 @@ export default function MapScreen() {
             )}
           >
             {sheetMode === 'marker' && marker ? (
-              <div className="flex-1 overflow-y-auto pb-2">
-                <div className="mb-1 flex items-center justify-between gap-3">
-                  <h2 className="text-base font-semibold text-slate-900 dark:text-white">
-                    Выбранная точка
-                  </h2>
-                  <button
-                    type="button"
-                    onClick={closeSheet}
-                    className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 shadow-sm border border-slate-300 hover:bg-slate-300 hover:text-slate-800 dark:bg-black/40 dark:text-[#9ca3af] dark:border-transparent dark:hover:bg-black/60"
-                    aria-label="Закрыть"
-                  >
-                    <X className="h-4 w-4" />
-                  </button>
-                </div>
-                <p className="text-xs text-slate-600 dark:text-[#9ca3af]">
-                  {marker.address ?? 'Адрес уточняется…'}
+              <div className="flex-1 overflow-y-auto pb-2" data-sheet-scrollable="true">
+                <p className="text-[11px] uppercase tracking-wide text-[#64748b] mb-1">
+                  Выбранная точка
                 </p>
+                <h2 className="text-base font-semibold text-slate-900 dark:text-white line-clamp-3">
+                  {marker.address ?? 'Адрес уточняется…'}
+                </h2>
                 <p className="text-xs text-slate-600 dark:text-[#9ca3af] mt-1 flex items-center gap-2">
                   {marker.lat.toFixed(6)}, {marker.lng.toFixed(6)}
                   <button
@@ -1081,8 +1078,11 @@ export default function MapScreen() {
                 </div>
               </div>
             ) : sheetMode === 'rubric' && marker ? (
-              <div className="flex-1 overflow-y-auto pb-2 sheet-swap-enter">
-                {rubricStep === 'select' ? (
+              <div
+                className="flex-1 overflow-y-auto pb-2 sheet-swap-enter"
+                data-sheet-scrollable="true"
+              >
+                {!selectedRubric ? (
                   <>
                     <div className="mb-1 flex items-center justify-between gap-3">
                       <h2 className="text-base font-semibold text-slate-900 dark:text-white">
@@ -1347,7 +1347,21 @@ export default function MapScreen() {
               </div>
             ) : (
               <>
-                <div className="flex-1 overflow-y-auto space-y-4 pb-2">
+                {/* Заголовок текущей вкладки */}
+                <div className="mb-3">
+                  <p className="text-[11px] uppercase tracking-wide text-[#64748b]">
+                    {activeTab === 'home' && 'Главная'}
+                    {activeTab === 'my' && 'Мои обращения'}
+                    {activeTab === 'all' && 'Все обращения'}
+                    {activeTab === 'profile' && 'Профиль'}
+                    {activeTab === 'settings' && 'Настройки'}
+                  </p>
+                </div>
+
+                <div
+                  className="flex-1 overflow-y-auto space-y-4 pb-2"
+                  data-sheet-scrollable="true"
+                >
                   {activeTab === 'home' && (
                     <div className="space-y-3">
                       <div className="flex items-center justify-between gap-3">
