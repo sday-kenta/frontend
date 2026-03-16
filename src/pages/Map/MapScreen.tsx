@@ -20,6 +20,8 @@ import {
   Car,
   ShoppingBag,
 } from 'lucide-react';
+import jsPDF from 'jspdf';
+import html2canvas from 'html2canvas';
 import { cn, resolveAvatarUrl } from '@/lib/utils';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import ProfileTabComponent from '@/components/ProfileTab';
@@ -95,6 +97,11 @@ export default function MapScreen() {
   const [settingsView, setSettingsView] = useState<'main' | 'about' | 'feedback'>('main');
   const [themeMode, setThemeMode] = useState<'light' | 'dark'>('dark');
   const [selectedRubric, setSelectedRubric] = useState<Rubric | null>(null);
+  const [rubricStep, setRubricStep] = useState<'select' | 'create' | 'preview'>('select');
+  const [reportTitle, setReportTitle] = useState('');
+  const [reportText, setReportText] = useState('');
+  const [reportPhotos, setReportPhotos] = useState<File[]>([]);
+  const [reportPhotoPreviews, setReportPhotoPreviews] = useState<string[]>([]);
   const [userProfile, setUserProfile] = useState<{
     first_name?: string;
     last_name?: string;
@@ -333,6 +340,7 @@ export default function MapScreen() {
   const handleCreateReport = () => {
     if (!marker) return;
     setSelectedRubric(null);
+    setRubricStep('select');
     setSheetMode('rubric');
   };
 
@@ -343,6 +351,255 @@ export default function MapScreen() {
     );
   };
 
+  const handleReportPhotosChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files) return;
+    const files = Array.from(e.target.files);
+    if (!files.length) return;
+
+    setReportPhotos((prev) => [...prev, ...files]);
+
+    // Чтобы можно было выбрать те же файлы повторно
+    e.target.value = '';
+  };
+
+  useEffect(() => {
+    const urls = reportPhotos.map((f) => URL.createObjectURL(f));
+    setReportPhotoPreviews(urls);
+    return () => {
+      urls.forEach((u) => URL.revokeObjectURL(u));
+    };
+  }, [reportPhotos]);
+
+  const handlePublishReport = () => {
+    // Заглушка отправки обращения
+    console.log('Новое обращение', {
+      rubric: selectedRubric,
+      marker,
+      title: reportTitle,
+      text: reportText,
+      photos: reportPhotos,
+    });
+    setReportTitle('');
+    setReportText('');
+    setReportPhotos([]);
+    setSelectedRubric(null);
+    setRubricStep('select');
+    closeSheet();
+  };
+
+  const getCurrentReportPayload = () => ({
+    rubric: selectedRubric,
+    marker,
+    title: reportTitle,
+    text: reportText,
+    photos: reportPhotos,
+  });
+
+  const buildReportHtml = () => {
+    const payload = getCurrentReportPayload();
+    const createdAt = new Date().toLocaleString('ru-RU');
+
+    const rubric = payload.rubric ? payload.rubric.title : 'Не выбрана';
+    const address = payload.marker?.address ?? 'Адрес не указан';
+    const coords = payload.marker
+      ? `${payload.marker.lat.toFixed(6)}, ${payload.marker.lng.toFixed(6)}`
+      : 'Не указаны';
+
+    const title = payload.title || 'Без темы';
+    const text = payload.text || 'Текст не указан';
+
+    return [
+      '<p style="margin:0 0 4px 0; font-weight:600;">Обращение гражданина</p>',
+      '<p style="margin:0 0 12px 0;">=====================</p>',
+      `<p style="margin:0 0 4px 0;"><strong>Дата создания:</strong> ${createdAt}</p>`,
+      '',
+      `<p style="margin:8px 0 4px 0;"><strong>Рубрика:</strong> ${rubric}</p>`,
+      `<p style="margin:0 0 4px 0;"><strong>Адрес:</strong> ${address}</p>`,
+      `<p style="margin:0 0 4px 0;"><strong>Координаты:</strong> ${coords}</p>`,
+      '',
+      `<p style="margin:12px 0 4px 0;"><strong>Тема:</strong> ${title}</p>`,
+      '',
+      '<p style="margin:12px 0 4px 0;"><strong>Текст обращения:</strong></p>',
+      `<p style="margin:0;">${text}</p>`,
+    ]
+      .filter(Boolean)
+      .join('\n');
+  };
+
+  const handleSaveDraft = () => {
+    // Заглушка: сохранение черновика внутри приложения
+    console.log('Сохранить черновик обращения', getCurrentReportPayload());
+  };
+
+  const handleSaveToFiles = async () => {
+    try {
+      const html = buildReportHtml();
+      const safeTitle = reportTitle.trim() || 'obrashenie';
+      const timestamp = new Date()
+        .toISOString()
+        .replace(/[:.]/g, '-')
+        .slice(0, 19);
+
+      const container = document.createElement('div');
+      container.style.position = 'fixed';
+      container.style.left = '-10000px';
+      container.style.top = '0';
+      container.style.width = '600px';
+      container.style.padding = '24px';
+      container.style.background = '#ffffff';
+      container.style.color = '#111827';
+      container.style.fontFamily =
+        'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+      container.style.fontSize = '12px';
+      container.style.lineHeight = '1.5';
+      container.style.whiteSpace = 'pre-wrap';
+      container.innerHTML = html;
+
+      if (reportPhotoPreviews[0]) {
+        const photoTitle = document.createElement('div');
+        photoTitle.style.marginTop = '16px';
+        photoTitle.style.fontWeight = 'bold';
+        photoTitle.textContent = 'Фото:';
+        container.appendChild(photoTitle);
+
+        const img = document.createElement('img');
+        img.src = reportPhotoPreviews[0];
+        img.alt = 'Фото из обращения';
+        img.style.display = 'block';
+        img.style.marginTop = '8px';
+        img.style.maxWidth = '100%';
+        img.style.maxHeight = '500px';
+        container.appendChild(img);
+      }
+      document.body.appendChild(container);
+
+      const canvas = await html2canvas(container, {
+        scale: 2,
+        backgroundColor: '#ffffff',
+      });
+
+      document.body.removeChild(container);
+
+      const imgData = canvas.toDataURL('image/png');
+
+      const doc = new jsPDF({
+        unit: 'pt',
+        format: 'a4',
+      });
+
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
+      const margin = 40;
+
+      const availableWidth = pageWidth - margin * 2;
+      const availableHeight = pageHeight - margin * 2;
+
+      const imgWidth = canvas.width;
+      const imgHeight = canvas.height;
+      const ratio = Math.min(
+        availableWidth / imgWidth,
+        availableHeight / imgHeight
+      );
+
+      const renderWidth = imgWidth * ratio;
+      const renderHeight = imgHeight * ratio;
+      const offsetX = (pageWidth - renderWidth) / 2;
+      const offsetY = margin;
+
+      doc.addImage(
+        imgData,
+        'PNG',
+        offsetX,
+        offsetY,
+        renderWidth,
+        renderHeight
+      );
+
+      const filename = `${safeTitle}-${timestamp}.pdf`;
+      doc.save(filename);
+    } catch (error) {
+      console.error('Не удалось сохранить обращение в файлы устройства', error);
+    }
+  };
+
+  const handleSendEmail = () => {
+    // Заглушка: отправка документа на email пользователя
+    console.log('Отправить обращение на email пользователя', getCurrentReportPayload());
+  };
+
+  const handlePrint = () => {
+    try {
+      const baseHtml = buildReportHtml();
+      const firstPhoto = reportPhotoPreviews[0];
+      const photoHtml = firstPhoto
+        ? `<div style="margin-top:16px;">
+             <img src="${firstPhoto}" alt="Фото из обращения" style="max-width:100%;max-height:500px;margin-top:8px;" />
+           </div>`
+        : '';
+
+      const printableHtml = `${baseHtml}${photoHtml}`;
+
+      const iframe = document.createElement('iframe');
+      iframe.style.position = 'fixed';
+      iframe.style.right = '0';
+      iframe.style.bottom = '0';
+      iframe.style.width = '0';
+      iframe.style.height = '0';
+      iframe.style.border = '0';
+      document.body.appendChild(iframe);
+
+      const frameWindow = iframe.contentWindow;
+      if (!frameWindow) {
+        document.body.removeChild(iframe);
+        console.error('Не удалось инициализировать окно печати');
+        return;
+      }
+
+      frameWindow.document.open();
+      frameWindow.document.write(`<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charSet="utf-8" />
+    <title>Обращение для печати</title>
+    <style>
+      body {
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        font-size: 14px;
+        line-height: 1.5;
+        color: #111827;
+        padding: 24px;
+      }
+      h1 {
+        font-size: 20px;
+        margin-bottom: 16px;
+      }
+      .content {
+        white-space: normal;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Обращение гражданина</h1>
+    <div class="content">${printableHtml}</div>
+  </body>
+</html>`);
+      frameWindow.document.close();
+
+      iframe.onload = () => {
+        try {
+          frameWindow.focus();
+          frameWindow.print();
+        } finally {
+          setTimeout(() => {
+            document.body.removeChild(iframe);
+          }, 1000);
+        }
+      };
+    } catch (error) {
+      console.error('Не удалось отправить обращение на печать', error);
+    }
+  };
+
   const zoomIn = () => {
     mapInstanceRef.current?.zoomIn();
   };
@@ -351,15 +608,16 @@ export default function MapScreen() {
   };
 
   const openTab = (tab: Tab) => {
+    if (tab === 'home') {
+      // Нажатие на «Главная» просто скрывает вкладки
+      setSheetMode(null);
+      return;
+    }
     setActiveTab(tab);
     if (tab === 'settings') {
       setSettingsView('main');
     }
-    if (tab === 'home') {
-      setSheetMode(null);
-    } else {
-      setSheetMode('tabs');
-    }
+    setSheetMode('tabs');
   };
 
   const closeSheet = () => {
@@ -373,7 +631,7 @@ export default function MapScreen() {
       clearTimeout(closeSheetTimeoutRef.current);
       closeSheetTimeoutRef.current = null;
     }
-    // Мгновенно возвращаем подсветку на «Главная»
+    // Мгновенно возвращаем подсветку на «Главная» как базовую вкладку
     setActiveTab('home');
   };
 
@@ -771,27 +1029,27 @@ export default function MapScreen() {
               'glass-dock rounded-t-[32px] rounded-b-none px-4 pt-3 pb-6 flex flex-col',
               sheetMode === 'marker'
                 ? 'max-h-[65vh] overflow-hidden'
-                : 'h-[calc(100vh-40px)] overflow-hidden'
+                : 'h-[calc(100vh-80px)] overflow-hidden'
             )}
           >
-            <div className="flex items-center justify-end mb-2">
-              <button
-                type="button"
-                onClick={closeSheet}
-                className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 shadow-sm border border-slate-300 hover:bg-slate-300 hover:text-slate-800 dark:bg-black/40 dark:text-[#9ca3af] dark:border-transparent dark:hover:bg-black/60"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-
             {sheetMode === 'marker' && marker ? (
               <div className="flex-1 overflow-y-auto pb-2">
-                <p className="text-[11px] uppercase tracking-wide text-[#64748b] mb-1">
-                  Выбранная точка
-                </p>
-                <h2 className="text-base font-semibold text-slate-900 dark:text-white line-clamp-3">
+                <div className="mb-1 flex items-center justify-between gap-3">
+                  <h2 className="text-base font-semibold text-slate-900 dark:text-white">
+                    Выбранная точка
+                  </h2>
+                  <button
+                    type="button"
+                    onClick={closeSheet}
+                    className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 shadow-sm border border-slate-300 hover:bg-slate-300 hover:text-slate-800 dark:bg-black/40 dark:text-[#9ca3af] dark:border-transparent dark:hover:bg-black/60"
+                    aria-label="Закрыть"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+                <p className="text-xs text-slate-600 dark:text-[#9ca3af]">
                   {marker.address ?? 'Адрес уточняется…'}
-                </h2>
+                </p>
                 <p className="text-xs text-slate-600 dark:text-[#9ca3af] mt-1 flex items-center gap-2">
                   {marker.lat.toFixed(6)}, {marker.lng.toFixed(6)}
                   <button
@@ -824,16 +1082,26 @@ export default function MapScreen() {
               </div>
             ) : sheetMode === 'rubric' && marker ? (
               <div className="flex-1 overflow-y-auto pb-2 sheet-swap-enter">
-                {!selectedRubric ? (
+                {rubricStep === 'select' ? (
                   <>
-                    <p className="text-[11px] uppercase tracking-wide text-[#64748b] mb-2">
-                      Выбор рубрики
-                    </p>
-                    <h2 className="text-base font-semibold text-slate-900 dark:text-white mb-1">
+                    <div className="mb-1 flex items-center justify-between gap-3">
+                      <h2 className="text-base font-semibold text-slate-900 dark:text-white">
+                        Выбор рубрики
+                      </h2>
+                      <button
+                        type="button"
+                        onClick={closeSheet}
+                        className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 shadow-sm border border-slate-300 hover:bg-slate-300 hover:text-slate-800 dark:bg-black/40 dark:text-[#9ca3af] dark:border-transparent dark:hover:bg-black/60"
+                        aria-label="Закрыть"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </div>
+                    <p className="text-[11px] uppercase tracking-wide text-[#64748b] mb-1">
                       Выберите тип инцидента
-                    </h2>
+                    </p>
                     <p className="text-xs text-slate-600 dark:text-[#94a3b8] mb-4">
-                      По адресу {marker.address ?? 'адрес уточняется'}:{" "}
+                      По адресу {marker.address ?? 'адрес уточняется'}:{' '}
                       {marker.lat.toFixed(6)}, {marker.lng.toFixed(6)}
                     </p>
 
@@ -842,7 +1110,10 @@ export default function MapScreen() {
                         <button
                           key={rubric.id}
                           type="button"
-                          onClick={() => setSelectedRubric(rubric)}
+                          onClick={() => {
+                            setSelectedRubric(rubric);
+                            setRubricStep('create');
+                          }}
                           className="w-full group relative bg-white rounded-2xl border border-slate-200 hover:border-slate-300 dark:bg-[#020617] dark:border-white/10 dark:hover:border-white/20 transition-all overflow-hidden text-left"
                         >
                           <div
@@ -868,44 +1139,230 @@ export default function MapScreen() {
                       ))}
                     </div>
                   </>
+                ) : rubricStep === 'create' ? (
+                  selectedRubric && (
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setRubricStep('select');
+                            setSelectedRubric(null);
+                          }}
+                          className="text-xs text-slate-600 hover:text-slate-900 dark:text-[#94a3b8] dark:hover:text-white"
+                        >
+                          ← Назад к выбору рубрики
+                        </button>
+                        <button
+                          type="button"
+                          onClick={closeSheet}
+                          className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 shadow-sm border border-slate-300 hover:bg-slate-300 hover:text-slate-800 dark:bg-black/40 dark:text-[#9ca3af] dark:border-transparent dark:hover:bg-black/60"
+                          aria-label="Закрыть"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      </div>
+
+                      <div>
+                        <p className="text-[11px] uppercase tracking-wide text-[#64748b] mb-1">
+                          Создание обращения
+                        </p>
+                        <h2 className="text-base font-semibold text-slate-900 dark:text-white">
+                          {selectedRubric.title}
+                        </h2>
+                        <p className="text-xs text-slate-600 dark:text-[#94a3b8] mt-1">
+                          {marker.address ?? 'Адрес уточняется'} —{' '}
+                          {marker.lat.toFixed(6)}, {marker.lng.toFixed(6)}
+                        </p>
+                      </div>
+
+                      <div className="space-y-3">
+                        <div className="space-y-1">
+                          <label className="text-xs font-medium text-slate-700 dark:text-slate-200">
+                            Тема обращения
+                          </label>
+                          <input
+                            type="text"
+                            value={reportTitle}
+                            onChange={(e) => setReportTitle(e.target.value)}
+                            placeholder="Кратко опишите проблему"
+                            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none dark:bg-[#020617] dark:border-white/10 dark:text-white"
+                          />
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="text-xs font-medium text-slate-700 dark:text-slate-200">
+                            Текст обращения
+                          </label>
+                          <textarea
+                            value={reportText}
+                            onChange={(e) => setReportText(e.target.value)}
+                            rows={4}
+                            placeholder="Опишите, что произошло, когда и при каких условиях"
+                            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none resize-none dark:bg-[#020617] dark:border-white/10 dark:text-white"
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-xs font-medium text-slate-700 dark:text-slate-200">
+                            Фото
+                          </label>
+                          <label className="flex cursor-pointer items-center justify-center rounded-xl border border-dashed border-slate-300 bg-white/40 px-3 py-3 text-xs text-slate-600 hover:bg-slate-50 dark:border-white/10 dark:bg-[#020617] dark:text-[#94a3b8] dark:hover:bg-white/5">
+                            <span>Добавить фото</span>
+                            <input
+                              type="file"
+                              accept="image/*"
+                              multiple
+                              className="hidden"
+                              onChange={handleReportPhotosChange}
+                            />
+                          </label>
+                          {reportPhotos.length > 0 && (
+                            <p className="text-[11px] text-slate-500 dark:text-[#9ca3af]">
+                              Выбрано файлов: {reportPhotos.length}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => setRubricStep('preview')}
+                        className="w-full rounded-2xl bg-sky-500 px-4 py-3 text-sm font-medium text-white shadow-md hover:bg-sky-600 active:bg-sky-700 transition-colors"
+                        disabled={!reportTitle || !reportText}
+                      >
+                        Далее
+                      </button>
+                    </div>
+                  )
                 ) : (
-                  <div className="space-y-3">
-                    <button
-                      type="button"
-                      onClick={() => setSelectedRubric(null)}
-                      className="text-xs text-slate-600 hover:text-slate-900 dark:text-[#94a3b8] dark:hover:text-white"
-                    >
-                      ← Назад к выбору рубрики
-                    </button>
-                    <p className="text-[11px] uppercase tracking-wide text-[#64748b] mb-1">
-                      Рубрика обращения
-                    </p>
-                    <h2 className="text-base font-semibold text-slate-900 dark:text-white">
-                      {selectedRubric.title}
-                    </h2>
-                    <p className="text-xs text-slate-600 dark:text-[#94a3b8]">
-                      Заглушка страницы. Здесь позже появится подробное описание этой рубрики,
-                      примеры ситуаций, когда её нужно выбирать, и подсказки по оформлению обращения.
-                    </p>
-                  </div>
+                  selectedRubric && (
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <button
+                          type="button"
+                          onClick={() => setRubricStep('create')}
+                          className="text-xs text-slate-600 hover:text-slate-900 dark:text-[#94a3b8] dark:hover:text-white"
+                        >
+                          ← Назад к редактированию
+                        </button>
+                        <button
+                          type="button"
+                          onClick={closeSheet}
+                          className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 shadow-sm border border-slate-300 hover:bg-slate-300 hover:text-slate-800 dark:bg-black/40 dark:text-[#9ca3af] dark:border-transparent dark:hover:bg-black/60"
+                          aria-label="Закрыть"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      </div>
+
+                      <div>
+                        <p className="text-[11px] uppercase tracking-wide text-[#64748b] mb-1">
+                          Предпросмотр
+                        </p>
+                        <h2 className="text-base font-semibold text-slate-900 dark:text-white">
+                          {reportTitle || 'Без темы'}
+                        </h2>
+                        <p className="text-xs text-slate-600 dark:text-[#94a3b8] mt-1">
+                          {selectedRubric.title} • {marker.address ?? 'Адрес уточняется'} •{' '}
+                          {marker.lat.toFixed(6)}, {marker.lng.toFixed(6)}
+                        </p>
+                      </div>
+
+                      <div className="rounded-2xl border border-slate-200 bg-white/70 p-4 text-sm text-slate-900 dark:border-white/10 dark:bg-[#020617] dark:text-white">
+                        <div className="whitespace-pre-wrap break-words">
+                          {reportText || 'Текст не указан'}
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        <p className="text-xs font-medium text-slate-700 dark:text-slate-200">
+                          Фото
+                        </p>
+                        {reportPhotoPreviews.length === 0 ? (
+                          <p className="text-xs text-slate-500 dark:text-[#9ca3af]">Фото не добавлены</p>
+                        ) : (
+                          <>
+                            <div className="w-32">
+                              <img
+                                src={reportPhotoPreviews[0]}
+                                alt="Превью первого фото"
+                                className="aspect-square w-full rounded-xl object-cover border border-slate-200 dark:border-white/10"
+                              />
+                            </div>
+                            <p className="text-[11px] text-slate-500 dark:text-[#9ca3af]">
+                              Всего фото: {reportPhotoPreviews.length}
+                            </p>
+                          </>
+                        )}
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={handlePublishReport}
+                        className="w-full rounded-2xl bg-sky-500 px-4 py-3 text-sm font-medium text-white shadow-md hover:bg-sky-600 active:bg-sky-700 transition-colors"
+                        disabled={!reportTitle || !reportText}
+                      >
+                        Опубликовать обращение
+                      </button>
+
+                      <div className="space-y-2 pt-1">
+                        <p className="text-[11px] uppercase tracking-wide text-[#64748b]">
+                          Дополнительные действия
+                        </p>
+                        <div className="grid grid-cols-2 gap-2">
+                          <button
+                            type="button"
+                            onClick={handleSaveDraft}
+                            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 hover:bg-slate-50 dark:border-white/10 dark:bg-[#020617] dark:text-[#e5e7eb] dark:hover:bg-white/5"
+                          >
+                            В черновики приложения
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleSaveToFiles}
+                            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 hover:bg-slate-50 dark:border-white/10 dark:bg-[#020617] dark:text-[#e5e7eb] dark:hover:bg:white/5"
+                          >
+                            В документы смартфона
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleSendEmail}
+                            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 hover:bg-slate-50 dark:border-white/10 dark:bg-[#020617] dark:text-[#e5e7eb] dark:hover:bg:white/5"
+                          >
+                            На e‑mail пользователя
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handlePrint}
+                            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 hover:bg-slate-50 dark:border:white/10 dark:bg-[#020617] dark:text-[#e5e7eb] dark:hover:bg:white/5"
+                          >
+                            Отправить на печать
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )
                 )}
               </div>
             ) : (
               <>
-                {/* Заголовок текущей вкладки */}
-                <div className="mb-3">
-                  <p className="text-[11px] uppercase tracking-wide text-[#64748b]">
-                    {activeTab === 'home' && 'Главная'}
-                    {activeTab === 'my' && 'Мои обращения'}
-                    {activeTab === 'all' && 'Все обращения'}
-                    {activeTab === 'profile' && 'Профиль'}
-                    {activeTab === 'settings' && 'Настройки'}
-                  </p>
-                </div>
-
                 <div className="flex-1 overflow-y-auto space-y-4 pb-2">
                   {activeTab === 'home' && (
                     <div className="space-y-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <h2 className="text-base font-semibold text-slate-900 dark:text-white">
+                          Главная
+                        </h2>
+                        <button
+                          type="button"
+                          onClick={closeSheet}
+                          className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 shadow-sm border border-slate-300 hover:bg-slate-300 hover:text-slate-800 dark:bg-black/40 dark:text-[#9ca3af] dark:border-transparent dark:hover:bg-black/60"
+                          aria-label="Закрыть"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      </div>
                       <div className="flex gap-2 overflow-x-auto pb-1">
                         {Array.from({ length: 4 }).map((_, i) => (
                           <div
@@ -946,7 +1403,19 @@ export default function MapScreen() {
 
                   {activeTab === 'my' && (
                     <div className="space-y-3">
-                      <h2 className="text-base font-semibold text-slate-900 dark:text-white">Мои обращения</h2>
+                      <div className="flex items-center justify-between gap-3">
+                        <h2 className="text-base font-semibold text-slate-900 dark:text-white">
+                          Мои обращения
+                        </h2>
+                        <button
+                          type="button"
+                          onClick={closeSheet}
+                          className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 shadow-sm border border-slate-300 hover:bg-slate-300 hover:text-slate-800 dark:bg-black/40 dark:text-[#9ca3af] dark:border-transparent dark:hover:bg-black/60"
+                          aria-label="Закрыть"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      </div>
                       <p className="text-sm text-slate-600 dark:text-[#94a3b8]">
                         Заглушка страницы. Тут будет список ваших обращений и фильтры.
                       </p>
@@ -960,7 +1429,19 @@ export default function MapScreen() {
 
                   {activeTab === 'all' && (
                     <div className="space-y-3">
-                      <h2 className="text-base font-semibold text-slate-900 dark:text-white">Все обращения</h2>
+                      <div className="flex items-center justify-between gap-3">
+                        <h2 className="text-base font-semibold text-slate-900 dark:text-white">
+                          Все обращения
+                        </h2>
+                        <button
+                          type="button"
+                          onClick={closeSheet}
+                          className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 shadow-sm border border-slate-300 hover:bg-slate-300 hover:text-slate-800 dark:bg-black/40 dark:text-[#9ca3af] dark:border-transparent dark:hover:bg-black/60"
+                          aria-label="Закрыть"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      </div>
                       <p className="text-sm text-slate-600 dark:text-[#94a3b8]">
                         Здесь будет общий поток обращений (пока заглушка).
                       </p>
@@ -972,20 +1453,50 @@ export default function MapScreen() {
                     </div>
                   )}
                   {activeTab === 'profile' && (
-                    <ProfileTab
-                      userId={1}
-                      onAvatarChange={(url) =>
-                        setUserProfile((prev) =>
-                          prev ? { ...prev, avatar_url: url ?? prev.avatar_url ?? null } : { avatar_url: url ?? null }
-                        )
-                      }
-                    />
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <h2 className="text-base font-semibold text-slate-900 dark:text-white">
+                          Профиль
+                        </h2>
+                        <button
+                          type="button"
+                          onClick={closeSheet}
+                          className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 shadow-sm border border-slate-300 hover:bg-slate-300 hover:text-slate-800 dark:bg-black/40 dark:text-[#9ca3af] dark:border-transparent dark:hover:bg-black/60"
+                          aria-label="Закрыть"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      </div>
+
+                      <ProfileTab
+                        userId={1}
+                        onAvatarChange={(url) =>
+                          setUserProfile((prev) =>
+                            prev
+                              ? { ...prev, avatar_url: url ?? prev.avatar_url ?? null }
+                              : { avatar_url: url ?? null }
+                          )
+                        }
+                      />
+                    </div>
                   )}
                   {activeTab === 'settings' && (
                     <div className="space-y-4">
                       {settingsView === 'main' && (
                         <>
-                          <h2 className="text-base font-semibold text-slate-900 dark:text-white">Настройки</h2>
+                          <div className="flex items-center justify-between gap-3">
+                            <h2 className="text-base font-semibold text-slate-900 dark:text-white">
+                              Настройки
+                            </h2>
+                            <button
+                              type="button"
+                              onClick={closeSheet}
+                              className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 shadow-sm border border-slate-300 hover:bg-slate-300 hover:text-slate-800 dark:bg-black/40 dark:text-[#9ca3af] dark:border-transparent dark:hover:bg-black/60"
+                              aria-label="Закрыть настройки"
+                            >
+                              <X className="h-4 w-4" />
+                            </button>
+                          </div>
 
                           <div className="mt-1 rounded-2xl border border-slate-200 bg-white dark:border-white/10 dark:bg-[#020617] p-4 flex items-center justify-between">
                             <div>
@@ -1051,13 +1562,23 @@ export default function MapScreen() {
 
                       {settingsView === 'about' && (
                         <div className="space-y-3">
-                          <button
-                            type="button"
-                            onClick={() => setSettingsView('main')}
-                            className="text-xs text-slate-600 hover:text-slate-900 dark:text-[#94a3b8] dark:hover:text-white"
-                          >
-                            ← Назад к настройкам
-                          </button>
+                          <div className="flex items-center justify-between gap-3">
+                            <button
+                              type="button"
+                              onClick={() => setSettingsView('main')}
+                              className="text-xs text-slate-600 hover:text-slate-900 dark:text-[#94a3b8] dark:hover:text-white"
+                            >
+                              ← Назад к настройкам
+                            </button>
+                            <button
+                              type="button"
+                              onClick={closeSheet}
+                              className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 shadow-sm border border-slate-300 hover:bg-slate-300 hover:text-slate-800 dark:bg-black/40 dark:text-[#9ca3af] dark:border-transparent dark:hover:bg-black/60"
+                              aria-label="Закрыть"
+                            >
+                              <X className="h-4 w-4" />
+                            </button>
+                          </div>
                           <h2 className="text-base font-semibold text-slate-900 dark:text-white">О проекте</h2>
                           <p className="text-sm text-slate-600 dark:text-[#94a3b8]">
                             Заглушка страницы. Здесь будет описание сервиса, его целей и того, как
@@ -1068,13 +1589,23 @@ export default function MapScreen() {
 
                       {settingsView === 'feedback' && (
                         <div className="space-y-3">
-                          <button
-                            type="button"
-                            onClick={() => setSettingsView('main')}
-                            className="text-xs text-slate-600 hover:text-slate-900 dark:text-[#94a3b8] dark:hover:text-white"
-                          >
-                            ← Назад к настройкам
-                          </button>
+                          <div className="flex items-center justify-between gap-3">
+                            <button
+                              type="button"
+                              onClick={() => setSettingsView('main')}
+                              className="text-xs text-slate-600 hover:text-slate-900 dark:text-[#94a3b8] dark:hover:text-white"
+                            >
+                              ← Назад к настройкам
+                            </button>
+                            <button
+                              type="button"
+                              onClick={closeSheet}
+                              className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 shadow-sm border border-slate-300 hover:bg-slate-300 hover:text-slate-800 dark:bg-black/40 dark:text-[#9ca3af] dark:border-transparent dark:hover:bg-black/60"
+                              aria-label="Закрыть"
+                            >
+                              <X className="h-4 w-4" />
+                            </button>
+                          </div>
                           <h2 className="text-base font-semibold text-slate-900 dark:text-white">Обратная связь</h2>
                           <p className="text-sm text-slate-600 dark:text-[#94a3b8]">
                             Заглушка страницы. Здесь позже появятся формы и контакты для связи с
