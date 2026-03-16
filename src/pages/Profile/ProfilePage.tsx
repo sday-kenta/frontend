@@ -1,5 +1,4 @@
-import { useState, useMemo } from 'react';
-import type { FormEvent } from 'react';
+import { useState, useMemo, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useLocation } from 'react-router';
 import { FolderOpen, Home, User, Mail, Lock, Check, X } from 'lucide-react';

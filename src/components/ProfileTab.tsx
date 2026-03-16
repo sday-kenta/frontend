@@ -319,9 +319,7 @@ const ProfileTab: FC<ProfileTabProps> = ({ userId, onAvatarChange }) => {
           <Input
             type="email"
             value={profile.email}
-            onChange={(e) =>
-              setProfile((p) => (p ? { ...p, email: e.target.value } : p))
-            }
+            onChange={(e) => setProfile((p) => (p ? { ...p, email: e.target.value } : null))}
             className="bg-slate-50 dark:bg-black/30 border-slate-200 dark:border-white/10 text-sm text-slate-900 dark:text-slate-50"
             placeholder="you@example.com"
             required
