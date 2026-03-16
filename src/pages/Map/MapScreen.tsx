@@ -70,7 +70,7 @@ async function searchAddress(q: string): Promise<GeocodingResult[]> {
   }));
 }
 
-type Tab = 'home' | 'my' | 'all' | 'profile' | 'settings';
+type Tab = 'home' | 'my' | 'all' | 'profile' | 'settings' | 'auth';
 type SheetMode = 'tabs' | 'marker' | 'rubric' | null;
 
 export default function MapScreen() {
@@ -103,10 +103,15 @@ export default function MapScreen() {
   const [reportPhotos, setReportPhotos] = useState<File[]>([]);
   const [reportPhotoPreviews, setReportPhotoPreviews] = useState<string[]>([]);
   const [userProfile, setUserProfile] = useState<{
+    id?: number;
     first_name?: string;
     last_name?: string;
     avatar_url?: string | null;
   } | null>(null);
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    return !!window.localStorage.getItem('authToken');
+  });
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const suggestionsRef = useRef<HTMLDivElement>(null);
@@ -186,15 +191,26 @@ export default function MapScreen() {
     };
   }, [query, fetchSuggestions]);
 
+  // Подтягиваем профиль текущего авторизованного пользователя
   useEffect(() => {
-    fetch('/v1/users/1')
+    if (typeof window === 'undefined') return;
+    const token = window.localStorage.getItem('authToken');
+    if (!token) return;
+
+    fetch('/v1/me', {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    })
       .then(async (res) => (res.ok ? res.json() : null))
       .then((json: unknown) => {
         if (!json) return;
         const raw =
           Array.isArray(json) ? json[0] : (json as { data?: unknown }).data ?? json;
         if (raw && typeof raw === 'object')
-          setUserProfile(raw as { first_name?: string; last_name?: string; avatar_url?: string | null });
+          setUserProfile(
+            raw as { id?: number; first_name?: string; last_name?: string; avatar_url?: string | null },
+          );
       })
       .catch(() => {});
   }, []);
@@ -847,7 +863,13 @@ export default function MapScreen() {
           и становится визуально неактивным, как карта. */}
       <button
         type="button"
-        onClick={() => openTab('profile')}
+        onClick={() => {
+          if (isAuthenticated) {
+            openTab('profile');
+          } else {
+            openTab('auth');
+          }
+        }}
         aria-label="Аккаунт"
         className={cn(
           'absolute top-4 left-4 z-[900] flex h-14 w-14 items-center justify-center rounded-[22px] bg-white/90 text-slate-900 shadow-lg ring-1 ring-slate-200 dark:bg-black/85 dark:text-white dark:ring-white/10 focus:outline-none overflow-hidden transition-opacity duration-200',
@@ -1355,6 +1377,7 @@ export default function MapScreen() {
                     {activeTab === 'all' && 'Все обращения'}
                     {activeTab === 'profile' && 'Профиль'}
                     {activeTab === 'settings' && 'Настройки'}
+                    {activeTab === 'auth' && 'Вход и регистрация'}
                   </p>
                 </div>
 
@@ -1482,17 +1505,29 @@ export default function MapScreen() {
                         </button>
                       </div>
 
-                      <ProfileTab
-                        userId={1}
-                        onAvatarChange={(url) =>
-                          setUserProfile((prev) =>
-                            prev
-                              ? { ...prev, avatar_url: url ?? prev.avatar_url ?? null }
-                              : { avatar_url: url ?? null }
-                          )
-                        }
-                      />
+                      {userProfile && userProfile.id && (
+                        <ProfileTab
+                          userId={userProfile.id}
+                          onAvatarChange={(url) =>
+                            setUserProfile((prev) =>
+                              prev
+                                ? { ...prev, avatar_url: url ?? prev.avatar_url ?? null }
+                                : { avatar_url: url ?? null },
+                            )
+                          }
+                        />
+                      )}
                     </div>
+                  )}
+                  {activeTab === 'auth' && (
+                    <AuthPanel
+                      onAuthenticated={(payload) => {
+                        setIsAuthenticated(true);
+                        setUserProfile(payload);
+                        openTab('profile');
+                      }}
+                      closeSheet={closeSheet}
+                    />
                   )}
                   {activeTab === 'settings' && (
                     <div className="space-y-4">
@@ -1635,6 +1670,340 @@ export default function MapScreen() {
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+type AuthResponseUser = {
+  id?: number;
+  email?: string;
+  first_name?: string;
+  last_name?: string;
+  avatar_url?: string | null;
+};
+
+type AuthPanelProps = {
+  onAuthenticated: (user: AuthResponseUser | null) => void;
+  closeSheet: () => void;
+};
+
+function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
+  const [mode, setMode] = useState<'login' | 'register'>('login');
+  const [login, setLogin] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [lastName, setLastName] = useState('');
+  const [firstName, setFirstName] = useState('');
+  const [middleName, setMiddleName] = useState('');
+  const [phone, setPhone] = useState('');
+  const [city, setCity] = useState('');
+  const [street, setStreet] = useState('');
+  const [house, setHouse] = useState('');
+  const [apartment, setApartment] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+
+  const API_PREFIX = '/v1';
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setSuccess(null);
+    setLoading(true);
+
+    try {
+      const endpoint = mode === 'login' ? `${API_PREFIX}/auth/login` : `${API_PREFIX}/users`;
+      const body =
+        mode === 'login'
+          ? { email, password }
+          : {
+              login,
+              email,
+              password,
+              last_name: lastName,
+              first_name: firstName,
+              middle_name: middleName || undefined,
+              phone,
+              city,
+              street,
+              house,
+              apartment: apartment || undefined,
+              is_blocked: false,
+              role: 'user',
+            };
+
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+      });
+
+      if (!res.ok) {
+        const json = await res.json().catch(() => null);
+        const msg =
+          (json && (json as { message?: string; detail?: string }).message) ||
+          (json && (json as { message?: string; detail?: string }).detail) ||
+          'Не удалось выполнить запрос. Проверьте данные и попробуйте ещё раз.';
+        throw new Error(msg);
+      }
+
+      if (mode === 'login') {
+        const data = (await res.json()) as {
+          token?: string;
+          access_token?: string;
+          user?: AuthResponseUser;
+        };
+
+        const token = data.token ?? data.access_token ?? null;
+        if (token && typeof window !== 'undefined') {
+          window.localStorage.setItem('authToken', token);
+        }
+
+        onAuthenticated(data.user ?? null);
+        closeSheet();
+      } else {
+        // create-user отдаёт entity.User, токен обычно не отдаёт — предлагаем сразу войти
+        const created = (await res.json().catch(() => null)) as AuthResponseUser | null;
+        setSuccess('Аккаунт создан. Теперь войдите под своими данными.');
+        setMode('login');
+        // немного облегчаем вход: почту оставляем, пароль оставляем как ввели
+        if (created?.email) setEmail(created.email);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Ошибка запроса.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="text-base font-semibold text-slate-900 dark:text-white">
+          {mode === 'login' ? 'Вход в аккаунт' : 'Регистрация'}
+        </h2>
+        <button
+          type="button"
+          onClick={closeSheet}
+          className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 shadow-sm border border-slate-300 hover:bg-slate-300 hover:text-slate-800 dark:bg-black/40 dark:text-[#9ca3af] dark:border-transparent dark:hover:bg-black/60"
+          aria-label="Закрыть"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+
+      <div className="flex gap-2 text-xs font-medium">
+        <button
+          type="button"
+          className={cn(
+            'flex-1 rounded-full px-3 py-2 border transition-colors',
+            mode === 'login'
+              ? 'bg-sky-500 text-white border-sky-500'
+              : 'bg-transparent text-slate-600 dark:text-[#94a3b8] border-slate-300 dark:border-slate-700'
+          )}
+          onClick={() => setMode('login')}
+        >
+          Вход
+        </button>
+        <button
+          type="button"
+          className={cn(
+            'flex-1 rounded-full px-3 py-2 border transition-colors',
+            mode === 'register'
+              ? 'bg-sky-500 text-white border-sky-500'
+              : 'bg-transparent text-slate-600 dark:text-[#94a3b8] border-slate-300 dark:border-slate-700'
+          )}
+          onClick={() => setMode('register')}
+        >
+          Регистрация
+        </button>
+      </div>
+
+      <form onSubmit={handleSubmit} className="space-y-3">
+        {mode === 'register' && (
+          <div className="space-y-1">
+            <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
+              Логин
+            </p>
+            <input
+              type="text"
+              value={login}
+              onChange={(e) => setLogin(e.target.value)}
+              required
+              className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-sm text-slate-900 dark:text-slate-50 outline-none"
+              placeholder="Ваш логин"
+            />
+          </div>
+        )}
+
+        <div className="space-y-1">
+          <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
+            Почта
+          </p>
+          <input
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            required
+            className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-sm text-slate-900 dark:text-slate-50 outline-none"
+            placeholder="you@example.com"
+          />
+        </div>
+
+        <div className="space-y-1">
+          <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
+            Пароль
+          </p>
+          <input
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            required
+            className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-sm text-slate-900 dark:text-slate-50 outline-none"
+            placeholder="Минимум 6 символов"
+          />
+        </div>
+
+        {mode === 'register' && (
+          <>
+            <div className="space-y-1">
+              <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
+                Фамилия
+              </p>
+              <input
+                type="text"
+                value={lastName}
+                onChange={(e) => setLastName(e.target.value)}
+                required
+                className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-sm text-slate-900 dark:text-slate-50 outline-none"
+                placeholder="Иванов"
+              />
+            </div>
+
+            <div className="space-y-1">
+              <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
+                Имя
+              </p>
+              <input
+                type="text"
+                value={firstName}
+                onChange={(e) => setFirstName(e.target.value)}
+                required
+                className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-sm text-slate-900 dark:text-slate-50 outline-none"
+                placeholder="Иван"
+              />
+            </div>
+
+            <div className="space-y-1">
+              <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
+                Отчество (необязательно)
+              </p>
+              <input
+                type="text"
+                value={middleName}
+                onChange={(e) => setMiddleName(e.target.value)}
+                className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-sm text-slate-900 dark:text-slate-50 outline-none"
+                placeholder="Иванович"
+              />
+            </div>
+
+            <div className="space-y-1">
+              <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
+                Телефон
+              </p>
+              <input
+                type="tel"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                required
+                className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-sm text-slate-900 dark:text-slate-50 outline-none"
+                placeholder="+79991234567"
+              />
+            </div>
+
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+              <div className="space-y-1 sm:col-span-3">
+                <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
+                  Город
+                </p>
+                <input
+                  type="text"
+                  value={city}
+                  onChange={(e) => setCity(e.target.value)}
+                  required
+                  className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-sm text-slate-900 dark:text-slate-50 outline-none"
+                  placeholder="Москва"
+                />
+              </div>
+              <div className="space-y-1 sm:col-span-3">
+                <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
+                  Улица
+                </p>
+                <input
+                  type="text"
+                  value={street}
+                  onChange={(e) => setStreet(e.target.value)}
+                  required
+                  className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-sm text-slate-900 dark:text-slate-50 outline-none"
+                  placeholder="Тверская"
+                />
+              </div>
+              <div className="space-y-1">
+                <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
+                  Дом
+                </p>
+                <input
+                  type="text"
+                  value={house}
+                  onChange={(e) => setHouse(e.target.value)}
+                  required
+                  className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-sm text-slate-900 dark:text-slate-50 outline-none"
+                  placeholder="1"
+                />
+              </div>
+              <div className="space-y-1">
+                <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
+                  Квартира (необязательно)
+                </p>
+                <input
+                  type="text"
+                  value={apartment}
+                  onChange={(e) => setApartment(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-sm text-slate-900 dark:text-slate-50 outline-none"
+                  placeholder="10"
+                />
+              </div>
+            </div>
+          </>
+        )}
+
+        {success && (
+          <p className="text-[11px] text-emerald-700 dark:text-emerald-200 bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/40 rounded-lg px-3 py-2">
+            {success}
+          </p>
+        )}
+
+        {error && (
+          <p className="text-[11px] text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/40 rounded-lg px-3 py-2">
+            {error}
+          </p>
+        )}
+
+        <button
+          type="submit"
+          disabled={loading}
+          className="mt-1 w-full rounded-xl bg-sky-500 hover:bg-sky-600 disabled:opacity-70 disabled:cursor-not-allowed text-white text-xs font-semibold px-4 py-2 shadow-md shadow-sky-500/40"
+        >
+          {loading
+            ? 'Отправка...'
+            : mode === 'login'
+            ? 'Войти'
+            : 'Зарегистрироваться'}
+        </button>
+      </form>
     </div>
   );
 }
