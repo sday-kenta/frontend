@@ -110,7 +110,7 @@ export default function MapScreen() {
   } | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
     if (typeof window === 'undefined') return false;
-    return !!window.localStorage.getItem('authToken');
+    return !!window.localStorage.getItem('userId');
   });
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -191,17 +191,13 @@ export default function MapScreen() {
     };
   }, [query, fetchSuggestions]);
 
-  // Подтягиваем профиль текущего авторизованного пользователя
+  // Подтягиваем профиль текущего пользователя по сохранённому userId.
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    const token = window.localStorage.getItem('authToken');
-    if (!token) return;
+    const userId = window.localStorage.getItem('userId');
+    if (!userId) return;
 
-    fetch('/v1/me', {
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-    })
+    fetch(`/v1/users/${userId}`)
       .then(async (res) => (res.ok ? res.json() : null))
       .then((json: unknown) => {
         if (!json) return;
@@ -1495,14 +1491,31 @@ export default function MapScreen() {
                         <h2 className="text-base font-semibold text-slate-900 dark:text-white">
                           Профиль
                         </h2>
-                        <button
-                          type="button"
-                          onClick={closeSheet}
-                          className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 shadow-sm border border-slate-300 hover:bg-slate-300 hover:text-slate-800 dark:bg-black/40 dark:text-[#9ca3af] dark:border-transparent dark:hover:bg-black/60"
-                          aria-label="Закрыть"
-                        >
-                          <X className="h-4 w-4" />
-                        </button>
+                        <div className="flex items-center gap-2">
+                          {isAuthenticated && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                window.localStorage.removeItem('userId');
+                                window.localStorage.removeItem('authToken');
+                                setIsAuthenticated(false);
+                                setUserProfile(null);
+                                openTab('auth');
+                              }}
+                              className="px-3 py-1.5 rounded-full text-xs font-medium border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 dark:border-white/10 dark:bg-black/30 dark:text-[#cbd5f5] dark:hover:bg-white/5"
+                            >
+                              Выйти
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={closeSheet}
+                            className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 shadow-sm border border-slate-300 hover:bg-slate-300 hover:text-slate-800 dark:bg-black/40 dark:text-[#9ca3af] dark:border-transparent dark:hover:bg-black/60"
+                            aria-label="Закрыть"
+                          >
+                            <X className="h-4 w-4" />
+                          </button>
+                        </div>
                       </div>
 
                       {userProfile && userProfile.id && (
@@ -1689,6 +1702,7 @@ type AuthPanelProps = {
 
 function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
   const [mode, setMode] = useState<'login' | 'register'>('login');
+  const [identifier, setIdentifier] = useState('');
   const [login, setLogin] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -1703,6 +1717,13 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [forgotOpen, setForgotOpen] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [forgotStatus, setForgotStatus] = useState<'idle' | 'sending' | 'sent' | 'resetting'>('idle');
+  const [forgotStep, setForgotStep] = useState<'email' | 'reset'>('email');
+  const [forgotCode, setForgotCode] = useState('');
+  const [forgotNewPassword, setForgotNewPassword] = useState('');
+  const [forgotNewPassword2, setForgotNewPassword2] = useState('');
 
   const API_PREFIX = '/v1';
 
@@ -1713,64 +1734,74 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
     setLoading(true);
 
     try {
-      const endpoint = mode === 'login' ? `${API_PREFIX}/auth/login` : `${API_PREFIX}/users`;
-      const body =
-        mode === 'login'
-          ? { email, password }
-          : {
-              login,
-              email,
-              password,
-              last_name: lastName,
-              first_name: firstName,
-              middle_name: middleName || undefined,
-              phone,
-              city,
-              street,
-              house,
-              apartment: apartment || undefined,
-              is_blocked: false,
-              role: 'user',
-            };
-
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(body),
-      });
-
-      if (!res.ok) {
-        const json = await res.json().catch(() => null);
-        const msg =
-          (json && (json as { message?: string; detail?: string }).message) ||
-          (json && (json as { message?: string; detail?: string }).detail) ||
-          'Не удалось выполнить запрос. Проверьте данные и попробуйте ещё раз.';
-        throw new Error(msg);
-      }
-
       if (mode === 'login') {
-        const data = (await res.json()) as {
-          token?: string;
-          access_token?: string;
-          user?: AuthResponseUser;
-        };
+        const res = await fetch(`${API_PREFIX}/auth/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            identifier: identifier.trim(),
+            password,
+          }),
+        });
 
-        const token = data.token ?? data.access_token ?? null;
-        if (token && typeof window !== 'undefined') {
-          window.localStorage.setItem('authToken', token);
+        if (!res.ok) {
+          const json = await res.json().catch(() => null);
+          const msg =
+            (json && (json as { error?: string; message?: string; detail?: string }).error) ||
+            (json && (json as { error?: string; message?: string; detail?: string }).message) ||
+            (json && (json as { error?: string; message?: string; detail?: string }).detail) ||
+            'Не удалось выполнить вход. Проверьте данные и попробуйте ещё раз.';
+          throw new Error(msg);
         }
 
-        onAuthenticated(data.user ?? null);
+        const user = (await res.json()) as AuthResponseUser | null;
+        if (!user?.id) {
+          throw new Error('Не удалось получить пользователя после входа.');
+        }
+
+        if (typeof window !== 'undefined') {
+          window.localStorage.setItem('userId', String(user.id));
+        }
+
+        onAuthenticated(user);
         closeSheet();
       } else {
-        // create-user отдаёт entity.User, токен обычно не отдаёт — предлагаем сразу войти
+        const res = await fetch(`${API_PREFIX}/users`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            login,
+            email,
+            password,
+            last_name: lastName,
+            first_name: firstName,
+            middle_name: middleName || undefined,
+            phone,
+            city,
+            street,
+            house,
+            apartment: apartment || undefined,
+            is_blocked: false,
+            role: 'user',
+          }),
+        });
+
+        if (!res.ok) {
+          const json = await res.json().catch(() => null);
+          const msg =
+            (json && (json as { error?: string; message?: string; detail?: string }).error) ||
+            (json && (json as { error?: string; message?: string; detail?: string }).message) ||
+            (json && (json as { error?: string; message?: string; detail?: string }).detail) ||
+            'Не удалось выполнить запрос. Проверьте данные и попробуйте ещё раз.';
+          throw new Error(msg);
+        }
+
         const created = (await res.json().catch(() => null)) as AuthResponseUser | null;
         setSuccess('Аккаунт создан. Теперь войдите под своими данными.');
         setMode('login');
-        // немного облегчаем вход: почту оставляем, пароль оставляем как ввели
-        if (created?.email) setEmail(created.email);
+        if (created?.email) setIdentifier(created.email);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Ошибка запроса.');
@@ -1779,11 +1810,105 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
     }
   };
 
+  const handleSendResetCode = async () => {
+    const target = forgotEmail.trim();
+    if (!target) {
+      setError('Введите почту.');
+      return;
+    }
+
+    setError(null);
+    setSuccess(null);
+    setForgotStatus('sending');
+    try {
+      const res = await fetch(`${API_PREFIX}/users/password-reset/send-code`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: target }),
+      });
+
+      if (!res.ok) {
+        const json = await res.json().catch(() => null);
+        const msg =
+          (json && (json as { error?: string; message?: string; detail?: string }).error) ||
+          (json && (json as { error?: string; message?: string; detail?: string }).message) ||
+          (json && (json as { error?: string; message?: string; detail?: string }).detail) ||
+          'Не удалось отправить код. Проверьте почту и попробуйте ещё раз.';
+        throw new Error(msg);
+      }
+
+      setForgotStatus('sent');
+      setSuccess('Код отправлен на почту. Проверьте входящие.');
+      setForgotStep('reset');
+    } catch (err) {
+      setForgotStatus('idle');
+      setError(err instanceof Error ? err.message : 'Ошибка запроса.');
+    }
+  };
+
+  const handleResetPassword = async () => {
+    const email = forgotEmail.trim();
+    const code = forgotCode.trim();
+    const p1 = forgotNewPassword;
+    const p2 = forgotNewPassword2;
+
+    if (!email) {
+      setError('Введите почту.');
+      return;
+    }
+    if (!code) {
+      setError('Введите код из письма.');
+      return;
+    }
+    if (!p1 || p1.length < 6) {
+      setError('Пароль слишком короткий (минимум 6 символов).');
+      return;
+    }
+    if (p1 !== p2) {
+      setError('Пароли не совпадают.');
+      return;
+    }
+
+    setError(null);
+    setSuccess(null);
+    setForgotStatus('resetting');
+    try {
+      const res = await fetch(`${API_PREFIX}/users/password-reset/reset`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, code, new_password: p1 }),
+      });
+
+      if (!res.ok) {
+        const json = await res.json().catch(() => null);
+        const msg =
+          (json && (json as { error?: string; message?: string; detail?: string }).error) ||
+          (json && (json as { error?: string; message?: string; detail?: string }).message) ||
+          (json && (json as { error?: string; message?: string; detail?: string }).detail) ||
+          'Не удалось сменить пароль. Проверьте код и попробуйте ещё раз.';
+        throw new Error(msg);
+      }
+
+      setSuccess('Пароль обновлён. Теперь войдите с новым паролем.');
+      setForgotOpen(false);
+      setForgotStatus('idle');
+      setForgotStep('email');
+      setForgotCode('');
+      setForgotNewPassword('');
+      setForgotNewPassword2('');
+      setPassword('');
+      setMode('login');
+    } catch (err) {
+      setForgotStatus('sent');
+      setError(err instanceof Error ? err.message : 'Ошибка запроса.');
+    }
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3">
         <h2 className="text-base font-semibold text-slate-900 dark:text-white">
-          {mode === 'login' ? 'Вход в аккаунт' : 'Регистрация'}
+          {forgotOpen ? 'Восстановление пароля' : mode === 'login' ? 'Вход в аккаунт' : 'Регистрация'}
         </h2>
         <button
           type="button"
@@ -1795,34 +1920,188 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
         </button>
       </div>
 
-      <div className="flex gap-2 text-xs font-medium">
-        <button
-          type="button"
-          className={cn(
-            'flex-1 rounded-full px-3 py-2 border transition-colors',
-            mode === 'login'
-              ? 'bg-sky-500 text-white border-sky-500'
-              : 'bg-transparent text-slate-600 dark:text-[#94a3b8] border-slate-300 dark:border-slate-700'
-          )}
-          onClick={() => setMode('login')}
-        >
-          Вход
-        </button>
-        <button
-          type="button"
-          className={cn(
-            'flex-1 rounded-full px-3 py-2 border transition-colors',
-            mode === 'register'
-              ? 'bg-sky-500 text-white border-sky-500'
-              : 'bg-transparent text-slate-600 dark:text-[#94a3b8] border-slate-300 dark:border-slate-700'
-          )}
-          onClick={() => setMode('register')}
-        >
-          Регистрация
-        </button>
-      </div>
+      {!forgotOpen && (
+        <div className="flex gap-2 text-xs font-medium">
+          <button
+            type="button"
+            className={cn(
+              'flex-1 rounded-full px-3 py-2 border transition-colors',
+              mode === 'login'
+                ? 'bg-sky-500 text-white border-sky-500'
+                : 'bg-transparent text-slate-600 dark:text-[#94a3b8] border-slate-300 dark:border-slate-700'
+            )}
+            onClick={() => setMode('login')}
+          >
+            Вход
+          </button>
+          <button
+            type="button"
+            className={cn(
+              'flex-1 rounded-full px-3 py-2 border transition-colors',
+              mode === 'register'
+                ? 'bg-sky-500 text-white border-sky-500'
+                : 'bg-transparent text-slate-600 dark:text-[#94a3b8] border-slate-300 dark:border-slate-700'
+            )}
+            onClick={() => setMode('register')}
+          >
+            Регистрация
+          </button>
+        </div>
+      )}
 
+      {forgotOpen ? (
+        <div className="space-y-3">
+          {forgotStep === 'email' ? (
+            <div className="space-y-1">
+              <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
+                Почта
+              </p>
+              <input
+                type="email"
+                value={forgotEmail}
+                onChange={(e) => setForgotEmail(e.target.value)}
+                className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
+                placeholder="you@example.com"
+              />
+              <p className="text-[11px] text-slate-500 dark:text-[#94a3b8]">
+                Мы отправим код восстановления на эту почту.
+              </p>
+            </div>
+          ) : (
+            <>
+              <div className="space-y-1">
+                <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
+                  Почта
+                </p>
+                <input
+                  type="email"
+                  value={forgotEmail}
+                  onChange={(e) => setForgotEmail(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
+                  placeholder="you@example.com"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
+                  Код из письма
+                </p>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={forgotCode}
+                  onChange={(e) => setForgotCode(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
+                  placeholder="123456"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
+                  Новый пароль
+                </p>
+                <input
+                  type="password"
+                  value={forgotNewPassword}
+                  onChange={(e) => setForgotNewPassword(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
+                  placeholder="Минимум 6 символов"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
+                  Повтор пароля
+                </p>
+                <input
+                  type="password"
+                  value={forgotNewPassword2}
+                  onChange={(e) => setForgotNewPassword2(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
+                  placeholder="Повторите пароль"
+                />
+              </div>
+            </>
+          )}
+
+          {success && (
+            <p className="text-[11px] text-emerald-700 dark:text-emerald-200 bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/40 rounded-lg px-3 py-2">
+              {success}
+            </p>
+          )}
+
+          {error && (
+            <p className="text-[11px] text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/40 rounded-lg px-3 py-2">
+              {error}
+            </p>
+          )}
+
+          {forgotStep === 'email' ? (
+            <button
+              type="button"
+              onClick={handleSendResetCode}
+              disabled={forgotStatus === 'sending'}
+              className="mt-1 w-full rounded-xl bg-sky-500 hover:bg-sky-600 disabled:opacity-70 disabled:cursor-not-allowed text-white text-xs font-semibold px-4 py-2 shadow-md shadow-sky-500/40"
+            >
+              {forgotStatus === 'sending' ? 'Отправка…' : 'Отправить код'}
+            </button>
+          ) : (
+            <div className="space-y-2">
+              <button
+                type="button"
+                onClick={handleResetPassword}
+                disabled={forgotStatus === 'resetting'}
+                className="mt-1 w-full rounded-xl bg-sky-500 hover:bg-sky-600 disabled:opacity-70 disabled:cursor-not-allowed text-white text-xs font-semibold px-4 py-2 shadow-md shadow-sky-500/40"
+              >
+                {forgotStatus === 'resetting' ? 'Сохранение…' : 'Сменить пароль'}
+              </button>
+              <button
+                type="button"
+                onClick={handleSendResetCode}
+                disabled={forgotStatus === 'sending' || forgotStatus === 'resetting'}
+                className="w-full text-xs text-slate-600 hover:text-slate-900 dark:text-[#94a3b8] dark:hover:text-white"
+              >
+                Отправить код ещё раз
+              </button>
+            </div>
+          )}
+
+          <button
+            type="button"
+            onClick={() => {
+              setForgotOpen(false);
+              setForgotStatus('idle');
+              setForgotStep('email');
+              setForgotEmail('');
+              setForgotCode('');
+              setForgotNewPassword('');
+              setForgotNewPassword2('');
+              setError(null);
+              setSuccess(null);
+            }}
+            className="w-full text-xs text-slate-600 hover:text-slate-900 dark:text-[#94a3b8] dark:hover:text-white"
+          >
+            ← Назад ко входу
+          </button>
+        </div>
+      ) : (
       <form onSubmit={handleSubmit} className="space-y-3">
+        {mode === 'login' && (
+          <div className="space-y-1">
+            <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
+              Логин / почта / телефон
+            </p>
+            <input
+              type="text"
+              value={identifier}
+              onChange={(e) => setIdentifier(e.target.value)}
+              required
+              className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
+              placeholder="user123 / you@example.com / +79991234567"
+            />
+          </div>
+        )}
+
         {mode === 'register' && (
           <div className="space-y-1">
             <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
@@ -1833,25 +2112,27 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
               value={login}
               onChange={(e) => setLogin(e.target.value)}
               required
-              className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-sm text-slate-900 dark:text-slate-50 outline-none"
+              className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
               placeholder="Ваш логин"
             />
           </div>
         )}
 
-        <div className="space-y-1">
-          <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
-            Почта
-          </p>
-          <input
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
-            className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-sm text-slate-900 dark:text-slate-50 outline-none"
-            placeholder="you@example.com"
-          />
-        </div>
+        {mode === 'register' && (
+          <div className="space-y-1">
+            <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
+              Почта
+            </p>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+              className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
+              placeholder="you@example.com"
+            />
+          </div>
+        )}
 
         <div className="space-y-1">
           <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
@@ -1862,7 +2143,7 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             required
-            className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-sm text-slate-900 dark:text-slate-50 outline-none"
+            className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
             placeholder="Минимум 6 символов"
           />
         </div>
@@ -1878,7 +2159,7 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
                 value={lastName}
                 onChange={(e) => setLastName(e.target.value)}
                 required
-                className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-sm text-slate-900 dark:text-slate-50 outline-none"
+                className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
                 placeholder="Иванов"
               />
             </div>
@@ -1892,7 +2173,7 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
                 value={firstName}
                 onChange={(e) => setFirstName(e.target.value)}
                 required
-                className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-sm text-slate-900 dark:text-slate-50 outline-none"
+                className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
                 placeholder="Иван"
               />
             </div>
@@ -1905,7 +2186,7 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
                 type="text"
                 value={middleName}
                 onChange={(e) => setMiddleName(e.target.value)}
-                className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-sm text-slate-900 dark:text-slate-50 outline-none"
+                className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
                 placeholder="Иванович"
               />
             </div>
@@ -1919,7 +2200,7 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
                 value={phone}
                 onChange={(e) => setPhone(e.target.value)}
                 required
-                className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-sm text-slate-900 dark:text-slate-50 outline-none"
+                className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
                 placeholder="+79991234567"
               />
             </div>
@@ -1934,7 +2215,7 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
                   value={city}
                   onChange={(e) => setCity(e.target.value)}
                   required
-                  className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-sm text-slate-900 dark:text-slate-50 outline-none"
+                  className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
                   placeholder="Москва"
                 />
               </div>
@@ -1947,7 +2228,7 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
                   value={street}
                   onChange={(e) => setStreet(e.target.value)}
                   required
-                  className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-sm text-slate-900 dark:text-slate-50 outline-none"
+                  className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
                   placeholder="Тверская"
                 />
               </div>
@@ -1960,7 +2241,7 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
                   value={house}
                   onChange={(e) => setHouse(e.target.value)}
                   required
-                  className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-sm text-slate-900 dark:text-slate-50 outline-none"
+                  className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
                   placeholder="1"
                 />
               </div>
@@ -1972,7 +2253,7 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
                   type="text"
                   value={apartment}
                   onChange={(e) => setApartment(e.target.value)}
-                  className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-sm text-slate-900 dark:text-slate-50 outline-none"
+                  className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
                   placeholder="10"
                 />
               </div>
@@ -2003,7 +2284,24 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
             ? 'Войти'
             : 'Зарегистрироваться'}
         </button>
+
+        {mode === 'login' && (
+          <button
+            type="button"
+            onClick={() => {
+              setForgotOpen(true);
+              setForgotEmail('');
+              setForgotStatus('idle');
+              setError(null);
+              setSuccess(null);
+            }}
+            className="w-full text-xs text-slate-600 hover:text-slate-900 dark:text-[#94a3b8] dark:hover:text-white"
+          >
+            Забыли пароль?
+          </button>
+        )}
       </form>
+      )}
     </div>
   );
 }
