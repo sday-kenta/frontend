@@ -70,7 +70,7 @@ async function searchAddress(q: string): Promise<GeocodingResult[]> {
   }));
 }
 
-type Tab = 'home' | 'my' | 'all' | 'profile' | 'settings';
+type Tab = 'home' | 'my' | 'all' | 'profile' | 'settings' | 'auth';
 type SheetMode = 'tabs' | 'marker' | 'rubric' | null;
 
 export default function MapScreen() {
@@ -103,10 +103,15 @@ export default function MapScreen() {
   const [reportPhotos, setReportPhotos] = useState<File[]>([]);
   const [reportPhotoPreviews, setReportPhotoPreviews] = useState<string[]>([]);
   const [userProfile, setUserProfile] = useState<{
+    id?: number;
     first_name?: string;
     last_name?: string;
     avatar_url?: string | null;
   } | null>(null);
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    return !!window.localStorage.getItem('userId');
+  });
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const suggestionsRef = useRef<HTMLDivElement>(null);
@@ -186,15 +191,22 @@ export default function MapScreen() {
     };
   }, [query, fetchSuggestions]);
 
+  // Подтягиваем профиль текущего пользователя по сохранённому userId.
   useEffect(() => {
-    fetch('/v1/users/1')
+    if (typeof window === 'undefined') return;
+    const userId = window.localStorage.getItem('userId');
+    if (!userId) return;
+
+    fetch(`/v1/users/${userId}`)
       .then(async (res) => (res.ok ? res.json() : null))
       .then((json: unknown) => {
         if (!json) return;
         const raw =
           Array.isArray(json) ? json[0] : (json as { data?: unknown }).data ?? json;
         if (raw && typeof raw === 'object')
-          setUserProfile(raw as { first_name?: string; last_name?: string; avatar_url?: string | null });
+          setUserProfile(
+            raw as { id?: number; first_name?: string; last_name?: string; avatar_url?: string | null },
+          );
       })
       .catch(() => {});
   }, []);
@@ -262,6 +274,19 @@ export default function MapScreen() {
 
   const handleSheetTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
     if (!isSheetOpen) return;
+
+    // Drag должен начинаться только за ручку (handle), иначе при обычном скролле
+    // пользователи случайно "закрывают" простыню.
+    const target = e.target as HTMLElement | null;
+    if (!target || !target.closest('[data-sheet-drag-handle="true"]')) {
+      return;
+    }
+
+    // Если пользователь начинает жест внутри прокручиваемой области,
+    // даём ему скроллить контент и не запускаем drag для закрытия слайда
+    if (target && target.closest('[data-sheet-scrollable="true"]')) {
+      return;
+    }
     const touch = e.touches[0];
     sheetDragStartYRef.current = touch.clientY;
     setIsSheetDragging(true);
@@ -840,7 +865,13 @@ export default function MapScreen() {
           и становится визуально неактивным, как карта. */}
       <button
         type="button"
-        onClick={() => openTab('profile')}
+        onClick={() => {
+          if (isAuthenticated) {
+            openTab('profile');
+          } else {
+            openTab('auth');
+          }
+        }}
         aria-label="Аккаунт"
         className={cn(
           'absolute top-4 left-4 z-[900] flex h-14 w-14 items-center justify-center rounded-[22px] bg-white/90 text-slate-900 shadow-lg ring-1 ring-slate-200 dark:bg-black/85 dark:text-white dark:ring-white/10 focus:outline-none overflow-hidden transition-opacity duration-200',
@@ -1018,7 +1049,7 @@ export default function MapScreen() {
               ? `translateY(${sheetDragY}px)`
               : 'translateY(calc(100% + 32px))',
             transition: isSheetDragging ? 'none' : undefined,
-            touchAction: 'none',
+            touchAction: 'pan-y',
           }}
           onTouchStart={handleSheetTouchStart}
           onTouchMove={handleSheetTouchMove}
@@ -1032,24 +1063,22 @@ export default function MapScreen() {
                 : 'h-[calc(100vh-80px)] overflow-hidden'
             )}
           >
+            {/* Drag handle */}
+            <div
+              data-sheet-drag-handle="true"
+              className="flex items-center justify-center py-5 -mx-4"
+            >
+              <div className="h-1 w-12 rounded-full bg-slate-300/80 dark:bg-white/15" />
+            </div>
+
             {sheetMode === 'marker' && marker ? (
-              <div className="flex-1 overflow-y-auto pb-2">
-                <div className="mb-1 flex items-center justify-between gap-3">
-                  <h2 className="text-base font-semibold text-slate-900 dark:text-white">
-                    Выбранная точка
-                  </h2>
-                  <button
-                    type="button"
-                    onClick={closeSheet}
-                    className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 shadow-sm border border-slate-300 hover:bg-slate-300 hover:text-slate-800 dark:bg-black/40 dark:text-[#9ca3af] dark:border-transparent dark:hover:bg-black/60"
-                    aria-label="Закрыть"
-                  >
-                    <X className="h-4 w-4" />
-                  </button>
-                </div>
-                <p className="text-xs text-slate-600 dark:text-[#9ca3af]">
-                  {marker.address ?? 'Адрес уточняется…'}
+              <div className="flex-1 overflow-y-auto overscroll-contain pb-2" data-sheet-scrollable="true">
+                <p className="text-[11px] uppercase tracking-wide text-[#64748b] mb-1">
+                  Выбранная точка
                 </p>
+                <h2 className="text-base font-semibold text-slate-900 dark:text-white line-clamp-3">
+                  {marker.address ?? 'Адрес уточняется…'}
+                </h2>
                 <p className="text-xs text-slate-600 dark:text-[#9ca3af] mt-1 flex items-center gap-2">
                   {marker.lat.toFixed(6)}, {marker.lng.toFixed(6)}
                   <button
@@ -1081,8 +1110,11 @@ export default function MapScreen() {
                 </div>
               </div>
             ) : sheetMode === 'rubric' && marker ? (
-              <div className="flex-1 overflow-y-auto pb-2 sheet-swap-enter">
-                {rubricStep === 'select' ? (
+              <div
+                className="flex-1 overflow-y-auto overscroll-contain pb-2 sheet-swap-enter"
+                data-sheet-scrollable="true"
+              >
+                {!selectedRubric ? (
                   <>
                     <div className="mb-1 flex items-center justify-between gap-3">
                       <h2 className="text-base font-semibold text-slate-900 dark:text-white">
@@ -1347,7 +1379,22 @@ export default function MapScreen() {
               </div>
             ) : (
               <>
-                <div className="flex-1 overflow-y-auto space-y-4 pb-2">
+                {/* Заголовок текущей вкладки */}
+                <div className="mb-3">
+                  <p className="text-[11px] uppercase tracking-wide text-[#64748b]">
+                    {activeTab === 'home' && 'Главная'}
+                    {activeTab === 'my' && 'Мои обращения'}
+                    {activeTab === 'all' && 'Все обращения'}
+                    {activeTab === 'profile' && 'Профиль'}
+                    {activeTab === 'settings' && 'Настройки'}
+                    {activeTab === 'auth' && 'Вход и регистрация'}
+                  </p>
+                </div>
+
+                <div
+                  className="flex-1 overflow-y-auto overscroll-contain space-y-4 pb-2"
+                  data-sheet-scrollable="true"
+                >
                   {activeTab === 'home' && (
                     <div className="space-y-3">
                       <div className="flex items-center justify-between gap-3">
@@ -1458,27 +1505,56 @@ export default function MapScreen() {
                         <h2 className="text-base font-semibold text-slate-900 dark:text-white">
                           Профиль
                         </h2>
-                        <button
-                          type="button"
-                          onClick={closeSheet}
-                          className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 shadow-sm border border-slate-300 hover:bg-slate-300 hover:text-slate-800 dark:bg-black/40 dark:text-[#9ca3af] dark:border-transparent dark:hover:bg-black/60"
-                          aria-label="Закрыть"
-                        >
-                          <X className="h-4 w-4" />
-                        </button>
+                        <div className="flex items-center gap-2">
+                          {isAuthenticated && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                window.localStorage.removeItem('userId');
+                                window.localStorage.removeItem('authToken');
+                                setIsAuthenticated(false);
+                                setUserProfile(null);
+                                openTab('auth');
+                              }}
+                              className="px-3 py-1.5 rounded-full text-xs font-medium border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 dark:border-white/10 dark:bg-black/30 dark:text-[#cbd5f5] dark:hover:bg-white/5"
+                            >
+                              Выйти
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={closeSheet}
+                            className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 shadow-sm border border-slate-300 hover:bg-slate-300 hover:text-slate-800 dark:bg-black/40 dark:text-[#9ca3af] dark:border-transparent dark:hover:bg-black/60"
+                            aria-label="Закрыть"
+                          >
+                            <X className="h-4 w-4" />
+                          </button>
+                        </div>
                       </div>
 
-                      <ProfileTab
-                        userId={1}
-                        onAvatarChange={(url) =>
-                          setUserProfile((prev) =>
-                            prev
-                              ? { ...prev, avatar_url: url ?? prev.avatar_url ?? null }
-                              : { avatar_url: url ?? null }
-                          )
-                        }
-                      />
+                      {userProfile && userProfile.id && (
+                        <ProfileTab
+                          userId={userProfile.id}
+                          onAvatarChange={(url) =>
+                            setUserProfile((prev) =>
+                              prev
+                                ? { ...prev, avatar_url: url ?? prev.avatar_url ?? null }
+                                : { avatar_url: url ?? null },
+                            )
+                          }
+                        />
+                      )}
                     </div>
+                  )}
+                  {activeTab === 'auth' && (
+                    <AuthPanel
+                      onAuthenticated={(payload) => {
+                        setIsAuthenticated(true);
+                        setUserProfile(payload);
+                        openTab('profile');
+                      }}
+                      closeSheet={closeSheet}
+                    />
                   )}
                   {activeTab === 'settings' && (
                     <div className="space-y-4">
@@ -1621,6 +1697,625 @@ export default function MapScreen() {
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+type AuthResponseUser = {
+  id?: number;
+  email?: string;
+  first_name?: string;
+  last_name?: string;
+  avatar_url?: string | null;
+};
+
+type AuthPanelProps = {
+  onAuthenticated: (user: AuthResponseUser | null) => void;
+  closeSheet: () => void;
+};
+
+function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
+  const [mode, setMode] = useState<'login' | 'register'>('login');
+  const [identifier, setIdentifier] = useState('');
+  const [login, setLogin] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [lastName, setLastName] = useState('');
+  const [firstName, setFirstName] = useState('');
+  const [middleName, setMiddleName] = useState('');
+  const [phone, setPhone] = useState('');
+  const [city, setCity] = useState('');
+  const [street, setStreet] = useState('');
+  const [house, setHouse] = useState('');
+  const [apartment, setApartment] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+  const [forgotOpen, setForgotOpen] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [forgotStatus, setForgotStatus] = useState<'idle' | 'sending' | 'sent' | 'resetting'>('idle');
+  const [forgotStep, setForgotStep] = useState<'email' | 'reset'>('email');
+  const [forgotCode, setForgotCode] = useState('');
+  const [forgotNewPassword, setForgotNewPassword] = useState('');
+  const [forgotNewPassword2, setForgotNewPassword2] = useState('');
+
+  const API_PREFIX = '/v1';
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setSuccess(null);
+    setLoading(true);
+
+    try {
+      if (mode === 'login') {
+        const res = await fetch(`${API_PREFIX}/auth/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            identifier: identifier.trim(),
+            password,
+          }),
+        });
+
+        if (!res.ok) {
+          const json = await res.json().catch(() => null);
+          const msg =
+            (json && (json as { error?: string; message?: string; detail?: string }).error) ||
+            (json && (json as { error?: string; message?: string; detail?: string }).message) ||
+            (json && (json as { error?: string; message?: string; detail?: string }).detail) ||
+            'Не удалось выполнить вход. Проверьте данные и попробуйте ещё раз.';
+          throw new Error(msg);
+        }
+
+        const user = (await res.json()) as AuthResponseUser | null;
+        if (!user?.id) {
+          throw new Error('Не удалось получить пользователя после входа.');
+        }
+
+        if (typeof window !== 'undefined') {
+          window.localStorage.setItem('userId', String(user.id));
+        }
+
+        onAuthenticated(user);
+        closeSheet();
+      } else {
+        const res = await fetch(`${API_PREFIX}/users`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            login,
+            email,
+            password,
+            last_name: lastName,
+            first_name: firstName,
+            middle_name: middleName || undefined,
+            phone,
+            city,
+            street,
+            house,
+            apartment: apartment || undefined,
+            is_blocked: false,
+            role: 'user',
+          }),
+        });
+
+        if (!res.ok) {
+          const json = await res.json().catch(() => null);
+          const msg =
+            (json && (json as { error?: string; message?: string; detail?: string }).error) ||
+            (json && (json as { error?: string; message?: string; detail?: string }).message) ||
+            (json && (json as { error?: string; message?: string; detail?: string }).detail) ||
+            'Не удалось выполнить запрос. Проверьте данные и попробуйте ещё раз.';
+          throw new Error(msg);
+        }
+
+        const created = (await res.json().catch(() => null)) as AuthResponseUser | null;
+        setSuccess('Аккаунт создан. Теперь войдите под своими данными.');
+        setMode('login');
+        if (created?.email) setIdentifier(created.email);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Ошибка запроса.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSendResetCode = async () => {
+    const target = forgotEmail.trim();
+    if (!target) {
+      setError('Введите почту.');
+      return;
+    }
+
+    setError(null);
+    setSuccess(null);
+    setForgotStatus('sending');
+    try {
+      const res = await fetch(`${API_PREFIX}/users/password-reset/send-code`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: target }),
+      });
+
+      if (!res.ok) {
+        const json = await res.json().catch(() => null);
+        const msg =
+          (json && (json as { error?: string; message?: string; detail?: string }).error) ||
+          (json && (json as { error?: string; message?: string; detail?: string }).message) ||
+          (json && (json as { error?: string; message?: string; detail?: string }).detail) ||
+          'Не удалось отправить код. Проверьте почту и попробуйте ещё раз.';
+        throw new Error(msg);
+      }
+
+      setForgotStatus('sent');
+      setSuccess('Код отправлен на почту. Проверьте входящие.');
+      setForgotStep('reset');
+    } catch (err) {
+      setForgotStatus('idle');
+      setError(err instanceof Error ? err.message : 'Ошибка запроса.');
+    }
+  };
+
+  const handleResetPassword = async () => {
+    const email = forgotEmail.trim();
+    const code = forgotCode.trim();
+    const p1 = forgotNewPassword;
+    const p2 = forgotNewPassword2;
+
+    if (!email) {
+      setError('Введите почту.');
+      return;
+    }
+    if (!code) {
+      setError('Введите код из письма.');
+      return;
+    }
+    if (!p1 || p1.length < 6) {
+      setError('Пароль слишком короткий (минимум 6 символов).');
+      return;
+    }
+    if (p1 !== p2) {
+      setError('Пароли не совпадают.');
+      return;
+    }
+
+    setError(null);
+    setSuccess(null);
+    setForgotStatus('resetting');
+    try {
+      const res = await fetch(`${API_PREFIX}/users/password-reset/reset`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, code, new_password: p1 }),
+      });
+
+      if (!res.ok) {
+        const json = await res.json().catch(() => null);
+        const msg =
+          (json && (json as { error?: string; message?: string; detail?: string }).error) ||
+          (json && (json as { error?: string; message?: string; detail?: string }).message) ||
+          (json && (json as { error?: string; message?: string; detail?: string }).detail) ||
+          'Не удалось сменить пароль. Проверьте код и попробуйте ещё раз.';
+        throw new Error(msg);
+      }
+
+      setSuccess('Пароль обновлён. Теперь войдите с новым паролем.');
+      setForgotOpen(false);
+      setForgotStatus('idle');
+      setForgotStep('email');
+      setForgotCode('');
+      setForgotNewPassword('');
+      setForgotNewPassword2('');
+      setPassword('');
+      setMode('login');
+    } catch (err) {
+      setForgotStatus('sent');
+      setError(err instanceof Error ? err.message : 'Ошибка запроса.');
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="text-base font-semibold text-slate-900 dark:text-white">
+          {forgotOpen ? 'Восстановление пароля' : mode === 'login' ? 'Вход в аккаунт' : 'Регистрация'}
+        </h2>
+        <button
+          type="button"
+          onClick={closeSheet}
+          className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 shadow-sm border border-slate-300 hover:bg-slate-300 hover:text-slate-800 dark:bg-black/40 dark:text-[#9ca3af] dark:border-transparent dark:hover:bg-black/60"
+          aria-label="Закрыть"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+
+      {!forgotOpen && (
+        <div className="flex gap-2 text-xs font-medium">
+          <button
+            type="button"
+            className={cn(
+              'flex-1 rounded-full px-3 py-2 border transition-colors',
+              mode === 'login'
+                ? 'bg-sky-500 text-white border-sky-500'
+                : 'bg-transparent text-slate-600 dark:text-[#94a3b8] border-slate-300 dark:border-slate-700'
+            )}
+            onClick={() => setMode('login')}
+          >
+            Вход
+          </button>
+          <button
+            type="button"
+            className={cn(
+              'flex-1 rounded-full px-3 py-2 border transition-colors',
+              mode === 'register'
+                ? 'bg-sky-500 text-white border-sky-500'
+                : 'bg-transparent text-slate-600 dark:text-[#94a3b8] border-slate-300 dark:border-slate-700'
+            )}
+            onClick={() => setMode('register')}
+          >
+            Регистрация
+          </button>
+        </div>
+      )}
+
+      {forgotOpen ? (
+        <div className="space-y-3">
+          {forgotStep === 'email' ? (
+            <div className="space-y-1">
+              <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
+                Почта
+              </p>
+              <input
+                type="email"
+                value={forgotEmail}
+                onChange={(e) => setForgotEmail(e.target.value)}
+                className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
+                placeholder="you@example.com"
+              />
+              <p className="text-[11px] text-slate-500 dark:text-[#94a3b8]">
+                Мы отправим код восстановления на эту почту.
+              </p>
+            </div>
+          ) : (
+            <>
+              <div className="space-y-1">
+                <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
+                  Почта
+                </p>
+                <input
+                  type="email"
+                  value={forgotEmail}
+                  onChange={(e) => setForgotEmail(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
+                  placeholder="you@example.com"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
+                  Код из письма
+                </p>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={forgotCode}
+                  onChange={(e) => setForgotCode(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
+                  placeholder="123456"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
+                  Новый пароль
+                </p>
+                <input
+                  type="password"
+                  value={forgotNewPassword}
+                  onChange={(e) => setForgotNewPassword(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
+                  placeholder="Минимум 6 символов"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
+                  Повтор пароля
+                </p>
+                <input
+                  type="password"
+                  value={forgotNewPassword2}
+                  onChange={(e) => setForgotNewPassword2(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
+                  placeholder="Повторите пароль"
+                />
+              </div>
+            </>
+          )}
+
+          {success && (
+            <p className="text-[11px] text-emerald-700 dark:text-emerald-200 bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/40 rounded-lg px-3 py-2">
+              {success}
+            </p>
+          )}
+
+          {error && (
+            <p className="text-[11px] text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/40 rounded-lg px-3 py-2">
+              {error}
+            </p>
+          )}
+
+          {forgotStep === 'email' ? (
+            <button
+              type="button"
+              onClick={handleSendResetCode}
+              disabled={forgotStatus === 'sending'}
+              className="mt-1 w-full rounded-xl bg-sky-500 hover:bg-sky-600 disabled:opacity-70 disabled:cursor-not-allowed text-white text-xs font-semibold px-4 py-2 shadow-md shadow-sky-500/40"
+            >
+              {forgotStatus === 'sending' ? 'Отправка…' : 'Отправить код'}
+            </button>
+          ) : (
+            <div className="space-y-2">
+              <button
+                type="button"
+                onClick={handleResetPassword}
+                disabled={forgotStatus === 'resetting'}
+                className="mt-1 w-full rounded-xl bg-sky-500 hover:bg-sky-600 disabled:opacity-70 disabled:cursor-not-allowed text-white text-xs font-semibold px-4 py-2 shadow-md shadow-sky-500/40"
+              >
+                {forgotStatus === 'resetting' ? 'Сохранение…' : 'Сменить пароль'}
+              </button>
+              <button
+                type="button"
+                onClick={handleSendResetCode}
+                disabled={forgotStatus === 'sending' || forgotStatus === 'resetting'}
+                className="w-full text-xs text-slate-600 hover:text-slate-900 dark:text-[#94a3b8] dark:hover:text-white"
+              >
+                Отправить код ещё раз
+              </button>
+            </div>
+          )}
+
+          <button
+            type="button"
+            onClick={() => {
+              setForgotOpen(false);
+              setForgotStatus('idle');
+              setForgotStep('email');
+              setForgotEmail('');
+              setForgotCode('');
+              setForgotNewPassword('');
+              setForgotNewPassword2('');
+              setError(null);
+              setSuccess(null);
+            }}
+            className="w-full text-xs text-slate-600 hover:text-slate-900 dark:text-[#94a3b8] dark:hover:text-white"
+          >
+            ← Назад ко входу
+          </button>
+        </div>
+      ) : (
+      <form onSubmit={handleSubmit} className="space-y-3">
+        {mode === 'login' && (
+          <div className="space-y-1">
+            <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
+              Логин / почта / телефон
+            </p>
+            <input
+              type="text"
+              value={identifier}
+              onChange={(e) => setIdentifier(e.target.value)}
+              required
+              className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
+              placeholder="user123 / you@example.com / +79991234567"
+            />
+          </div>
+        )}
+
+        {mode === 'register' && (
+          <div className="space-y-1">
+            <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
+              Логин
+            </p>
+            <input
+              type="text"
+              value={login}
+              onChange={(e) => setLogin(e.target.value)}
+              required
+              className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
+              placeholder="Ваш логин"
+            />
+          </div>
+        )}
+
+        {mode === 'register' && (
+          <div className="space-y-1">
+            <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
+              Почта
+            </p>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+              className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
+              placeholder="you@example.com"
+            />
+          </div>
+        )}
+
+        <div className="space-y-1">
+          <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
+            Пароль
+          </p>
+          <input
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            required
+            className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
+            placeholder="Минимум 6 символов"
+          />
+        </div>
+
+        {mode === 'register' && (
+          <>
+            <div className="space-y-1">
+              <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
+                Фамилия
+              </p>
+              <input
+                type="text"
+                value={lastName}
+                onChange={(e) => setLastName(e.target.value)}
+                required
+                className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
+                placeholder="Иванов"
+              />
+            </div>
+
+            <div className="space-y-1">
+              <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
+                Имя
+              </p>
+              <input
+                type="text"
+                value={firstName}
+                onChange={(e) => setFirstName(e.target.value)}
+                required
+                className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
+                placeholder="Иван"
+              />
+            </div>
+
+            <div className="space-y-1">
+              <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
+                Отчество (необязательно)
+              </p>
+              <input
+                type="text"
+                value={middleName}
+                onChange={(e) => setMiddleName(e.target.value)}
+                className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
+                placeholder="Иванович"
+              />
+            </div>
+
+            <div className="space-y-1">
+              <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
+                Телефон
+              </p>
+              <input
+                type="tel"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                required
+                className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
+                placeholder="+79991234567"
+              />
+            </div>
+
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+              <div className="space-y-1 sm:col-span-3">
+                <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
+                  Город
+                </p>
+                <input
+                  type="text"
+                  value={city}
+                  onChange={(e) => setCity(e.target.value)}
+                  required
+                  className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
+                  placeholder="Москва"
+                />
+              </div>
+              <div className="space-y-1 sm:col-span-3">
+                <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
+                  Улица
+                </p>
+                <input
+                  type="text"
+                  value={street}
+                  onChange={(e) => setStreet(e.target.value)}
+                  required
+                  className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
+                  placeholder="Тверская"
+                />
+              </div>
+              <div className="space-y-1">
+                <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
+                  Дом
+                </p>
+                <input
+                  type="text"
+                  value={house}
+                  onChange={(e) => setHouse(e.target.value)}
+                  required
+                  className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
+                  placeholder="1"
+                />
+              </div>
+              <div className="space-y-1">
+                <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
+                  Квартира (необязательно)
+                </p>
+                <input
+                  type="text"
+                  value={apartment}
+                  onChange={(e) => setApartment(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
+                  placeholder="10"
+                />
+              </div>
+            </div>
+          </>
+        )}
+
+        {success && (
+          <p className="text-[11px] text-emerald-700 dark:text-emerald-200 bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/40 rounded-lg px-3 py-2">
+            {success}
+          </p>
+        )}
+
+        {error && (
+          <p className="text-[11px] text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/40 rounded-lg px-3 py-2">
+            {error}
+          </p>
+        )}
+
+        <button
+          type="submit"
+          disabled={loading}
+          className="mt-1 w-full rounded-xl bg-sky-500 hover:bg-sky-600 disabled:opacity-70 disabled:cursor-not-allowed text-white text-xs font-semibold px-4 py-2 shadow-md shadow-sky-500/40"
+        >
+          {loading
+            ? 'Отправка...'
+            : mode === 'login'
+            ? 'Войти'
+            : 'Зарегистрироваться'}
+        </button>
+
+        {mode === 'login' && (
+          <button
+            type="button"
+            onClick={() => {
+              setForgotOpen(true);
+              setForgotEmail('');
+              setForgotStatus('idle');
+              setError(null);
+              setSuccess(null);
+            }}
+            className="w-full text-xs text-slate-600 hover:text-slate-900 dark:text-[#94a3b8] dark:hover:text-white"
+          >
+            Забыли пароль?
+          </button>
+        )}
+      </form>
+      )}
     </div>
   );
 }
