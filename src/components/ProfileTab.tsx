@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
 import type { FC, FormEvent, ChangeEvent } from 'react';
-import { Mail, Lock, Check, X, Camera } from 'lucide-react';
+import { Lock, Check, X, Camera } from 'lucide-react';
 
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -76,6 +76,13 @@ const ProfileTab: FC<ProfileTabProps> = ({ userId, onAvatarChange }) => {
 
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
   const [confirmCode, setConfirmCode] = useState('');
+  const [confirmError, setConfirmError] = useState<string | null>(null);
+  const [passwordPanelOpen, setPasswordPanelOpen] = useState(false);
+  const [pwdStatus, setPwdStatus] = useState<'idle' | 'sending' | 'saving'>('idle');
+  const [pwdCode, setPwdCode] = useState('');
+  const [pwdNew, setPwdNew] = useState('');
+  const [pwdNew2, setPwdNew2] = useState('');
+  const [pwdMessage, setPwdMessage] = useState<string | null>(null);
 
   const [status, setStatus] = useState<'idle' | 'success' | 'error'>('idle');
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
@@ -134,11 +141,31 @@ const ProfileTab: FC<ProfileTabProps> = ({ userId, onAvatarChange }) => {
     e.preventDefault();
     setStatus('idle');
     setStatusMessage(null);
+    setConfirmError(null);
 
     if (!profile) return;
 
     if (hasSensitiveChange) {
       setIsConfirmOpen(true);
+      // Если меняем почту — отправляем код на ТЕКУЩУЮ (старую) почту
+      if (hasEmailChanged) {
+        const currentEmail = initialProfile?.email;
+        if (!currentEmail) return;
+        void fetch(`${API_PREFIX}/users/email-code/send`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: currentEmail, purpose: 'change_email' }),
+        }).then(async (res) => {
+          if (!res.ok) {
+            const json = await res.json().catch(() => null);
+            const msg =
+              (json && (json as { error?: string }).error) ||
+              'Не удалось отправить код на почту.';
+            setStatus('error');
+            setStatusMessage(msg);
+          }
+        });
+      }
     } else {
       void handleSaveProfile();
     }
@@ -159,7 +186,7 @@ const ProfileTab: FC<ProfileTabProps> = ({ userId, onAvatarChange }) => {
       });
 
       if (!res.ok) {
-        throw new Error('Failed to save');
+        throw new Error('Не удалось сохранить изменения.');
       }
 
       const updated = (await res.json()) as UserProfile;
@@ -179,11 +206,110 @@ const ProfileTab: FC<ProfileTabProps> = ({ userId, onAvatarChange }) => {
     }
   };
 
-  const handleConfirm = async () => {
-    if (!confirmCode.trim()) {
-      setStatus('error');
-      setStatusMessage('Введите код подтверждения.');
+  const translateApiError = (json: any, fallback: string) => {
+    const msg = (json?.error ?? json?.message ?? json?.detail ?? '') as string;
+    if (!msg) return fallback;
+    const low = msg.toLowerCase();
+    if (low.includes('invalid code')) return 'Неверный код.';
+    if (low.includes('code expired')) return 'Код просрочен. Запросите новый.';
+    if (low.includes('invalid credentials')) return 'Неверные данные для входа.';
+    if (low.includes('user is blocked')) return 'Пользователь заблокирован.';
+    return msg;
+  };
+
+  const handleSendPasswordCode = async () => {
+    if (!profile?.email) return;
+    setPwdMessage(null);
+    setPwdStatus('sending');
+    try {
+      const res = await fetch(`${API_PREFIX}/users/password-reset/send-code`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: profile.email }),
+      });
+      if (!res.ok) {
+        const json = await res.json().catch(() => null);
+        throw new Error(translateApiError(json, 'Не удалось отправить код на почту.'));
+      }
+      setPwdMessage('Код отправлен на вашу почту.');
+    } catch (e) {
+      setPwdMessage(e instanceof Error ? e.message : 'Не удалось отправить код на почту.');
+    } finally {
+      setPwdStatus('idle');
+    }
+  };
+
+  const handleChangePassword = async () => {
+    if (!profile?.email) return;
+    setPwdMessage(null);
+    const code = pwdCode.trim();
+    if (!code) {
+      setPwdMessage('Введите код из письма.');
       return;
+    }
+    if (!pwdNew || pwdNew.length < 6) {
+      setPwdMessage('Пароль слишком короткий (минимум 6 символов).');
+      return;
+    }
+    if (pwdNew !== pwdNew2) {
+      setPwdMessage('Пароли не совпадают.');
+      return;
+    }
+
+    setPwdStatus('saving');
+    try {
+      const res = await fetch(`${API_PREFIX}/users/password-reset/reset`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: profile.email,
+          code,
+          new_password: pwdNew,
+        }),
+      });
+      if (!res.ok) {
+        const json = await res.json().catch(() => null);
+        throw new Error(translateApiError(json, 'Не удалось сменить пароль. Проверьте код.'));
+      }
+      setPwdCode('');
+      setPwdNew('');
+      setPwdNew2('');
+      setPwdMessage('Пароль успешно изменён.');
+      setPasswordPanelOpen(false);
+    } catch (e) {
+      setPwdMessage(e instanceof Error ? e.message : 'Не удалось сменить пароль.');
+    } finally {
+      setPwdStatus('idle');
+    }
+  };
+
+  const handleConfirm = async () => {
+    setConfirmError(null);
+    if (!confirmCode.trim()) {
+      setConfirmError('Введите код подтверждения.');
+      return;
+    }
+    // Если меняем почту — сначала проверяем код, который пришёл на текущую (старую) почту
+    if (profile && hasEmailChanged) {
+      const currentEmail = initialProfile?.email;
+      if (!currentEmail) {
+        setConfirmError('Не удалось определить текущую почту для подтверждения.');
+        return;
+      }
+      const verifyRes = await fetch(`${API_PREFIX}/users/email-code/verify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: currentEmail,
+          purpose: 'change_email',
+          code: confirmCode.trim(),
+        }),
+      });
+      if (!verifyRes.ok) {
+        const json = await verifyRes.json().catch(() => null);
+        setConfirmError(translateApiError(json, 'Неверный код.'));
+        return;
+      }
     }
     await handleSaveProfile();
   };
@@ -300,76 +426,98 @@ const ProfileTab: FC<ProfileTabProps> = ({ userId, onAvatarChange }) => {
           onSubmit={handleSubmit}
           className="mt-1 rounded-2xl border border-slate-200/90 bg-white shadow-sm shadow-slate-200/70 dark:border-white/10 dark:bg-[#020617] p-4 space-y-4"
         >
-        <div className="space-y-1.5">
-          <label className="text-xs font-semibold text-slate-500 dark:text-[#94a3b8] uppercase tracking-wide">
-            Логин
-          </label>
-          <Input
-            value={profile.login}
-            disabled
-            className="bg-slate-50 dark:bg-black/40 border-slate-200 dark:border-white/10 text-sm text-slate-900 dark:text-slate-50"
-          />
+        <div className="rounded-2xl border border-slate-200/70 bg-slate-50/70 p-3 dark:border-white/10 dark:bg-black/20">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="space-y-1">
+              <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
+                Логин
+              </p>
+              <Input
+                value={profile.login}
+                disabled
+                className="bg-white/90 dark:bg-black/40 border-slate-200 dark:border-white/10 text-base text-slate-900 dark:text-slate-50"
+              />
+              <p className="text-[11px] text-slate-500 dark:text-[#94a3b8]">
+                Логин изменить нельзя.
+              </p>
+            </div>
+
+            <div className="space-y-1">
+              <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
+                Почта
+              </p>
+              <Input
+                type="email"
+                value={profile.email}
+                onChange={(e) =>
+                  setProfile((p) => (p ? { ...p, email: e.target.value } : null))
+                }
+                className="bg-white/90 dark:bg-black/30 border-slate-200 dark:border-white/10 text-base text-slate-900 dark:text-slate-50"
+                placeholder="you@example.com"
+                required
+              />
+              {hasEmailChanged && (
+                <p className="text-[11px] text-amber-600 dark:text-amber-400">
+                  Для смены почты понадобится подтверждение.
+                </p>
+              )}
+            </div>
+          </div>
         </div>
 
-        <div className="space-y-1.5">
-          <label className="text-xs font-semibold text-slate-500 dark:text-[#94a3b8] uppercase tracking-wide flex items-center gap-1.5">
-            <Mail className="h-3.5 w-3.5 text-slate-500 dark:text-[#64748b]" />
-            Почта
-          </label>
-          <Input
-            type="email"
-            value={profile.email}
-            onChange={(e) => setProfile((p) => (p ? { ...p, email: e.target.value } : null))}
-            className="bg-slate-50 dark:bg-black/30 border-slate-200 dark:border-white/10 text-sm text-slate-900 dark:text-slate-50"
-            placeholder="you@example.com"
-            required
-          />
-          {hasEmailChanged && (
-            <p className="text-xs text-amber-600 dark:text-amber-400">
-              При изменении почты понадобится подтверждение.
-            </p>
-          )}
-        </div>
-
-        <div className="space-y-1.5">
-          <label className="text-xs font-semibold text-slate-500 dark:text-[#94a3b8] uppercase tracking-wide">
-            ФИО
-          </label>
+        <div className="rounded-2xl border border-slate-200/70 bg-slate-50/70 p-3 dark:border-white/10 dark:bg-black/20 space-y-3">
+          <p className="text-xs font-semibold text-slate-700 dark:text-white">
+            Личные данные
+          </p>
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+            <div className="space-y-1">
+            <p className="text-[11px] font-medium text-slate-500 dark:text-[#94a3b8]">
+              Фамилия
+            </p>
             <Input
               type="text"
               value={profile.last_name}
               onChange={(e) =>
                 setProfile((p) => (p ? { ...p, last_name: e.target.value } : p))
               }
-              className="bg-slate-50 dark:bg-black/30 border-slate-200 dark:border-white/10 text-sm text-slate-900 dark:text-slate-50"
+              className="bg-slate-50 dark:bg-black/30 border-slate-200 dark:border-white/10 text-base text-slate-900 dark:text-slate-50"
               placeholder="Фамилия"
             />
+            </div>
+            <div className="space-y-1">
+            <p className="text-[11px] font-medium text-slate-500 dark:text-[#94a3b8]">
+              Имя
+            </p>
             <Input
               type="text"
               value={profile.first_name}
               onChange={(e) =>
                 setProfile((p) => (p ? { ...p, first_name: e.target.value } : p))
               }
-              className="bg-slate-50 dark:bg-black/30 border-slate-200 dark:border-white/10 text-sm text-slate-900 dark:text-slate-50"
+              className="bg-slate-50 dark:bg-black/30 border-slate-200 dark:border-white/10 text-base text-slate-900 dark:text-slate-50"
               placeholder="Имя"
             />
+            </div>
+            <div className="space-y-1">
+            <p className="text-[11px] font-medium text-slate-500 dark:text-[#94a3b8]">
+              Отчество
+            </p>
             <Input
               type="text"
               value={profile.middle_name}
               onChange={(e) =>
                 setProfile((p) => (p ? { ...p, middle_name: e.target.value } : p))
               }
-              className="bg-slate-50 dark:bg-black/30 border-slate-200 dark:border-white/10 text-sm text-slate-900 dark:text-slate-50"
+              className="bg-slate-50 dark:bg-black/30 border-slate-200 dark:border-white/10 text-base text-slate-900 dark:text-slate-50"
               placeholder="Отчество"
             />
+            </div>
           </div>
-        </div>
 
-        <div className="space-y-1.5">
-          <label className="text-xs font-semibold text-slate-500 dark:text-[#94a3b8] uppercase tracking-wide">
+        <div className="space-y-1">
+          <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
             Номер телефона
-          </label>
+          </p>
           <Input
             type="tel"
             value={profile.phone}
@@ -378,55 +526,166 @@ const ProfileTab: FC<ProfileTabProps> = ({ userId, onAvatarChange }) => {
                 p ? { ...p, phone: formatPhone(e.target.value) } : p,
               )
             }
-            className="bg-slate-50 dark:bg-black/30 border-slate-200 dark:border-white/10 text-sm text-slate-900 dark:text-slate-50"
+            className="bg-slate-50 dark:bg-black/30 border-slate-200 dark:border-white/10 text-base text-slate-900 dark:text-slate-50"
             placeholder="+79991234567"
           />
         </div>
+        </div>
 
-        <div className="space-y-1.5">
-          <label className="text-xs font-semibold text-slate-500 dark:text-[#94a3b8] uppercase tracking-wide">
+        <div className="rounded-2xl border border-slate-200/70 bg-slate-50/70 p-3 dark:border-white/10 dark:bg-black/20 space-y-3">
+          <p className="text-xs font-semibold text-slate-700 dark:text-white">
             Адрес
-          </label>
-          <div className="space-y-2">
+          </p>
+          <div className="space-y-1">
+            <p className="text-[11px] font-medium text-slate-500 dark:text-[#94a3b8]">
+              Город
+            </p>
             <Input
               type="text"
               value={profile.city}
               onChange={(e) =>
                 setProfile((p) => (p ? { ...p, city: e.target.value } : p))
               }
-              className="bg-slate-50 dark:bg-black/30 border-slate-200 dark:border-white/10 text-sm text-slate-900 dark:text-slate-50"
+              className="bg-slate-50 dark:bg-black/30 border-slate-200 dark:border-white/10 text-base text-slate-900 dark:text-slate-50"
               placeholder="Город"
             />
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+          </div>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+            <div className="space-y-1">
+              <p className="text-[11px] font-medium text-slate-500 dark:text-[#94a3b8]">
+                Улица
+              </p>
               <Input
                 type="text"
                 value={profile.street}
                 onChange={(e) =>
                   setProfile((p) => (p ? { ...p, street: e.target.value } : p))
                 }
-                className="bg-slate-50 dark:bg-black/30 border-slate-200 dark:border-white/10 text-sm text-slate-900 dark:text-slate-50"
+                className="bg-slate-50 dark:bg-black/30 border-slate-200 dark:border-white/10 text-base text-slate-900 dark:text-slate-50"
                 placeholder="Улица"
               />
+            </div>
+            <div className="space-y-1">
+              <p className="text-[11px] font-medium text-slate-500 dark:text-[#94a3b8]">
+                Дом
+              </p>
               <Input
                 type="text"
                 value={profile.house}
                 onChange={(e) =>
                   setProfile((p) => (p ? { ...p, house: e.target.value } : p))
                 }
-                className="bg-slate-50 dark:bg-black/30 border-slate-200 dark:border-white/10 text-sm text-slate-900 dark:text-slate-50"
+                className="bg-slate-50 dark:bg-black/30 border-slate-200 dark:border-white/10 text-base text-slate-900 dark:text-slate-50"
                 placeholder="Дом"
               />
+            </div>
+            <div className="space-y-1">
+              <p className="text-[11px] font-medium text-slate-500 dark:text-[#94a3b8]">
+                Квартира
+              </p>
               <Input
                 type="text"
                 value={profile.apartment}
                 onChange={(e) =>
                   setProfile((p) => (p ? { ...p, apartment: e.target.value } : p))
                 }
-                className="bg-slate-50 dark:bg-black/30 border-slate-200 dark:border-white/10 text-sm text-slate-900 dark:text-slate-50"
+                className="bg-slate-50 dark:bg-black/30 border-slate-200 dark:border-white/10 text-base text-slate-900 dark:text-slate-50"
                 placeholder="Кв."
               />
             </div>
           </div>
+        </div>
+
+        <div className="pt-1">
+          <div className="w-full rounded-2xl border border-slate-200 bg-white text-slate-900 dark:bg-[#020617] dark:border-white/10 px-4 py-3">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-medium dark:text-white">Смена пароля</p>
+                <p className="text-xs text-slate-600 dark:text-[#94a3b8]">
+                  Код придёт на вашу почту: {profile.email}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setPasswordPanelOpen((v) => !v);
+                  setPwdMessage(null);
+                }}
+                className="text-xs font-semibold text-sky-600 hover:text-sky-700 dark:text-sky-400 dark:hover:text-sky-300"
+              >
+                {passwordPanelOpen ? 'Скрыть' : 'Открыть'}
+              </button>
+            </div>
+          </div>
+
+          {passwordPanelOpen && (
+            <div className="mt-2 rounded-2xl border border-slate-200 bg-white dark:border-white/10 dark:bg-[#020617] p-4 space-y-3">
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <Button
+                  type="button"
+                  disabled={pwdStatus !== 'idle'}
+                  onClick={handleSendPasswordCode}
+                  className="w-full sm:w-auto sm:flex-1 rounded-xl bg-sky-500 hover:bg-sky-600 text-xs font-semibold text-white shadow-md shadow-sky-500/40"
+                >
+                  {pwdStatus === 'sending' ? 'Отправка…' : 'Отправить код'}
+                </Button>
+              </div>
+
+              <div className="space-y-1">
+                <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
+                  Код из письма
+                </p>
+                <Input
+                  type="text"
+                  value={pwdCode}
+                  onChange={(e) => setPwdCode(e.target.value)}
+                  className="bg-slate-50 dark:bg-black/30 border-slate-200 dark:border-white/10 text-base text-slate-900 dark:text-slate-50"
+                  placeholder="123456"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
+                  Новый пароль
+                </p>
+                <Input
+                  type="password"
+                  value={pwdNew}
+                  onChange={(e) => setPwdNew(e.target.value)}
+                  className="bg-slate-50 dark:bg-black/30 border-slate-200 dark:border-white/10 text-base text-slate-900 dark:text-slate-50"
+                  placeholder="Минимум 6 символов"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
+                  Повтор пароля
+                </p>
+                <Input
+                  type="password"
+                  value={pwdNew2}
+                  onChange={(e) => setPwdNew2(e.target.value)}
+                  className="bg-slate-50 dark:bg-black/30 border-slate-200 dark:border-white/10 text-base text-slate-900 dark:text-slate-50"
+                  placeholder="Повторите пароль"
+                />
+              </div>
+
+              {pwdMessage && (
+                <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700 dark:border-white/10 dark:bg-black/30 dark:text-[#cbd5f5]">
+                  {pwdMessage}
+                </div>
+              )}
+
+              <Button
+                type="button"
+                disabled={pwdStatus !== 'idle'}
+                onClick={handleChangePassword}
+                className="w-full rounded-xl bg-sky-500 hover:bg-sky-600 text-xs font-semibold text-white shadow-md shadow-sky-500/40"
+              >
+                {pwdStatus === 'saving' ? 'Сохранение…' : 'Сменить пароль'}
+              </Button>
+            </div>
+          )}
         </div>
 
         {statusMessage && (
@@ -445,7 +704,7 @@ const ProfileTab: FC<ProfileTabProps> = ({ userId, onAvatarChange }) => {
           <Button
             type="submit"
             disabled={isSaving}
-            className="px-5 py-2 rounded-xl bg-sky-500 hover:bg-sky-600 text-xs font-semibold text-white shadow-md shadow-sky-500/40"
+            className="w-full md:w-auto px-5 py-2 rounded-xl bg-sky-500 hover:bg-sky-600 text-xs font-semibold text-white shadow-md shadow-sky-500/40"
           >
             {isSaving ? 'Сохранение…' : 'Сохранить изменения'}
           </Button>
@@ -465,8 +724,7 @@ const ProfileTab: FC<ProfileTabProps> = ({ userId, onAvatarChange }) => {
                   Подтверждение изменения данных
                 </h2>
                 <p className="mt-1 text-xs text-slate-600 dark:text-[#94a3b8]">
-                  Для безопасности введите код подтверждения. Заглушка: код никуда не
-                  отправляется, но без него изменения не сохраняются.
+                  Для безопасности введите код подтверждения.
                 </p>
 
                 <div className="mt-3 space-y-1.5">
@@ -478,11 +736,20 @@ const ProfileTab: FC<ProfileTabProps> = ({ userId, onAvatarChange }) => {
                     type="text"
                     autoFocus
                     value={confirmCode}
-                    onChange={(e) => setConfirmCode(e.target.value)}
+                    onChange={(e) => {
+                      setConfirmCode(e.target.value);
+                      setConfirmError(null);
+                    }}
                     className="bg-slate-50 border-slate-200 text-sm text-slate-900 dark:bg-black/40 dark:border-white/15 dark:text-slate-50"
                     placeholder="Например, 123456"
                   />
                 </div>
+
+                {confirmError && (
+                  <div className="mt-2 rounded-lg border border-red-500/40 bg-red-50 px-3 py-2 text-xs text-red-700 dark:bg-red-500/10 dark:text-red-200">
+                    {confirmError}
+                  </div>
+                )}
 
                 <div className="mt-4 flex items-center justify-end gap-2">
                   <Button
@@ -492,6 +759,7 @@ const ProfileTab: FC<ProfileTabProps> = ({ userId, onAvatarChange }) => {
                     onClick={() => {
                       setIsConfirmOpen(false);
                       setConfirmCode('');
+                      setConfirmError(null);
                     }}
                     className="text-xs text-slate-600 hover:text-slate-900 hover:bg-slate-100 dark:text-[#cbd5f5] dark:hover:text-white dark:hover:bg-white/5"
                   >
