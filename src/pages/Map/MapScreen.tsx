@@ -275,9 +275,15 @@ export default function MapScreen() {
   const handleSheetTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
     if (!isSheetOpen) return;
 
+    // Drag должен начинаться только за ручку (handle), иначе при обычном скролле
+    // пользователи случайно "закрывают" простыню.
+    const target = e.target as HTMLElement | null;
+    if (!target || !target.closest('[data-sheet-drag-handle="true"]')) {
+      return;
+    }
+
     // Если пользователь начинает жест внутри прокручиваемой области,
     // даём ему скроллить контент и не запускаем drag для закрытия слайда
-    const target = e.target as HTMLElement | null;
     if (target && target.closest('[data-sheet-scrollable="true"]')) {
       return;
     }
@@ -1057,8 +1063,16 @@ export default function MapScreen() {
                 : 'h-[calc(100vh-80px)] overflow-hidden'
             )}
           >
+            {/* Drag handle */}
+            <div
+              data-sheet-drag-handle="true"
+              className="flex items-center justify-center py-5 -mx-4"
+            >
+              <div className="h-1 w-12 rounded-full bg-slate-300/80 dark:bg-white/15" />
+            </div>
+
             {sheetMode === 'marker' && marker ? (
-              <div className="flex-1 overflow-y-auto pb-2" data-sheet-scrollable="true">
+              <div className="flex-1 overflow-y-auto overscroll-contain pb-2" data-sheet-scrollable="true">
                 <p className="text-[11px] uppercase tracking-wide text-[#64748b] mb-1">
                   Выбранная точка
                 </p>
@@ -1097,7 +1111,7 @@ export default function MapScreen() {
               </div>
             ) : sheetMode === 'rubric' && marker ? (
               <div
-                className="flex-1 overflow-y-auto pb-2 sheet-swap-enter"
+                className="flex-1 overflow-y-auto overscroll-contain pb-2 sheet-swap-enter"
                 data-sheet-scrollable="true"
               >
                 {!selectedRubric ? (
@@ -1378,7 +1392,7 @@ export default function MapScreen() {
                 </div>
 
                 <div
-                  className="flex-1 overflow-y-auto space-y-4 pb-2"
+                  className="flex-1 overflow-y-auto overscroll-contain space-y-4 pb-2"
                   data-sheet-scrollable="true"
                 >
                   {activeTab === 'home' && (

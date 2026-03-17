@@ -424,40 +424,53 @@ const ProfileTab: FC<ProfileTabProps> = ({ userId, onAvatarChange }) => {
       {!isLoading && profile && (
         <form
           onSubmit={handleSubmit}
-          className="mt-1 rounded-2xl border border-slate-200/90 bg-white shadow-sm shadow-slate-200/70 dark:border-white/10 dark:bg-[#020617] p-4 space-y-3"
+          className="mt-1 rounded-2xl border border-slate-200/90 bg-white shadow-sm shadow-slate-200/70 dark:border-white/10 dark:bg-[#020617] p-4 space-y-4"
         >
-        <div className="space-y-1">
-          <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
-            Логин
-          </p>
-          <Input
-            value={profile.login}
-            disabled
-            className="bg-slate-50 dark:bg-black/40 border-slate-200 dark:border-white/10 text-base text-slate-900 dark:text-slate-50"
-          />
+        <div className="rounded-2xl border border-slate-200/70 bg-slate-50/70 p-3 dark:border-white/10 dark:bg-black/20">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="space-y-1">
+              <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
+                Логин
+              </p>
+              <Input
+                value={profile.login}
+                disabled
+                className="bg-white/90 dark:bg-black/40 border-slate-200 dark:border-white/10 text-base text-slate-900 dark:text-slate-50"
+              />
+              <p className="text-[11px] text-slate-500 dark:text-[#94a3b8]">
+                Логин изменить нельзя.
+              </p>
+            </div>
+
+            <div className="space-y-1">
+              <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
+                Почта
+              </p>
+              <Input
+                type="email"
+                value={profile.email}
+                onChange={(e) =>
+                  setProfile((p) => (p ? { ...p, email: e.target.value } : null))
+                }
+                className="bg-white/90 dark:bg-black/30 border-slate-200 dark:border-white/10 text-base text-slate-900 dark:text-slate-50"
+                placeholder="you@example.com"
+                required
+              />
+              {hasEmailChanged && (
+                <p className="text-[11px] text-amber-600 dark:text-amber-400">
+                  Для смены почты понадобится подтверждение.
+                </p>
+              )}
+            </div>
+          </div>
         </div>
 
-        <div className="space-y-1">
-          <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
-            Почта
+        <div className="rounded-2xl border border-slate-200/70 bg-slate-50/70 p-3 dark:border-white/10 dark:bg-black/20 space-y-3">
+          <p className="text-xs font-semibold text-slate-700 dark:text-white">
+            Личные данные
           </p>
-          <Input
-            type="email"
-            value={profile.email}
-            onChange={(e) => setProfile((p) => (p ? { ...p, email: e.target.value } : null))}
-            className="bg-slate-50 dark:bg-black/30 border-slate-200 dark:border-white/10 text-base text-slate-900 dark:text-slate-50"
-            placeholder="you@example.com"
-            required
-          />
-          {hasEmailChanged && (
-            <p className="text-[11px] text-amber-600 dark:text-amber-400">
-              При изменении почты понадобится подтверждение.
-            </p>
-          )}
-        </div>
-
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-          <div className="space-y-1">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+            <div className="space-y-1">
             <p className="text-[11px] font-medium text-slate-500 dark:text-[#94a3b8]">
               Фамилия
             </p>
@@ -470,8 +483,8 @@ const ProfileTab: FC<ProfileTabProps> = ({ userId, onAvatarChange }) => {
               className="bg-slate-50 dark:bg-black/30 border-slate-200 dark:border-white/10 text-base text-slate-900 dark:text-slate-50"
               placeholder="Фамилия"
             />
-          </div>
-          <div className="space-y-1">
+            </div>
+            <div className="space-y-1">
             <p className="text-[11px] font-medium text-slate-500 dark:text-[#94a3b8]">
               Имя
             </p>
@@ -484,8 +497,8 @@ const ProfileTab: FC<ProfileTabProps> = ({ userId, onAvatarChange }) => {
               className="bg-slate-50 dark:bg-black/30 border-slate-200 dark:border-white/10 text-base text-slate-900 dark:text-slate-50"
               placeholder="Имя"
             />
-          </div>
-          <div className="space-y-1">
+            </div>
+            <div className="space-y-1">
             <p className="text-[11px] font-medium text-slate-500 dark:text-[#94a3b8]">
               Отчество
             </p>
@@ -498,11 +511,11 @@ const ProfileTab: FC<ProfileTabProps> = ({ userId, onAvatarChange }) => {
               className="bg-slate-50 dark:bg-black/30 border-slate-200 dark:border-white/10 text-base text-slate-900 dark:text-slate-50"
               placeholder="Отчество"
             />
+            </div>
           </div>
-        </div>
 
         <div className="space-y-1">
-          <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] uppercase tracking-wide">
+          <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
             Номер телефона
           </p>
           <Input
@@ -517,8 +530,12 @@ const ProfileTab: FC<ProfileTabProps> = ({ userId, onAvatarChange }) => {
             placeholder="+79991234567"
           />
         </div>
+        </div>
 
-        <div className="space-y-2">
+        <div className="rounded-2xl border border-slate-200/70 bg-slate-50/70 p-3 dark:border-white/10 dark:bg-black/20 space-y-3">
+          <p className="text-xs font-semibold text-slate-700 dark:text-white">
+            Адрес
+          </p>
           <div className="space-y-1">
             <p className="text-[11px] font-medium text-slate-500 dark:text-[#94a3b8]">
               Город
