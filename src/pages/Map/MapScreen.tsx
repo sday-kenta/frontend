@@ -123,6 +123,8 @@ export default function MapScreen() {
   const sheetDragStartYRef = useRef<number | null>(null);
   const [sheetDragY, setSheetDragY] = useState(0);
   const [isSheetDragging, setIsSheetDragging] = useState(false);
+  const profileScrollRef = useRef<HTMLDivElement | null>(null);
+  const profileTouchStartYRef = useRef<number | null>(null);
 
   type Rubric = {
     id: number;
@@ -309,7 +311,10 @@ export default function MapScreen() {
 
     const threshold = 80;
     if (sheetDragY > threshold) {
-      closeSheet();
+      softCloseSheet();
+      setIsSheetDragging(false);
+      sheetDragStartYRef.current = null;
+      return;
     }
 
     setSheetDragY(0);
@@ -638,6 +643,7 @@ export default function MapScreen() {
       setSheetMode(null);
       return;
     }
+    setSheetDragY(0);
     setActiveTab(tab);
     if (tab === 'settings') {
       setSettingsView('main');
@@ -658,9 +664,64 @@ export default function MapScreen() {
     }
     // Мгновенно возвращаем подсветку на «Главная» как базовую вкладку
     setActiveTab('home');
+    // Сбрасываем смещение, чтобы следующее открытие начиналось из ровного положения.
+    setSheetDragY(0);
   };
 
   const isSheetOpen = sheetMode !== null;
+
+  // Мягкое закрытие: даём анимации контейнера плавно
+  // уехать вниз так же, как при нажатии на фон / крестик.
+  const softCloseSheet = () => {
+    if (!isSheetOpen) return;
+    if (closeSheetTimeoutRef.current) {
+      clearTimeout(closeSheetTimeoutRef.current);
+      closeSheetTimeoutRef.current = null;
+    }
+    closeSheet();
+  };
+
+  // Блокируем зум страницы (pinch, ctrl+wheel) вне области карты,
+  // чтобы зум оставался только на самой карте.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const mapElement = mapRef.current;
+
+    const isInsideMap = (target: EventTarget | null) => {
+      if (!mapElement || !(target instanceof Node)) return false;
+      return mapElement.contains(target);
+    };
+
+    const handleWheel = (event: WheelEvent) => {
+      if (!event.ctrlKey) return;
+      if (isInsideMap(event.target)) return;
+      event.preventDefault();
+    };
+
+    const handleGesture = (event: Event) => {
+      if (isInsideMap(event.target)) return;
+      event.preventDefault();
+    };
+
+    window.addEventListener('wheel', handleWheel, { passive: false });
+    window.addEventListener('gesturestart', handleGesture as EventListener, {
+      passive: false,
+    });
+    window.addEventListener('gesturechange', handleGesture as EventListener, {
+      passive: false,
+    });
+    window.addEventListener('gestureend', handleGesture as EventListener, {
+      passive: false,
+    });
+
+    return () => {
+      window.removeEventListener('wheel', handleWheel);
+      window.removeEventListener('gesturestart', handleGesture as EventListener);
+      window.removeEventListener('gesturechange', handleGesture as EventListener);
+      window.removeEventListener('gestureend', handleGesture as EventListener);
+    };
+  }, []);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -848,6 +909,39 @@ export default function MapScreen() {
     };
   }, [marker]);
 
+  const handleProfileWheel = (event: React.WheelEvent<HTMLDivElement>) => {
+    const el = event.currentTarget;
+    if (el.scrollTop <= 0 && event.deltaY < 0) {
+      event.preventDefault();
+      softCloseSheet();
+    }
+  };
+
+  const handleProfileTouchStart = (event: React.TouchEvent<HTMLDivElement>) => {
+    profileTouchStartYRef.current = event.touches[0]?.clientY ?? null;
+    // На всякий случай сбрасываем смещение простыни,
+    // чтобы жест начинался из ровного положения.
+    setSheetDragY(0);
+    setIsSheetDragging(false);
+  };
+
+  const handleProfileTouchMove = (event: React.TouchEvent<HTMLDivElement>) => {
+    const startY = profileTouchStartYRef.current;
+    const el = profileScrollRef.current;
+    if (startY == null || !el) return;
+
+    const currentY = event.touches[0]?.clientY ?? startY;
+    const delta = currentY - startY;
+
+    // Когда контент профиля уже в самом верху и пользователь тянет вниз,
+    // начинаем "тащить" всю простыню, как в Яндекс.Картах.
+    if (el.scrollTop <= 0 && delta > 0) {
+      event.preventDefault();
+      setIsSheetDragging(true);
+      setSheetDragY(delta);
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-0">
       <div
@@ -937,7 +1031,7 @@ export default function MapScreen() {
               onChange={(e) => setQuery(e.target.value)}
               onFocus={() => suggestions.length > 0 && setShowSuggestions(true)}
               placeholder="Поиск и выбор мест"
-              className="flex-1 bg-transparent text-sm text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-[#6b7280] outline-none"
+              className="flex-1 bg-transparent text-base text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-[#6b7280] outline-none"
             />
             {query && (
               <button
@@ -1218,7 +1312,7 @@ export default function MapScreen() {
                             value={reportTitle}
                             onChange={(e) => setReportTitle(e.target.value)}
                             placeholder="Кратко опишите проблему"
-                            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none dark:bg-[#020617] dark:border-white/10 dark:text-white"
+                            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-base text-slate-900 placeholder:text-slate-400 focus:outline-none dark:bg-[#020617] dark:border-white/10 dark:text-white"
                           />
                         </div>
 
@@ -1231,7 +1325,7 @@ export default function MapScreen() {
                             onChange={(e) => setReportText(e.target.value)}
                             rows={4}
                             placeholder="Опишите, что произошло, когда и при каких условиях"
-                            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none resize-none dark:bg-[#020617] dark:border-white/10 dark:text-white"
+                            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-base text-slate-900 placeholder:text-slate-400 focus:outline-none resize-none dark:bg-[#020617] dark:border-white/10 dark:text-white"
                           />
                         </div>
 
@@ -1379,22 +1473,14 @@ export default function MapScreen() {
               </div>
             ) : (
               <>
-                {/* Заголовок текущей вкладки */}
-                <div className="mb-3">
-                  <p className="text-[11px] uppercase tracking-wide text-[#64748b]">
-                    {activeTab === 'home' && 'Главная'}
-                    {activeTab === 'my' && 'Мои обращения'}
-                    {activeTab === 'all' && 'Все обращения'}
-                    {activeTab === 'profile' && 'Профиль'}
-                    {activeTab === 'settings' && 'Настройки'}
-                    {activeTab === 'auth' && 'Вход и регистрация'}
-                  </p>
-                </div>
-
-                <div
-                  className="flex-1 overflow-y-auto overscroll-contain space-y-4 pb-2"
-                  data-sheet-scrollable="true"
-                >
+              <div
+                className="flex-1 overflow-y-auto overscroll-contain space-y-4 pb-2"
+                data-sheet-scrollable="true"
+                ref={activeTab === 'profile' ? profileScrollRef : null}
+                onWheel={activeTab === 'profile' ? handleProfileWheel : undefined}
+                onTouchStart={activeTab === 'profile' ? handleProfileTouchStart : undefined}
+                onTouchMove={activeTab === 'profile' ? handleProfileTouchMove : undefined}
+              >
                   {activeTab === 'home' && (
                     <div className="space-y-3">
                       <div className="flex items-center justify-between gap-3">
