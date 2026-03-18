@@ -214,6 +214,12 @@ const ProfileTab: FC<ProfileTabProps> = ({ userId, onAvatarChange }) => {
     if (low.includes('code expired')) return 'Код просрочен. Запросите новый.';
     if (low.includes('invalid credentials')) return 'Неверные данные для входа.';
     if (low.includes('user is blocked')) return 'Пользователь заблокирован.';
+    if (low.includes('email already exists') || low.includes('email already exist')) {
+      return 'Пользователь с такой почтой уже зарегистрирован.';
+    }
+    if (low.includes('phone already exists') || low.includes('phone already exist')) {
+      return 'Пользователь с таким телефоном уже зарегистрирован.';
+    }
     return msg;
   };
 
@@ -710,7 +716,7 @@ const ProfileTab: FC<ProfileTabProps> = ({ userId, onAvatarChange }) => {
       )}
 
       {isConfirmOpen && (
-        <div className="fixed inset-0 z-[950] flex items-center justify-center bg-black/40 dark:bg-black/60 backdrop-blur-sm">
+        <div className="fixed inset-0 z-[950] flex items-center justify-center bg-black/40 dark:bg-black/60">
           <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-2xl dark:border-white/10 dark:bg-[#020617]">
             <div className="flex items-start gap-3">
               <div className="mt-1 rounded-full bg-amber-100 p-1.5 dark:bg-amber-500/15">
@@ -737,7 +743,7 @@ const ProfileTab: FC<ProfileTabProps> = ({ userId, onAvatarChange }) => {
                       setConfirmCode(e.target.value);
                       setConfirmError(null);
                     }}
-                    className="bg-slate-50 border-slate-200 text-sm text-slate-900 dark:bg-black/40 dark:border-white/15 dark:text-slate-50"
+                    className="bg-slate-50 border-slate-200 text-base md:text-sm text-slate-900 dark:bg-black/40 dark:border-white/15 dark:text-slate-50"
                     placeholder="Например, 123456"
                   />
                 </div>

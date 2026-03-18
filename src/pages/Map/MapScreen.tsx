@@ -1829,6 +1829,13 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
       return 'Код просрочен. Запросите новый.';
     }
 
+    if (low.includes('email already exists') || low.includes('email already exist')) {
+      return 'Пользователь с такой почтой уже зарегистрирован.';
+    }
+    if (low.includes('phone already exists') || low.includes('phone already exist')) {
+      return 'Пользователь с таким телефоном уже зарегистрирован.';
+    }
+
     return msg || fallback;
   };
   const [mode, setMode] = useState<'login' | 'register'>('login');
@@ -1854,6 +1861,12 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
   const [forgotCode, setForgotCode] = useState('');
   const [forgotNewPassword, setForgotNewPassword] = useState('');
   const [forgotNewPassword2, setForgotNewPassword2] = useState('');
+
+  const [confirmEmailOpen, setConfirmEmailOpen] = useState(false);
+  const [confirmEmail, setConfirmEmail] = useState('');
+  const [confirmEmailCode, setConfirmEmailCode] = useState('');
+  const [confirmEmailStatus, setConfirmEmailStatus] =
+    useState<'idle' | 'sending' | 'verifying'>('idle');
 
   const API_PREFIX = '/v1';
 
@@ -1937,9 +1950,52 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
         }
 
         const created = (await res.json().catch(() => null)) as AuthResponseUser | null;
-        setSuccess('Аккаунт создан. Теперь войдите под своими данными.');
-        setMode('login');
-        if (created?.email) setIdentifier(created.email);
+        const targetEmail = created?.email || email;
+
+        if (targetEmail) {
+          setConfirmEmail(targetEmail);
+          setConfirmEmailOpen(true);
+          setConfirmEmailCode('');
+          setConfirmEmailStatus('sending');
+
+          void fetch(`${API_PREFIX}/users/email-code/send`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: targetEmail, purpose: 'register' }),
+          })
+            .then(async (sendRes) => {
+              if (!sendRes.ok) {
+                const json = await sendRes.json().catch(() => null);
+                const raw =
+                  (json &&
+                    (json as { error?: string; message?: string; detail?: string }).error) ||
+                  (json &&
+                    (json as { error?: string; message?: string; detail?: string }).message) ||
+                  (json &&
+                    (json as { error?: string; message?: string; detail?: string }).detail) ||
+                  null;
+                const msg = translateAuthError(
+                  raw,
+                  'Не удалось отправить код для подтверждения почты.'
+                );
+                setError(msg);
+                setConfirmEmailStatus('idle');
+                setConfirmEmailOpen(false);
+                return;
+              }
+              setConfirmEmailStatus('idle');
+              setSuccess('Мы отправили код на вашу почту. Введите его для подтверждения аккаунта.');
+            })
+            .catch(() => {
+              setConfirmEmailStatus('idle');
+              setError('Не удалось отправить код для подтверждения почты.');
+              setConfirmEmailOpen(false);
+            });
+        } else {
+          setSuccess('Аккаунт создан. Теперь войдите под своими данными.');
+          setMode('login');
+          if (created?.email) setIdentifier(created.email);
+        }
       }
     } catch (err) {
       const fallback = 'Ошибка запроса. Попробуйте ещё раз.';
@@ -2065,11 +2121,74 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
     }
   };
 
+  const handleConfirmEmail = async () => {
+    const emailValue = confirmEmail.trim() || email.trim();
+    const code = confirmEmailCode.trim();
+
+    if (!emailValue) {
+      setError('Не удалось определить почту для подтверждения.');
+      return;
+    }
+    if (!code) {
+      setError('Введите код из письма.');
+      return;
+    }
+
+    setError(null);
+    setSuccess(null);
+    setConfirmEmailStatus('verifying');
+
+    try {
+      const res = await fetch(`${API_PREFIX}/users/email-code/verify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: emailValue,
+          purpose: 'register',
+          code,
+        }),
+      });
+
+      if (!res.ok) {
+        const json = await res.json().catch(() => null);
+        const raw =
+          (json && (json as { error?: string; message?: string; detail?: string }).error) ||
+          (json && (json as { error?: string; message?: string; detail?: string }).message) ||
+          (json && (json as { error?: string; message?: string; detail?: string }).detail) ||
+          null;
+        const msg = translateAuthError(raw, 'Неверный или просроченный код.');
+        throw new Error(msg);
+      }
+
+      setConfirmEmailStatus('idle');
+      setConfirmEmailOpen(false);
+      setSuccess('Почта подтверждена. Теперь войдите под своими данными.');
+      setMode('login');
+      if (emailValue) {
+        setIdentifier(emailValue);
+      }
+    } catch (err) {
+      setConfirmEmailStatus('idle');
+      const fallback = 'Не удалось подтвердить почту. Попробуйте ещё раз.';
+      const msg =
+        err instanceof Error
+          ? translateAuthError(err.message, fallback)
+          : translateAuthError(null, fallback);
+      setError(msg);
+    }
+  };
+
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between gap-3">
+      <div className="flex items-center justify-between gap-3 scale-100">
         <h2 className="text-base font-semibold text-slate-900 dark:text-white">
-          {forgotOpen ? 'Восстановление пароля' : mode === 'login' ? 'Вход в аккаунт' : 'Регистрация'}
+          {confirmEmailOpen
+            ? 'Подтверждение почты'
+            : forgotOpen
+            ? 'Восстановление пароля'
+            : mode === 'login'
+            ? 'Вход в аккаунт'
+            : 'Регистрация'}
         </h2>
         <button
           type="button"
@@ -2081,7 +2200,7 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
         </button>
       </div>
 
-      {!forgotOpen && (
+      {!forgotOpen && !confirmEmailOpen && (
         <div className="flex gap-2 text-xs font-medium">
           <button
             type="button"
@@ -2110,7 +2229,95 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
         </div>
       )}
 
-      {forgotOpen ? (
+      {confirmEmailOpen ? (
+        <div className="space-y-3">
+          <p className="text-[11px] text-slate-600 dark:text-[#94a3b8]">
+            На вашу почту{' '}
+            <span className="font-semibold text-slate-900 dark:text-white">
+              {confirmEmail || email}
+            </span>{' '}
+            отправлен код подтверждения. Введите его, чтобы завершить регистрацию.
+          </p>
+
+          <div className="space-y-1">
+            <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
+              Код из письма
+            </p>
+            <input
+              type="text"
+              inputMode="numeric"
+              value={confirmEmailCode}
+              onChange={(e) => setConfirmEmailCode(e.target.value)}
+              className="w-full rounded-2xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
+              placeholder="123456"
+            />
+          </div>
+
+          <button
+            type="button"
+            onClick={handleConfirmEmail}
+            disabled={confirmEmailStatus === 'verifying'}
+            className="mt-1 w-full rounded-2xl bg-sky-500 hover:bg-sky-600 disabled:opacity-70 disabled:cursor-not-allowed text-white text-xs font-semibold px-4 py-2 shadow-md shadow-sky-500/40"
+          >
+            {confirmEmailStatus === 'verifying' ? 'Проверка…' : 'Подтвердить почту'}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              if (!confirmEmail) return;
+              setConfirmEmailStatus('sending');
+              void fetch(`${API_PREFIX}/users/email-code/send`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email: confirmEmail, purpose: 'register' }),
+              })
+                .then(async (res) => {
+                  if (!res.ok) {
+                    const json = await res.json().catch(() => null);
+                    const raw =
+                      (json &&
+                        (json as { error?: string; message?: string; detail?: string }).error) ||
+                      (json &&
+                        (json as { error?: string; message?: string; detail?: string }).message) ||
+                      (json &&
+                        (json as { error?: string; message?: string; detail?: string }).detail) ||
+                      null;
+                    const msg = translateAuthError(
+                      raw,
+                      'Не удалось отправить код. Проверьте почту и попробуйте ещё раз.'
+                    );
+                    setError(msg);
+                  } else {
+                    setSuccess('Код повторно отправлен на почту.');
+                  }
+                })
+                .catch(() => {
+                  setError('Не удалось отправить код. Попробуйте ещё раз.');
+                })
+                .finally(() => {
+                  setConfirmEmailStatus('idle');
+                });
+            }}
+            disabled={confirmEmailStatus !== 'idle'}
+            className="w-full text-xs text-slate-600 hover:text-slate-900 dark:text-[#94a3b8] dark:hover:text-white"
+          >
+            Отправить код ещё раз
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setConfirmEmailOpen(false);
+              setConfirmEmailCode('');
+              setConfirmEmailStatus('idle');
+            }}
+            className="w-full text-xs text-slate-600 hover:text-slate-900 dark:text-[#94a3b8] dark:hover:text-white"
+          >
+            ← Назад к регистрации
+          </button>
+        </div>
+      ) : forgotOpen ? (
         <div className="space-y-3">
           {forgotStep === 'email' ? (
             <div className="space-y-1">
