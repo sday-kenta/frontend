@@ -2,6 +2,7 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 
+/* stylelint-disable at-rule-no-unknown */
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
@@ -31,6 +32,7 @@
   --color-input: var(--input);
   --color-ring: var(--ring);
 }
+/* stylelint-enable at-rule-no-unknown */
 
 :root, .dark {
   --background: #0d0d0d;
@@ -50,8 +52,19 @@
   * {
     @apply border-border;
   }
+
   body {
     @apply bg-[#0d0d0d] text-[#fafafa];
+  }
+
+  /* Сильное принудительное скругление для всех полей формы */
+  :where(
+      [data-slot='input'],
+      input:not([type='checkbox']):not([type='radio']):not([type='range']),
+      textarea,
+      select
+    ) {
+    border-radius: 1.5rem !important; /* ~rounded-3xl */
   }
 }
 

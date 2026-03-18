@@ -104,7 +104,7 @@ const ProfileTab: FC<ProfileTabProps> = ({ userId, onAvatarChange }) => {
     fetch(`${API_PREFIX}/users/${userId}`)
       .then(async (res) => {
         if (!res.ok) {
-          throw new Error('Failed to load profile');
+          throw new Error('Не удалось загрузить профиль.');
         }
         const json = await res.json();
         console.log('PROFILE RESPONSE', json);
@@ -419,10 +419,10 @@ const ProfileTab: FC<ProfileTabProps> = ({ userId, onAvatarChange }) => {
       )}
 
       {!isLoading && profile && (
-        <form
-          onSubmit={handleSubmit}
-          className="mt-1 rounded-2xl bg-white shadow-sm shadow-slate-200/70 dark:bg-[#020617] p-4 space-y-4"
-        >
+      <form
+        onSubmit={handleSubmit}
+        className="mt-1 rounded-3xl border border-slate-200/70 bg-white/80 shadow-lg shadow-slate-200/60 dark:border-white/10 dark:bg-black/40 p-4 space-y-4 backdrop-blur-sm"
+      >
         <div className="rounded-2xl bg-slate-50/70 p-3 dark:bg-black/20">
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="space-y-1">
