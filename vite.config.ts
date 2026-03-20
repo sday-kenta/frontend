@@ -8,7 +8,9 @@ import { VitePWA } from "vite-plugin-pwa"
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "")
-  const apiTarget = env.VITE_API_PROXY_TARGET || "http://192.168.31.31:8080"
+  // Backend API listens on HTTP_PORT=8080 by default (see backend README).
+  // If VITE_API_PROXY_TARGET isn't provided, proxy /v1/* to local backend.
+  const apiTarget = env.VITE_API_PROXY_TARGET || "http://localhost:8080"
 
   return {
     plugins: [
