@@ -104,7 +104,7 @@ const ProfileTab: FC<ProfileTabProps> = ({ userId, onAvatarChange }) => {
     fetch(`${API_PREFIX}/users/${userId}`)
       .then(async (res) => {
         if (!res.ok) {
-          throw new Error('Failed to load profile');
+          throw new Error('Не удалось загрузить профиль.');
         }
         const json = await res.json();
         console.log('PROFILE RESPONSE', json);
@@ -214,6 +214,12 @@ const ProfileTab: FC<ProfileTabProps> = ({ userId, onAvatarChange }) => {
     if (low.includes('code expired')) return 'Код просрочен. Запросите новый.';
     if (low.includes('invalid credentials')) return 'Неверные данные для входа.';
     if (low.includes('user is blocked')) return 'Пользователь заблокирован.';
+    if (low.includes('email already exists') || low.includes('email already exist')) {
+      return 'Пользователь с такой почтой уже зарегистрирован.';
+    }
+    if (low.includes('phone already exists') || low.includes('phone already exist')) {
+      return 'Пользователь с таким телефоном уже зарегистрирован.';
+    }
     return msg;
   };
 
@@ -396,9 +402,6 @@ const ProfileTab: FC<ProfileTabProps> = ({ userId, onAvatarChange }) => {
           )}
         </label>
         <div className="min-w-0 flex-1">
-          <h2 className="text-sm font-semibold text-slate-900 dark:text-white tracking-tight">
-            Профиль
-          </h2>
           <p className="truncate text-xs text-slate-600 dark:text-[#cbd5f5]/80">
             {profile?.email || 'Настройка контактных данных'}
           </p>
@@ -422,11 +425,11 @@ const ProfileTab: FC<ProfileTabProps> = ({ userId, onAvatarChange }) => {
       )}
 
       {!isLoading && profile && (
-        <form
-          onSubmit={handleSubmit}
-          className="mt-1 rounded-2xl border border-slate-200/90 bg-white shadow-sm shadow-slate-200/70 dark:border-white/10 dark:bg-[#020617] p-4 space-y-4"
-        >
-        <div className="rounded-2xl border border-slate-200/70 bg-slate-50/70 p-3 dark:border-white/10 dark:bg-black/20">
+      <form
+        onSubmit={handleSubmit}
+        className="mt-1 rounded-3xl border border-slate-200/70 bg-white/80 shadow-lg shadow-slate-200/60 dark:border-white/10 dark:bg-black/40 p-4 space-y-4 backdrop-blur-sm"
+      >
+        <div className="rounded-2xl bg-slate-50/70 p-3 dark:bg-black/20">
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="space-y-1">
               <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
@@ -435,7 +438,7 @@ const ProfileTab: FC<ProfileTabProps> = ({ userId, onAvatarChange }) => {
               <Input
                 value={profile.login}
                 disabled
-                className="bg-white/90 dark:bg-black/40 border-slate-200 dark:border-white/10 text-base text-slate-900 dark:text-slate-50"
+                className="rounded-xl bg-white/90 dark:bg-black/40 border-slate-200/60 dark:border-white/10 text-base text-slate-900 dark:text-slate-50"
               />
               <p className="text-[11px] text-slate-500 dark:text-[#94a3b8]">
                 Логин изменить нельзя.
@@ -452,7 +455,7 @@ const ProfileTab: FC<ProfileTabProps> = ({ userId, onAvatarChange }) => {
                 onChange={(e) =>
                   setProfile((p) => (p ? { ...p, email: e.target.value } : null))
                 }
-                className="bg-white/90 dark:bg-black/30 border-slate-200 dark:border-white/10 text-base text-slate-900 dark:text-slate-50"
+                className="rounded-xl bg-white/90 dark:bg-black/30 border-slate-200/60 dark:border-white/10 text-base text-slate-900 dark:text-slate-50"
                 placeholder="you@example.com"
                 required
               />
@@ -465,7 +468,7 @@ const ProfileTab: FC<ProfileTabProps> = ({ userId, onAvatarChange }) => {
           </div>
         </div>
 
-        <div className="rounded-2xl border border-slate-200/70 bg-slate-50/70 p-3 dark:border-white/10 dark:bg-black/20 space-y-3">
+        <div className="rounded-2xl bg-slate-50/70 p-3 dark:bg-black/20 space-y-3">
           <p className="text-xs font-semibold text-slate-700 dark:text-white">
             Личные данные
           </p>
@@ -480,7 +483,7 @@ const ProfileTab: FC<ProfileTabProps> = ({ userId, onAvatarChange }) => {
               onChange={(e) =>
                 setProfile((p) => (p ? { ...p, last_name: e.target.value } : p))
               }
-              className="bg-slate-50 dark:bg-black/30 border-slate-200 dark:border-white/10 text-base text-slate-900 dark:text-slate-50"
+              className="rounded-xl bg-slate-50 dark:bg-black/30 border-slate-200/60 dark:border-white/10 text-base text-slate-900 dark:text-slate-50"
               placeholder="Фамилия"
             />
             </div>
@@ -494,7 +497,7 @@ const ProfileTab: FC<ProfileTabProps> = ({ userId, onAvatarChange }) => {
               onChange={(e) =>
                 setProfile((p) => (p ? { ...p, first_name: e.target.value } : p))
               }
-              className="bg-slate-50 dark:bg-black/30 border-slate-200 dark:border-white/10 text-base text-slate-900 dark:text-slate-50"
+              className="rounded-xl bg-slate-50 dark:bg-black/30 border-slate-200/60 dark:border-white/10 text-base text-slate-900 dark:text-slate-50"
               placeholder="Имя"
             />
             </div>
@@ -508,7 +511,7 @@ const ProfileTab: FC<ProfileTabProps> = ({ userId, onAvatarChange }) => {
               onChange={(e) =>
                 setProfile((p) => (p ? { ...p, middle_name: e.target.value } : p))
               }
-              className="bg-slate-50 dark:bg-black/30 border-slate-200 dark:border-white/10 text-base text-slate-900 dark:text-slate-50"
+              className="rounded-xl bg-slate-50 dark:bg-black/30 border-slate-200/60 dark:border-white/10 text-base text-slate-900 dark:text-slate-50"
               placeholder="Отчество"
             />
             </div>
@@ -526,13 +529,13 @@ const ProfileTab: FC<ProfileTabProps> = ({ userId, onAvatarChange }) => {
                 p ? { ...p, phone: formatPhone(e.target.value) } : p,
               )
             }
-            className="bg-slate-50 dark:bg-black/30 border-slate-200 dark:border-white/10 text-base text-slate-900 dark:text-slate-50"
+            className="rounded-xl bg-slate-50 dark:bg-black/30 border-slate-200/60 dark:border-white/10 text-base text-slate-900 dark:text-slate-50"
             placeholder="+79991234567"
           />
         </div>
         </div>
 
-        <div className="rounded-2xl border border-slate-200/70 bg-slate-50/70 p-3 dark:border-white/10 dark:bg-black/20 space-y-3">
+        <div className="rounded-2xl bg-slate-50/70 p-3 dark:bg-black/20 space-y-3">
           <p className="text-xs font-semibold text-slate-700 dark:text-white">
             Адрес
           </p>
@@ -713,7 +716,7 @@ const ProfileTab: FC<ProfileTabProps> = ({ userId, onAvatarChange }) => {
       )}
 
       {isConfirmOpen && (
-        <div className="fixed inset-0 z-[950] flex items-center justify-center bg-black/40 dark:bg-black/60 backdrop-blur-sm">
+        <div className="fixed inset-0 z-[950] flex items-center justify-center bg-black/40 dark:bg-black/60">
           <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-2xl dark:border-white/10 dark:bg-[#020617]">
             <div className="flex items-start gap-3">
               <div className="mt-1 rounded-full bg-amber-100 p-1.5 dark:bg-amber-500/15">
@@ -740,7 +743,7 @@ const ProfileTab: FC<ProfileTabProps> = ({ userId, onAvatarChange }) => {
                       setConfirmCode(e.target.value);
                       setConfirmError(null);
                     }}
-                    className="bg-slate-50 border-slate-200 text-sm text-slate-900 dark:bg-black/40 dark:border-white/15 dark:text-slate-50"
+                    className="bg-slate-50 border-slate-200 text-base md:text-sm text-slate-900 dark:bg-black/40 dark:border-white/15 dark:text-slate-50"
                     placeholder="Например, 123456"
                   />
                 </div>

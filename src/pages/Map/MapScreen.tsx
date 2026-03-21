@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ComponentType } from 'react';
 import maplibregl, { type MapMouseEvent } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
@@ -10,13 +10,10 @@ import {
   ChevronRight,
   Copy,
   Navigation,
+  Search,
   X,
-  Home,
-  FolderOpen,
   Filter,
   User,
-  MessageCircle,
-  Settings,
   Car,
   ShoppingBag,
 } from 'lucide-react';
@@ -25,6 +22,8 @@ import html2canvas from 'html2canvas';
 import { cn, resolveAvatarUrl } from '@/lib/utils';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import ProfileTabComponent from '@/components/ProfileTab';
+import { SearchRubricsSection } from '@/components/map/SearchRubricsSection';
+import { NearbyIncidentsSection } from '@/components/map/NearbyIncidentsSection';
 
 const ProfileTab = ProfileTabComponent as ComponentType<{
   userId: number;
@@ -37,6 +36,15 @@ interface GeocodingResult {
   display_name: string;
   place_id?: number;
 }
+
+type IncidentPreview = {
+  id: number;
+  title: string;
+  category: string;
+  status: string;
+  lat: number;
+  lng: number;
+};
 
 const NOMINATIM_URL = 'https://nominatim.openstreetmap.org/search';
 const DEBOUNCE_MS = 400;
@@ -53,6 +61,143 @@ const OSM_STYLE_LIGHT: maplibregl.StyleSpecification = {
   },
   layers: [{ id: 'osm', type: 'raster', source: 'osm' }],
 };
+
+const INCIDENT_PREVIEWS: IncidentPreview[] = [
+  {
+    id: 1,
+    title: 'Незаконная парковка на тротуаре',
+    category: 'Парковка',
+    status: 'В работе',
+    lat: 53.2019,
+    lng: 50.1572,
+  },
+  {
+    id: 2,
+    title: 'Просроченные продукты в магазине',
+    category: 'Торговля',
+    status: 'Новая',
+    lat: 53.1945,
+    lng: 50.1485,
+  },
+  {
+    id: 3,
+    title: 'Мусор у контейнерной площадки',
+    category: 'Благоустройство',
+    status: 'Проверка',
+    lat: 53.2061,
+    lng: 50.1638,
+  },
+  {
+    id: 4,
+    title: 'Опасная яма на дороге',
+    category: 'Дороги',
+    status: 'В работе',
+    lat: 53.2103,
+    lng: 50.1429,
+  },
+  {
+    id: 5,
+    title: 'Неубранный снег у остановки',
+    category: 'Благоустройство',
+    status: 'Новая',
+    lat: 53.1983,
+    lng: 50.1521,
+  },
+  {
+    id: 6,
+    title: 'Повреждённый дорожный знак',
+    category: 'Дороги',
+    status: 'Проверка',
+    lat: 53.2052,
+    lng: 50.1467,
+  },
+  {
+    id: 7,
+    title: 'Шум ночью во дворе',
+    category: 'Общественный порядок',
+    status: 'Новая',
+    lat: 53.1928,
+    lng: 50.1605,
+  },
+  {
+    id: 8,
+    title: 'Сломанная детская площадка',
+    category: 'Благоустройство',
+    status: 'В работе',
+    lat: 53.2088,
+    lng: 50.1542,
+  },
+  {
+    id: 9,
+    title: 'Нелегальная торговля у метро',
+    category: 'Торговля',
+    status: 'Проверка',
+    lat: 53.1964,
+    lng: 50.1399,
+  },
+  {
+    id: 10,
+    title: 'Неработающее освещение на переходе',
+    category: 'Дороги',
+    status: 'В работе',
+    lat: 53.2131,
+    lng: 50.1506,
+  },
+  {
+    id: 11,
+    title: 'Скопление мусора у подъезда',
+    category: 'ЖКХ',
+    status: 'Новая',
+    lat: 53.2027,
+    lng: 50.1664,
+  },
+  {
+    id: 12,
+    title: 'Парковка на газоне',
+    category: 'Парковка',
+    status: 'Проверка',
+    lat: 53.1909,
+    lng: 50.1474,
+  },
+  {
+    id: 13,
+    title: 'Стихийная свалка в лесополосе',
+    category: 'Экология',
+    status: 'Новая',
+    lat: 53.2162,
+    lng: 50.1598,
+  },
+  {
+    id: 14,
+    title: 'Яма на тротуаре возле школы',
+    category: 'Дороги',
+    status: 'В работе',
+    lat: 53.1997,
+    lng: 50.1446,
+  },
+  {
+    id: 15,
+    title: 'Протечка воды во дворе',
+    category: 'ЖКХ',
+    status: 'Проверка',
+    lat: 53.2074,
+    lng: 50.1418,
+  },
+];
+
+const QUICK_SEARCH_CHIPS = ['Парковка', 'Просрочка', 'ЖКХ', 'Дороги', 'Мусор рядом'];
+
+function calculateDistanceKm(from: { lat: number; lng: number }, to: { lat: number; lng: number }) {
+  const toRad = (value: number) => (value * Math.PI) / 180;
+  const earthRadiusKm = 6371;
+  const dLat = toRad(to.lat - from.lat);
+  const dLng = toRad(to.lng - from.lng);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(from.lat)) * Math.cos(toRad(to.lat)) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return earthRadiusKm * c;
+}
 
 async function searchAddress(q: string): Promise<GeocodingResult[]> {
   if (!q.trim() || q.length < 3) return [];
@@ -72,6 +217,7 @@ async function searchAddress(q: string): Promise<GeocodingResult[]> {
 
 type Tab = 'home' | 'my' | 'all' | 'profile' | 'settings' | 'auth';
 type SheetMode = 'tabs' | 'marker' | 'rubric' | null;
+type SearchPanelSnap = 'collapsed' | 'half' | 'full';
 
 export default function MapScreen() {
   const mapRef = useRef<HTMLDivElement>(null);
@@ -123,6 +269,23 @@ export default function MapScreen() {
   const sheetDragStartYRef = useRef<number | null>(null);
   const [sheetDragY, setSheetDragY] = useState(0);
   const [isSheetDragging, setIsSheetDragging] = useState(false);
+  const [searchPanelSnap, setSearchPanelSnap] = useState<SearchPanelSnap>('collapsed');
+  const [searchPanelDragHeight, setSearchPanelDragHeight] = useState<number | null>(null);
+  const [isSearchPanelDragging, setIsSearchPanelDragging] = useState(false);
+  const [selectedIncidentCategory, setSelectedIncidentCategory] = useState<string>('Все');
+  const [renderExpandedSearchContent, setRenderExpandedSearchContent] = useState(false);
+  const profileScrollRef = useRef<HTMLDivElement | null>(null);
+  const profileTouchStartYRef = useRef<number | null>(null);
+  const searchPanelTouchStartYRef = useRef<number | null>(null);
+  const searchPanelStartSnapRef = useRef<SearchPanelSnap>('collapsed');
+  const searchPanelTouchTargetRef = useRef<HTMLElement | null>(null);
+  const searchPanelCanDragRef = useRef(false);
+  const searchPanelSettleTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const searchPanelContentHideTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const searchPanelDragRafRef = useRef<number | null>(null);
+  const searchPanelPendingHeightRef = useRef<number | null>(null);
+  const expandedSearchContentRef = useRef<HTMLDivElement | null>(null);
+  const incidentsSectionRef = useRef<HTMLDivElement | null>(null);
 
   type Rubric = {
     id: number;
@@ -309,7 +472,10 @@ export default function MapScreen() {
 
     const threshold = 80;
     if (sheetDragY > threshold) {
-      closeSheet();
+      softCloseSheet();
+      setIsSheetDragging(false);
+      sheetDragStartYRef.current = null;
+      return;
     }
 
     setSheetDragY(0);
@@ -368,6 +534,86 @@ export default function MapScreen() {
     setRubricStep('select');
     setSheetMode('rubric');
   };
+
+  const nearbyIncidents = useMemo(
+    () =>
+      INCIDENT_PREVIEWS
+        .map((incident) => {
+          const distanceKm = calculateDistanceKm(center, {
+            lat: incident.lat,
+            lng: incident.lng,
+          });
+
+          return {
+            ...incident,
+            distanceKm,
+            distanceLabel: distanceKm < 1 ? `${Math.round(distanceKm * 1000)} м` : `${distanceKm.toFixed(1)} км`,
+          };
+        })
+        .sort((a, b) => a.distanceKm - b.distanceKm),
+    [center]
+  );
+
+  const incidentCategories = useMemo(
+    () => ['Все', ...Array.from(new Set(nearbyIncidents.map((incident) => incident.category)))],
+    [nearbyIncidents]
+  );
+
+  const filteredNearbyIncidents = useMemo(
+    () =>
+      nearbyIncidents.filter((incident) => {
+        if (selectedIncidentCategory === 'Все') return true;
+        return incident.category === selectedIncidentCategory;
+      }),
+    [nearbyIncidents, selectedIncidentCategory]
+  );
+
+  const openRubricFromSearch = (rubric: Rubric) => {
+    const markerPoint = marker ?? {
+      lat: center.lat,
+      lng: center.lng,
+      address: 'Точка в центре карты',
+    };
+
+    if (!marker) {
+      setMarker(markerPoint);
+    }
+
+    setSelectedRubric(rubric);
+    setRubricStep('create');
+    setSheetMode('rubric');
+    setShowSuggestions(false);
+    setSearchPanelSnap('collapsed');
+  };
+
+  const handleQuickSearch = (value: string) => {
+    setQuery(value);
+    setSearchPanelSnap((prev) => (prev === 'collapsed' ? 'half' : prev));
+    setShowSuggestions(false);
+  };
+
+  const scheduleSearchPanelHeight = useCallback((nextHeight: number) => {
+    searchPanelPendingHeightRef.current = nextHeight;
+
+    if (searchPanelDragRafRef.current !== null) {
+      return;
+    }
+
+    searchPanelDragRafRef.current = requestAnimationFrame(() => {
+      const pendingHeight = searchPanelPendingHeightRef.current;
+      searchPanelPendingHeightRef.current = null;
+      searchPanelDragRafRef.current = null;
+
+      if (pendingHeight == null) return;
+
+      setSearchPanelDragHeight((prev) => {
+        if (prev !== null && Math.abs(prev - pendingHeight) < 0.5) {
+          return prev;
+        }
+        return pendingHeight;
+      });
+    });
+  }, []);
 
   const copyCoords = () => {
     if (!marker) return;
@@ -638,6 +884,7 @@ export default function MapScreen() {
       setSheetMode(null);
       return;
     }
+    setSheetDragY(0);
     setActiveTab(tab);
     if (tab === 'settings') {
       setSettingsView('main');
@@ -658,9 +905,64 @@ export default function MapScreen() {
     }
     // Мгновенно возвращаем подсветку на «Главная» как базовую вкладку
     setActiveTab('home');
+    // Сбрасываем смещение, чтобы следующее открытие начиналось из ровного положения.
+    setSheetDragY(0);
   };
 
   const isSheetOpen = sheetMode !== null;
+
+  // Мягкое закрытие: даём анимации контейнера плавно
+  // уехать вниз так же, как при нажатии на фон / крестик.
+  const softCloseSheet = () => {
+    if (!isSheetOpen) return;
+    if (closeSheetTimeoutRef.current) {
+      clearTimeout(closeSheetTimeoutRef.current);
+      closeSheetTimeoutRef.current = null;
+    }
+    closeSheet();
+  };
+
+  // Блокируем зум страницы (pinch, ctrl+wheel) вне области карты,
+  // чтобы зум оставался только на самой карте.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const mapElement = mapRef.current;
+
+    const isInsideMap = (target: EventTarget | null) => {
+      if (!mapElement || !(target instanceof Node)) return false;
+      return mapElement.contains(target);
+    };
+
+    const handleWheel = (event: WheelEvent) => {
+      if (!event.ctrlKey) return;
+      if (isInsideMap(event.target)) return;
+      event.preventDefault();
+    };
+
+    const handleGesture = (event: Event) => {
+      if (isInsideMap(event.target)) return;
+      event.preventDefault();
+    };
+
+    window.addEventListener('wheel', handleWheel, { passive: false });
+    window.addEventListener('gesturestart', handleGesture as EventListener, {
+      passive: false,
+    });
+    window.addEventListener('gesturechange', handleGesture as EventListener, {
+      passive: false,
+    });
+    window.addEventListener('gestureend', handleGesture as EventListener, {
+      passive: false,
+    });
+
+    return () => {
+      window.removeEventListener('wheel', handleWheel);
+      window.removeEventListener('gesturestart', handleGesture as EventListener);
+      window.removeEventListener('gesturechange', handleGesture as EventListener);
+      window.removeEventListener('gestureend', handleGesture as EventListener);
+    };
+  }, []);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -848,6 +1150,237 @@ export default function MapScreen() {
     };
   }, [marker]);
 
+  const handleProfileWheel = (event: React.WheelEvent<HTMLDivElement>) => {
+    const el = event.currentTarget;
+    if (el.scrollTop <= 0 && event.deltaY < 0) {
+      event.preventDefault();
+      softCloseSheet();
+    }
+  };
+
+  const handleProfileTouchStart = (event: React.TouchEvent<HTMLDivElement>) => {
+    profileTouchStartYRef.current = event.touches[0]?.clientY ?? null;
+    // На всякий случай сбрасываем смещение простыни,
+    // чтобы жест начинался из ровного положения.
+    setSheetDragY(0);
+    setIsSheetDragging(false);
+  };
+
+  const handleProfileTouchMove = (event: React.TouchEvent<HTMLDivElement>) => {
+    const startY = profileTouchStartYRef.current;
+    const el = profileScrollRef.current;
+    if (startY == null || !el) return;
+
+    const currentY = event.touches[0]?.clientY ?? startY;
+    const delta = currentY - startY;
+
+    // Когда контент профиля уже в самом верху и пользователь тянет вниз,
+    // начинаем "тащить" всю простыню, как в Яндекс.Картах.
+    if (el.scrollTop <= 0 && delta > 0) {
+      event.preventDefault();
+      setIsSheetDragging(true);
+      setSheetDragY(delta);
+    }
+  };
+
+  const getSearchPanelSnapHeightPx = (snap: SearchPanelSnap) => {
+    if (typeof window === 'undefined') return 160;
+    if (snap === 'full') return window.innerHeight;
+    if (snap === 'half') return window.innerHeight * 0.44;
+    return 160;
+  };
+
+  const getNearestSearchPanelSnap = (heightPx: number): SearchPanelSnap => {
+    const points = [
+      { snap: 'collapsed' as SearchPanelSnap, height: getSearchPanelSnapHeightPx('collapsed') },
+      { snap: 'half' as SearchPanelSnap, height: getSearchPanelSnapHeightPx('half') },
+      { snap: 'full' as SearchPanelSnap, height: getSearchPanelSnapHeightPx('full') },
+    ];
+
+    return points.reduce((best, point) => {
+      const bestDiff = Math.abs(best.height - heightPx);
+      const currentDiff = Math.abs(point.height - heightPx);
+      return currentDiff < bestDiff ? point : best;
+    }).snap;
+  };
+
+  const handleSearchPanelTouchStart = (event: React.TouchEvent<HTMLDivElement>) => {
+    if (searchPanelSettleTimeoutRef.current) {
+      clearTimeout(searchPanelSettleTimeoutRef.current);
+      searchPanelSettleTimeoutRef.current = null;
+    }
+
+    searchPanelTouchStartYRef.current = event.touches[0]?.clientY ?? null;
+    searchPanelStartSnapRef.current = searchPanelSnap;
+    searchPanelTouchTargetRef.current = event.target as HTMLElement | null;
+    searchPanelCanDragRef.current = false;
+  };
+
+  const handleSearchPanelTouchMove = (event: React.TouchEvent<HTMLDivElement>) => {
+    const startY = searchPanelTouchStartYRef.current;
+    if (startY == null) return;
+
+    const currentY = event.touches[0]?.clientY ?? startY;
+    const delta = currentY - startY;
+    const absDelta = Math.abs(delta);
+
+    const touchTarget = searchPanelTouchTargetRef.current;
+    const isFromHandle = Boolean(touchTarget?.closest('[data-search-drag-handle="true"]'));
+    const scrollableParent = touchTarget?.closest('[data-search-scrollable="true"]') as HTMLElement | null;
+    const canScrollUp = Boolean(scrollableParent && scrollableParent.scrollTop > 0);
+    const canScrollDown = Boolean(
+      scrollableParent &&
+        scrollableParent.scrollTop + scrollableParent.clientHeight < scrollableParent.scrollHeight - 1
+    );
+    const isFullSnap = searchPanelStartSnapRef.current === 'full';
+    const canStartDragFromContent =
+      !scrollableParent ||
+      (isFullSnap
+        ? delta > 0 && !canScrollUp && absDelta > 16
+        : (delta > 0 && !canScrollUp) || (delta < 0 && !canScrollDown));
+
+    if (!isSearchPanelDragging) {
+      const activationThreshold = isFromHandle ? 6 : isFullSnap ? 12 : 6;
+
+      if (absDelta < activationThreshold) return;
+
+      if (isFromHandle || canStartDragFromContent) {
+        searchPanelCanDragRef.current = true;
+        setIsSearchPanelDragging(true);
+        setSearchPanelDragHeight(getSearchPanelSnapHeightPx(searchPanelStartSnapRef.current));
+      } else {
+        searchPanelCanDragRef.current = false;
+        return;
+      }
+    }
+
+    if (!searchPanelCanDragRef.current) return;
+
+    event.preventDefault();
+
+    const minHeight = getSearchPanelSnapHeightPx('collapsed');
+    const maxHeight = getSearchPanelSnapHeightPx('full');
+    const baseHeight = getSearchPanelSnapHeightPx(searchPanelStartSnapRef.current);
+    let nextHeight = baseHeight - delta;
+
+    if (nextHeight < minHeight) {
+      nextHeight = minHeight - (minHeight - nextHeight) * 0.35;
+    } else if (nextHeight > maxHeight) {
+      nextHeight = maxHeight + (nextHeight - maxHeight) * 0.35;
+    }
+
+    scheduleSearchPanelHeight(nextHeight);
+  };
+
+  const handleSearchPanelTouchEnd = (event: React.TouchEvent<HTMLDivElement>) => {
+    const startY = searchPanelTouchStartYRef.current;
+    if (startY == null) return;
+
+    if (!searchPanelCanDragRef.current) {
+      searchPanelTouchStartYRef.current = null;
+      searchPanelTouchTargetRef.current = null;
+      setSearchPanelDragHeight(null);
+      setIsSearchPanelDragging(false);
+      return;
+    }
+
+    const endY = event.changedTouches[0]?.clientY ?? startY;
+    const delta = endY - startY;
+    const minHeight = getSearchPanelSnapHeightPx('collapsed');
+    const maxHeight = getSearchPanelSnapHeightPx('full');
+    const currentHeight =
+      searchPanelPendingHeightRef.current ??
+      searchPanelDragHeight ??
+      getSearchPanelSnapHeightPx(searchPanelStartSnapRef.current);
+    const clampedHeight = Math.min(maxHeight, Math.max(minHeight, currentHeight));
+    const threshold = 24;
+    let targetSnap = searchPanelStartSnapRef.current;
+
+    if (Math.abs(delta) < threshold) {
+      targetSnap = searchPanelStartSnapRef.current;
+    } else {
+      targetSnap = getNearestSearchPanelSnap(clampedHeight);
+    }
+
+    const targetHeight = getSearchPanelSnapHeightPx(targetSnap);
+    searchPanelPendingHeightRef.current = null;
+    setSearchPanelDragHeight(targetHeight);
+    setSearchPanelSnap(targetSnap);
+
+    searchPanelTouchStartYRef.current = null;
+    searchPanelTouchTargetRef.current = null;
+    searchPanelCanDragRef.current = false;
+    setIsSearchPanelDragging(false);
+
+    if (searchPanelSettleTimeoutRef.current) {
+      clearTimeout(searchPanelSettleTimeoutRef.current);
+      searchPanelSettleTimeoutRef.current = null;
+    }
+
+    searchPanelSettleTimeoutRef.current = setTimeout(() => {
+      setSearchPanelDragHeight(null);
+      searchPanelSettleTimeoutRef.current = null;
+    }, 320);
+  };
+
+  useEffect(() => {
+    const shouldShowExpandedContent =
+      searchPanelSnap !== 'collapsed' || isSearchPanelDragging || searchPanelDragHeight !== null;
+
+    if (shouldShowExpandedContent) {
+      if (searchPanelContentHideTimeoutRef.current) {
+        clearTimeout(searchPanelContentHideTimeoutRef.current);
+        searchPanelContentHideTimeoutRef.current = null;
+      }
+      setRenderExpandedSearchContent(true);
+      return;
+    }
+
+    if (searchPanelContentHideTimeoutRef.current) {
+      clearTimeout(searchPanelContentHideTimeoutRef.current);
+      searchPanelContentHideTimeoutRef.current = null;
+    }
+
+    searchPanelContentHideTimeoutRef.current = setTimeout(() => {
+      setRenderExpandedSearchContent(false);
+      searchPanelContentHideTimeoutRef.current = null;
+    }, 260);
+  }, [searchPanelDragHeight, searchPanelSnap, isSearchPanelDragging]);
+
+  useEffect(() => {
+    if (searchPanelSnap !== 'full' || !renderExpandedSearchContent) return;
+
+    const contentEl = expandedSearchContentRef.current;
+    const incidentsEl = incidentsSectionRef.current;
+    if (!contentEl || !incidentsEl) return;
+
+    const rafId = requestAnimationFrame(() => {
+      const targetTop = Math.max(incidentsEl.offsetTop - 8, 0);
+      contentEl.scrollTo({ top: targetTop, behavior: 'smooth' });
+    });
+
+    return () => cancelAnimationFrame(rafId);
+  }, [searchPanelSnap, renderExpandedSearchContent]);
+
+  useEffect(() => {
+    return () => {
+      if (searchPanelDragRafRef.current !== null) {
+        cancelAnimationFrame(searchPanelDragRafRef.current);
+        searchPanelDragRafRef.current = null;
+      }
+
+      if (searchPanelContentHideTimeoutRef.current) {
+        clearTimeout(searchPanelContentHideTimeoutRef.current);
+        searchPanelContentHideTimeoutRef.current = null;
+      }
+
+      if (searchPanelSettleTimeoutRef.current) {
+        clearTimeout(searchPanelSettleTimeoutRef.current);
+        searchPanelSettleTimeoutRef.current = null;
+      }
+    };
+  }, []);
+
   return (
     <div className="fixed inset-0 z-0">
       <div
@@ -891,7 +1424,12 @@ export default function MapScreen() {
       </button>
 
       {/* Справа: zoom + фильтр доносов + геолокация */}
-      <div className="absolute top-32 right-3 z-[950] flex flex-col gap-2">
+      <div
+        className={cn(
+          'absolute top-32 right-3 z-[950] flex flex-col gap-2 transition-opacity duration-200',
+          searchPanelSnap === 'full' ? 'opacity-0 pointer-events-none' : 'opacity-100'
+        )}
+      >
         <button
           type="button"
           onClick={zoomIn}
@@ -925,19 +1463,52 @@ export default function MapScreen() {
         </button>
       </div>
 
-      {/* Нижняя панель: навигация + поиск */}
+      {/* Нижняя панель: только поиск */}
       <div className="absolute inset-x-0 bottom-0 z-[900]">
-        <div className="glass-dock w-full rounded-t-[28px] rounded-b-none px-4 pt-3 pb-2">
+        <div
+          className="w-full rounded-t-[40px] rounded-b-none border-t border-border/70 bg-background/95 px-4 pt-2 overflow-hidden"
+          style={{
+            maxHeight:
+              searchPanelDragHeight !== null
+                ? `${searchPanelDragHeight}px`
+                : searchPanelSnap === 'full'
+                  ? '100vh'
+                  : searchPanelSnap === 'half'
+                    ? '44vh'
+                    : '160px',
+            paddingBottom:
+              searchPanelSnap === 'collapsed'
+                ? 'max(env(safe-area-inset-bottom),16px)'
+                : 'max(env(safe-area-inset-bottom),10px)',
+            transition: isSearchPanelDragging
+              ? 'none'
+              : 'max-height 360ms cubic-bezier(0.22, 1, 0.36, 1)',
+            touchAction: 'pan-y',
+          }}
+          onTouchStart={handleSearchPanelTouchStart}
+          onTouchMove={handleSearchPanelTouchMove}
+          onTouchEnd={handleSearchPanelTouchEnd}
+        >
+          <div className="flex items-center justify-center py-2" data-search-drag-handle="true">
+            <div className="h-1 w-10 rounded-full bg-muted-foreground/35" />
+          </div>
+
           {/* Поиск */}
-          <div className="flex items-center gap-2 bg-white/95 dark:bg-[#111827] rounded-full px-3 py-2 border border-slate-200 dark:border-white/10">
+          <div className="flex items-center gap-2 rounded-full border border-border/70 bg-muted/35 px-4 py-3">
+            <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
             <input
               ref={inputRef}
               type="text"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              onFocus={() => suggestions.length > 0 && setShowSuggestions(true)}
+              onFocus={() => {
+                setSearchPanelSnap((prev) => (prev === 'collapsed' ? 'half' : prev));
+                if (suggestions.length > 0) {
+                  setShowSuggestions(true);
+                }
+              }}
               placeholder="Поиск и выбор мест"
-              className="flex-1 bg-transparent text-sm text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-[#6b7280] outline-none"
+              className="flex-1 bg-transparent text-base text-foreground placeholder:text-muted-foreground outline-none"
             />
             {query && (
               <button
@@ -948,80 +1519,129 @@ export default function MapScreen() {
                   setShowSuggestions(false);
                   inputRef.current?.focus();
                 }}
-                className="text-[#6b7280] hover:text-slate-900 dark:text-[#9ca3af] dark:hover:text-white"
+                className="text-muted-foreground hover:text-foreground"
               >
                 <X className="h-4 w-4" />
               </button>
             )}
-            {loading && <Loader2 className="h-4 w-4 animate-spin text-sky-400" />}
+            {loading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+          </div>
+
+          <div className="mt-1.5 flex items-center justify-between px-1 text-[11px] text-muted-foreground">
+            <span className="line-clamp-1">Поиск по адресам, рубрикам и точкам рядом</span>
+            <span className="shrink-0">{nearbyIncidents.length} рядом</span>
+          </div>
+
+          <div className="mt-2 flex gap-1.5 overflow-x-auto " data-search-scrollable="true">
+            {QUICK_SEARCH_CHIPS.map((chip) => (
+              <button
+                key={chip}
+                type="button"
+                onClick={() => handleQuickSearch(chip)}
+                className={cn(
+                  'shrink-0 rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors',
+                  query.toLowerCase().includes(chip.toLowerCase())
+                    ? 'border-foreground bg-foreground text-background'
+                    : 'border-border/70 bg-muted/25 text-muted-foreground hover:bg-muted/45 hover:text-foreground'
+                )}
+              >
+                {chip}
+              </button>
+            ))}
           </div>
 
           {showSuggestions && suggestions.length > 0 && (
             <div
               ref={suggestionsRef}
-              className="mt-2 bg-white rounded-2xl shadow-2xl border border-slate-200 dark:bg-[#020617] dark:border-white/10 overflow-hidden max-h-60 overflow-y-auto"
+              data-search-scrollable="true"
+              className={cn(
+                'mt-2 overflow-hidden overflow-y-auto rounded-3xl border border-border/70 bg-background',
+                searchPanelSnap === 'full'
+                  ? 'max-h-96'
+                  : searchPanelSnap === 'half'
+                    ? 'max-h-72'
+                    : 'max-h-60'
+              )}
             >
               {suggestions.map((s, idx) => (
                 <button
                   key={s.place_id ?? idx}
                   type="button"
                   onClick={() => handleSelectSuggestion(s)}
-                  className="w-full px-4 py-3 text-left text-sm text-slate-900 dark:text-white hover:bg-slate-50 dark:hover:bg-white/5 flex items-start gap-3"
+                  className="flex w-full items-start gap-3 px-4 py-3 text-left text-sm text-foreground transition-colors hover:bg-muted/45"
                 >
-                  <MapPin className="h-4 w-4 mt-0.5 shrink-0 text-sky-400" />
+                  <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
                   <span className="line-clamp-2">{s.display_name}</span>
-                  <ChevronRight className="h-4 w-4 shrink-0 text-[#64748b]" />
+                  <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
                 </button>
               ))}
             </div>
           )}
-          {/* Навигация */}
-          <div className="mt-2 flex items-center justify-between text-xs font-medium text-[#94a3b8]">
-            <button
-              type="button"
-              onClick={() => openTab('home')}
+
+          {renderExpandedSearchContent && (
+            <div
+              ref={expandedSearchContentRef}
               className={cn(
-                'flex flex-col items-center flex-1 text-center',
-                activeTab === 'home' ? 'text-sky-400' : 'text-[#94a3b8] hover:text-white'
+                'mt-3 space-y-3 overflow-y-auto pb-2 transition-all duration-250 ease-out',
+                searchPanelSnap === 'collapsed' && !isSearchPanelDragging
+                  ? 'pointer-events-none translate-y-2 opacity-0'
+                  : 'translate-y-0 opacity-100'
               )}
+              data-search-scrollable="true"
             >
-              <Home className="h-4 w-4 mb-0.5" />
-              <span>Главная</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => openTab('my')}
-              className={cn(
-                'flex flex-col items-center flex-1 text-center',
-                activeTab === 'my' ? 'text-sky-400' : 'text-[#94a3b8] hover:text-white'
+              {searchPanelSnap === 'full' ? (
+                <>
+                  <div ref={incidentsSectionRef}>
+                    <NearbyIncidentsSection
+                      categories={incidentCategories}
+                      selectedCategory={selectedIncidentCategory}
+                      onSelectCategory={setSelectedIncidentCategory}
+                      incidents={filteredNearbyIncidents}
+                      isFullHeight={true}
+                      autoFocusScroll={true}
+                      onSelectIncident={(incident) => {
+                        setCenter({ lat: incident.lat, lng: incident.lng });
+                        setMarker({
+                          lat: incident.lat,
+                          lng: incident.lng,
+                          address: incident.title,
+                        });
+                        setSearchPanelSnap('collapsed');
+                        setShowSuggestions(false);
+                      }}
+                    />
+                  </div>
+
+                  <SearchRubricsSection rubrics={rubrics} onSelectRubric={openRubricFromSearch} />
+                </>
+              ) : (
+                <>
+                  <SearchRubricsSection rubrics={rubrics} onSelectRubric={openRubricFromSearch} />
+
+                  <div ref={incidentsSectionRef}>
+                    <NearbyIncidentsSection
+                      categories={incidentCategories}
+                      selectedCategory={selectedIncidentCategory}
+                      onSelectCategory={setSelectedIncidentCategory}
+                      incidents={filteredNearbyIncidents}
+                      isFullHeight={false}
+                      autoFocusScroll={true}
+                      onSelectIncident={(incident) => {
+                        setCenter({ lat: incident.lat, lng: incident.lng });
+                        setMarker({
+                          lat: incident.lat,
+                          lng: incident.lng,
+                          address: incident.title,
+                        });
+                        setSearchPanelSnap('collapsed');
+                        setShowSuggestions(false);
+                      }}
+                    />
+                  </div>
+                </>
               )}
-            >
-              <FolderOpen className="h-4 w-4 mb-0.5" />
-              <span>Мои обращения</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => openTab('all')}
-              className={cn(
-                'flex flex-col items-center flex-1 text-center',
-                activeTab === 'all' ? 'text-sky-400' : 'text-[#94a3b8] hover:text-white'
-              )}
-            >
-              <MessageCircle className="h-4 w-4 mb-0.5" />
-              <span>Все обращения</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => openTab('settings')}
-              className={cn(
-                'flex flex-col items-center flex-1 text-center',
-                activeTab === 'settings' ? 'text-sky-400' : 'text-[#94a3b8] hover:text-white'
-              )}
-            >
-              <Settings className="h-4 w-4 mb-0.5" />
-              <span>Настройки</span>
-            </button>
-          </div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -1146,14 +1766,14 @@ export default function MapScreen() {
                             setSelectedRubric(rubric);
                             setRubricStep('create');
                           }}
-                          className="w-full group relative bg-white rounded-2xl border border-slate-200 hover:border-slate-300 dark:bg-[#020617] dark:border-white/10 dark:hover:border-white/20 transition-all overflow-hidden text-left"
+                          className="w-full group relative bg-white rounded-[12px] border border-slate-200 hover:border-slate-300 dark:bg-[#020617] dark:border-white/10 dark:hover:border-white/20 transition-all overflow-hidden text-left"
                         >
                           <div
                             className={`absolute left-0 top-0 bottom-0 w-1.5 bg-gradient-to-b ${rubric.color}`}
                           />
                           <div className="flex items-center p-5 pl-7">
                             <div
-                              className={`flex-shrink-0 w-14 h-14 rounded-2xl bg-gradient-to-br ${rubric.color} flex items-center justify-center text-white opacity-90`}
+                              className={`flex-shrink-0 w-14 h-14 rounded-[12px] bg-gradient-to-br ${rubric.color} flex items-center justify-center text-white opacity-90`}
                             >
                               {rubric.icon}
                             </div>
@@ -1218,7 +1838,7 @@ export default function MapScreen() {
                             value={reportTitle}
                             onChange={(e) => setReportTitle(e.target.value)}
                             placeholder="Кратко опишите проблему"
-                            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none dark:bg-[#020617] dark:border-white/10 dark:text-white"
+                            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-base text-slate-900 placeholder:text-slate-400 focus:outline-none dark:bg-[#020617] dark:border-white/10 dark:text-white"
                           />
                         </div>
 
@@ -1231,7 +1851,7 @@ export default function MapScreen() {
                             onChange={(e) => setReportText(e.target.value)}
                             rows={4}
                             placeholder="Опишите, что произошло, когда и при каких условиях"
-                            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none resize-none dark:bg-[#020617] dark:border-white/10 dark:text-white"
+                            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-base text-slate-900 placeholder:text-slate-400 focus:outline-none resize-none dark:bg-[#020617] dark:border-white/10 dark:text-white"
                           />
                         </div>
 
@@ -1379,22 +1999,14 @@ export default function MapScreen() {
               </div>
             ) : (
               <>
-                {/* Заголовок текущей вкладки */}
-                <div className="mb-3">
-                  <p className="text-[11px] uppercase tracking-wide text-[#64748b]">
-                    {activeTab === 'home' && 'Главная'}
-                    {activeTab === 'my' && 'Мои обращения'}
-                    {activeTab === 'all' && 'Все обращения'}
-                    {activeTab === 'profile' && 'Профиль'}
-                    {activeTab === 'settings' && 'Настройки'}
-                    {activeTab === 'auth' && 'Вход и регистрация'}
-                  </p>
-                </div>
-
-                <div
-                  className="flex-1 overflow-y-auto overscroll-contain space-y-4 pb-2"
-                  data-sheet-scrollable="true"
-                >
+              <div
+                className="flex-1 overflow-y-auto overscroll-contain space-y-4 pb-2"
+                data-sheet-scrollable="true"
+                ref={activeTab === 'profile' ? profileScrollRef : null}
+                onWheel={activeTab === 'profile' ? handleProfileWheel : undefined}
+                onTouchStart={activeTab === 'profile' ? handleProfileTouchStart : undefined}
+                onTouchMove={activeTab === 'profile' ? handleProfileTouchMove : undefined}
+              >
                   {activeTab === 'home' && (
                     <div className="space-y-3">
                       <div className="flex items-center justify-between gap-3">
@@ -1715,6 +2327,43 @@ type AuthPanelProps = {
 };
 
 function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
+  const translateAuthError = (raw: unknown, fallback: string) => {
+    const msg =
+      (typeof raw === 'string' && raw) ||
+      ((raw as { error?: string })?.error ??
+        (raw as { message?: string })?.message ??
+        (raw as { detail?: string })?.detail ??
+        '');
+
+    if (!msg) return fallback;
+
+    const low = msg.toLowerCase();
+
+    if (low.includes('invalid credentials') || low.includes('wrong password')) {
+      return 'Неверный логин или пароль.';
+    }
+    if (low.includes('user is blocked') || low.includes('user blocked')) {
+      return 'Пользователь заблокирован. Обратитесь в поддержку.';
+    }
+    if (low.includes('user not found')) {
+      return 'Пользователь не найден.';
+    }
+    if (low.includes('invalid code')) {
+      return 'Неверный код.';
+    }
+    if (low.includes('code expired')) {
+      return 'Код просрочен. Запросите новый.';
+    }
+
+    if (low.includes('email already exists') || low.includes('email already exist')) {
+      return 'Пользователь с такой почтой уже зарегистрирован.';
+    }
+    if (low.includes('phone already exists') || low.includes('phone already exist')) {
+      return 'Пользователь с таким телефоном уже зарегистрирован.';
+    }
+
+    return msg || fallback;
+  };
   const [mode, setMode] = useState<'login' | 'register'>('login');
   const [identifier, setIdentifier] = useState('');
   const [login, setLogin] = useState('');
@@ -1739,6 +2388,12 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
   const [forgotNewPassword, setForgotNewPassword] = useState('');
   const [forgotNewPassword2, setForgotNewPassword2] = useState('');
 
+  const [confirmEmailOpen, setConfirmEmailOpen] = useState(false);
+  const [confirmEmail, setConfirmEmail] = useState('');
+  const [confirmEmailCode, setConfirmEmailCode] = useState('');
+  const [confirmEmailStatus, setConfirmEmailStatus] =
+    useState<'idle' | 'sending' | 'verifying'>('idle');
+
   const API_PREFIX = '/v1';
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -1760,11 +2415,15 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
 
         if (!res.ok) {
           const json = await res.json().catch(() => null);
-          const msg =
+          const raw =
             (json && (json as { error?: string; message?: string; detail?: string }).error) ||
             (json && (json as { error?: string; message?: string; detail?: string }).message) ||
             (json && (json as { error?: string; message?: string; detail?: string }).detail) ||
-            'Не удалось выполнить вход. Проверьте данные и попробуйте ещё раз.';
+            null;
+          const msg = translateAuthError(
+            raw,
+            'Не удалось выполнить вход. Проверьте данные и попробуйте ещё раз.'
+          );
           throw new Error(msg);
         }
 
@@ -1804,21 +2463,73 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
 
         if (!res.ok) {
           const json = await res.json().catch(() => null);
-          const msg =
+          const raw =
             (json && (json as { error?: string; message?: string; detail?: string }).error) ||
             (json && (json as { error?: string; message?: string; detail?: string }).message) ||
             (json && (json as { error?: string; message?: string; detail?: string }).detail) ||
-            'Не удалось выполнить запрос. Проверьте данные и попробуйте ещё раз.';
+            null;
+          const msg = translateAuthError(
+            raw,
+            'Не удалось выполнить запрос. Проверьте данные и попробуйте ещё раз.'
+          );
           throw new Error(msg);
         }
 
         const created = (await res.json().catch(() => null)) as AuthResponseUser | null;
-        setSuccess('Аккаунт создан. Теперь войдите под своими данными.');
-        setMode('login');
-        if (created?.email) setIdentifier(created.email);
+        const targetEmail = created?.email || email;
+
+        if (targetEmail) {
+          setConfirmEmail(targetEmail);
+          setConfirmEmailOpen(true);
+          setConfirmEmailCode('');
+          setConfirmEmailStatus('sending');
+
+          void fetch(`${API_PREFIX}/users/email-code/send`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: targetEmail, purpose: 'register' }),
+          })
+            .then(async (sendRes) => {
+              if (!sendRes.ok) {
+                const json = await sendRes.json().catch(() => null);
+                const raw =
+                  (json &&
+                    (json as { error?: string; message?: string; detail?: string }).error) ||
+                  (json &&
+                    (json as { error?: string; message?: string; detail?: string }).message) ||
+                  (json &&
+                    (json as { error?: string; message?: string; detail?: string }).detail) ||
+                  null;
+                const msg = translateAuthError(
+                  raw,
+                  'Не удалось отправить код для подтверждения почты.'
+                );
+                setError(msg);
+                setConfirmEmailStatus('idle');
+                setConfirmEmailOpen(false);
+                return;
+              }
+              setConfirmEmailStatus('idle');
+              setSuccess('Мы отправили код на вашу почту. Введите его для подтверждения аккаунта.');
+            })
+            .catch(() => {
+              setConfirmEmailStatus('idle');
+              setError('Не удалось отправить код для подтверждения почты.');
+              setConfirmEmailOpen(false);
+            });
+        } else {
+          setSuccess('Аккаунт создан. Теперь войдите под своими данными.');
+          setMode('login');
+          if (created?.email) setIdentifier(created.email);
+        }
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Ошибка запроса.');
+      const fallback = 'Ошибка запроса. Попробуйте ещё раз.';
+      const msg =
+        err instanceof Error
+          ? translateAuthError(err.message, fallback)
+          : translateAuthError(null, fallback);
+      setError(msg);
     } finally {
       setLoading(false);
     }
@@ -1843,11 +2554,15 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
 
       if (!res.ok) {
         const json = await res.json().catch(() => null);
-        const msg =
+        const raw =
           (json && (json as { error?: string; message?: string; detail?: string }).error) ||
           (json && (json as { error?: string; message?: string; detail?: string }).message) ||
           (json && (json as { error?: string; message?: string; detail?: string }).detail) ||
-          'Не удалось отправить код. Проверьте почту и попробуйте ещё раз.';
+          null;
+        const msg = translateAuthError(
+          raw,
+          'Не удалось отправить код. Проверьте почту и попробуйте ещё раз.'
+        );
         throw new Error(msg);
       }
 
@@ -1856,7 +2571,12 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
       setForgotStep('reset');
     } catch (err) {
       setForgotStatus('idle');
-      setError(err instanceof Error ? err.message : 'Ошибка запроса.');
+      const fallback = 'Ошибка запроса. Попробуйте ещё раз.';
+      const msg =
+        err instanceof Error
+          ? translateAuthError(err.message, fallback)
+          : translateAuthError(null, fallback);
+      setError(msg);
     }
   };
 
@@ -1895,11 +2615,15 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
 
       if (!res.ok) {
         const json = await res.json().catch(() => null);
-        const msg =
+        const raw =
           (json && (json as { error?: string; message?: string; detail?: string }).error) ||
           (json && (json as { error?: string; message?: string; detail?: string }).message) ||
           (json && (json as { error?: string; message?: string; detail?: string }).detail) ||
-          'Не удалось сменить пароль. Проверьте код и попробуйте ещё раз.';
+          null;
+        const msg = translateAuthError(
+          raw,
+          'Не удалось сменить пароль. Проверьте код и попробуйте ещё раз.'
+        );
         throw new Error(msg);
       }
 
@@ -1914,15 +2638,83 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
       setMode('login');
     } catch (err) {
       setForgotStatus('sent');
-      setError(err instanceof Error ? err.message : 'Ошибка запроса.');
+      const fallback = 'Ошибка запроса. Попробуйте ещё раз.';
+      const msg =
+        err instanceof Error
+          ? translateAuthError(err.message, fallback)
+          : translateAuthError(null, fallback);
+      setError(msg);
+    }
+  };
+
+  const handleConfirmEmail = async () => {
+    const emailValue = confirmEmail.trim() || email.trim();
+    const code = confirmEmailCode.trim();
+
+    if (!emailValue) {
+      setError('Не удалось определить почту для подтверждения.');
+      return;
+    }
+    if (!code) {
+      setError('Введите код из письма.');
+      return;
+    }
+
+    setError(null);
+    setSuccess(null);
+    setConfirmEmailStatus('verifying');
+
+    try {
+      const res = await fetch(`${API_PREFIX}/users/email-code/verify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: emailValue,
+          purpose: 'register',
+          code,
+        }),
+      });
+
+      if (!res.ok) {
+        const json = await res.json().catch(() => null);
+        const raw =
+          (json && (json as { error?: string; message?: string; detail?: string }).error) ||
+          (json && (json as { error?: string; message?: string; detail?: string }).message) ||
+          (json && (json as { error?: string; message?: string; detail?: string }).detail) ||
+          null;
+        const msg = translateAuthError(raw, 'Неверный или просроченный код.');
+        throw new Error(msg);
+      }
+
+      setConfirmEmailStatus('idle');
+      setConfirmEmailOpen(false);
+      setSuccess('Почта подтверждена. Теперь войдите под своими данными.');
+      setMode('login');
+      if (emailValue) {
+        setIdentifier(emailValue);
+      }
+    } catch (err) {
+      setConfirmEmailStatus('idle');
+      const fallback = 'Не удалось подтвердить почту. Попробуйте ещё раз.';
+      const msg =
+        err instanceof Error
+          ? translateAuthError(err.message, fallback)
+          : translateAuthError(null, fallback);
+      setError(msg);
     }
   };
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between gap-3">
+      <div className="flex items-center justify-between gap-3 scale-100">
         <h2 className="text-base font-semibold text-slate-900 dark:text-white">
-          {forgotOpen ? 'Восстановление пароля' : mode === 'login' ? 'Вход в аккаунт' : 'Регистрация'}
+          {confirmEmailOpen
+            ? 'Подтверждение почты'
+            : forgotOpen
+            ? 'Восстановление пароля'
+            : mode === 'login'
+            ? 'Вход в аккаунт'
+            : 'Регистрация'}
         </h2>
         <button
           type="button"
@@ -1934,7 +2726,7 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
         </button>
       </div>
 
-      {!forgotOpen && (
+      {!forgotOpen && !confirmEmailOpen && (
         <div className="flex gap-2 text-xs font-medium">
           <button
             type="button"
@@ -1963,7 +2755,95 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
         </div>
       )}
 
-      {forgotOpen ? (
+      {confirmEmailOpen ? (
+        <div className="space-y-3">
+          <p className="text-[11px] text-slate-600 dark:text-[#94a3b8]">
+            На вашу почту{' '}
+            <span className="font-semibold text-slate-900 dark:text-white">
+              {confirmEmail || email}
+            </span>{' '}
+            отправлен код подтверждения. Введите его, чтобы завершить регистрацию.
+          </p>
+
+          <div className="space-y-1">
+            <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
+              Код из письма
+            </p>
+            <input
+              type="text"
+              inputMode="numeric"
+              value={confirmEmailCode}
+              onChange={(e) => setConfirmEmailCode(e.target.value)}
+              className="w-full rounded-2xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
+              placeholder="123456"
+            />
+          </div>
+
+          <button
+            type="button"
+            onClick={handleConfirmEmail}
+            disabled={confirmEmailStatus === 'verifying'}
+            className="mt-1 w-full rounded-2xl bg-sky-500 hover:bg-sky-600 disabled:opacity-70 disabled:cursor-not-allowed text-white text-xs font-semibold px-4 py-2 shadow-md shadow-sky-500/40"
+          >
+            {confirmEmailStatus === 'verifying' ? 'Проверка…' : 'Подтвердить почту'}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              if (!confirmEmail) return;
+              setConfirmEmailStatus('sending');
+              void fetch(`${API_PREFIX}/users/email-code/send`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email: confirmEmail, purpose: 'register' }),
+              })
+                .then(async (res) => {
+                  if (!res.ok) {
+                    const json = await res.json().catch(() => null);
+                    const raw =
+                      (json &&
+                        (json as { error?: string; message?: string; detail?: string }).error) ||
+                      (json &&
+                        (json as { error?: string; message?: string; detail?: string }).message) ||
+                      (json &&
+                        (json as { error?: string; message?: string; detail?: string }).detail) ||
+                      null;
+                    const msg = translateAuthError(
+                      raw,
+                      'Не удалось отправить код. Проверьте почту и попробуйте ещё раз.'
+                    );
+                    setError(msg);
+                  } else {
+                    setSuccess('Код повторно отправлен на почту.');
+                  }
+                })
+                .catch(() => {
+                  setError('Не удалось отправить код. Попробуйте ещё раз.');
+                })
+                .finally(() => {
+                  setConfirmEmailStatus('idle');
+                });
+            }}
+            disabled={confirmEmailStatus !== 'idle'}
+            className="w-full text-xs text-slate-600 hover:text-slate-900 dark:text-[#94a3b8] dark:hover:text-white"
+          >
+            Отправить код ещё раз
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setConfirmEmailOpen(false);
+              setConfirmEmailCode('');
+              setConfirmEmailStatus('idle');
+            }}
+            className="w-full text-xs text-slate-600 hover:text-slate-900 dark:text-[#94a3b8] dark:hover:text-white"
+          >
+            ← Назад к регистрации
+          </button>
+        </div>
+      ) : forgotOpen ? (
         <div className="space-y-3">
           {forgotStep === 'email' ? (
             <div className="space-y-1">
@@ -1974,7 +2854,7 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
                 type="email"
                 value={forgotEmail}
                 onChange={(e) => setForgotEmail(e.target.value)}
-                className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
+                className="w-full rounded-2xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
                 placeholder="you@example.com"
               />
               <p className="text-[11px] text-slate-500 dark:text-[#94a3b8]">
@@ -1991,7 +2871,7 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
                   type="email"
                   value={forgotEmail}
                   onChange={(e) => setForgotEmail(e.target.value)}
-                  className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
+                  className="w-full rounded-2xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
                   placeholder="you@example.com"
                 />
               </div>
@@ -2005,7 +2885,7 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
                   inputMode="numeric"
                   value={forgotCode}
                   onChange={(e) => setForgotCode(e.target.value)}
-                  className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
+                  className="w-full rounded-2xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
                   placeholder="123456"
                 />
               </div>
@@ -2018,7 +2898,7 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
                   type="password"
                   value={forgotNewPassword}
                   onChange={(e) => setForgotNewPassword(e.target.value)}
-                  className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
+                  className="w-full rounded-2xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
                   placeholder="Минимум 6 символов"
                 />
               </div>
@@ -2031,7 +2911,7 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
                   type="password"
                   value={forgotNewPassword2}
                   onChange={(e) => setForgotNewPassword2(e.target.value)}
-                  className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
+                  className="w-full rounded-2xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
                   placeholder="Повторите пароль"
                 />
               </div>
@@ -2055,7 +2935,7 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
               type="button"
               onClick={handleSendResetCode}
               disabled={forgotStatus === 'sending'}
-              className="mt-1 w-full rounded-xl bg-sky-500 hover:bg-sky-600 disabled:opacity-70 disabled:cursor-not-allowed text-white text-xs font-semibold px-4 py-2 shadow-md shadow-sky-500/40"
+              className="mt-1 w-full rounded-2xl bg-sky-500 hover:bg-sky-600 disabled:opacity-70 disabled:cursor-not-allowed text-white text-xs font-semibold px-4 py-2 shadow-md shadow-sky-500/40"
             >
               {forgotStatus === 'sending' ? 'Отправка…' : 'Отправить код'}
             </button>
@@ -2065,7 +2945,7 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
                 type="button"
                 onClick={handleResetPassword}
                 disabled={forgotStatus === 'resetting'}
-                className="mt-1 w-full rounded-xl bg-sky-500 hover:bg-sky-600 disabled:opacity-70 disabled:cursor-not-allowed text-white text-xs font-semibold px-4 py-2 shadow-md shadow-sky-500/40"
+                className="mt-1 w-full rounded-2xl bg-sky-500 hover:bg-sky-600 disabled:opacity-70 disabled:cursor-not-allowed text-white text-xs font-semibold px-4 py-2 shadow-md shadow-sky-500/40"
               >
                 {forgotStatus === 'resetting' ? 'Сохранение…' : 'Сменить пароль'}
               </button>
@@ -2110,7 +2990,7 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
               value={identifier}
               onChange={(e) => setIdentifier(e.target.value)}
               required
-              className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
+              className="w-full rounded-2xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
               placeholder="user123 / you@example.com / +79991234567"
             />
           </div>
@@ -2126,7 +3006,7 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
               value={login}
               onChange={(e) => setLogin(e.target.value)}
               required
-              className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
+              className="w-full rounded-2xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
               placeholder="Ваш логин"
             />
           </div>
@@ -2142,7 +3022,7 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
-              className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
+              className="w-full rounded-2xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
               placeholder="you@example.com"
             />
           </div>
@@ -2157,7 +3037,7 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             required
-            className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
+            className="w-full rounded-2xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
             placeholder="Минимум 6 символов"
           />
         </div>
