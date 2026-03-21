@@ -123,6 +123,8 @@ export default function MapScreen() {
   const sheetDragStartYRef = useRef<number | null>(null);
   const [sheetDragY, setSheetDragY] = useState(0);
   const [isSheetDragging, setIsSheetDragging] = useState(false);
+  const profileScrollRef = useRef<HTMLDivElement | null>(null);
+  const profileTouchStartYRef = useRef<number | null>(null);
 
   type Rubric = {
     id: number;
@@ -309,7 +311,10 @@ export default function MapScreen() {
 
     const threshold = 80;
     if (sheetDragY > threshold) {
-      closeSheet();
+      softCloseSheet();
+      setIsSheetDragging(false);
+      sheetDragStartYRef.current = null;
+      return;
     }
 
     setSheetDragY(0);
@@ -638,6 +643,7 @@ export default function MapScreen() {
       setSheetMode(null);
       return;
     }
+    setSheetDragY(0);
     setActiveTab(tab);
     if (tab === 'settings') {
       setSettingsView('main');
@@ -658,9 +664,64 @@ export default function MapScreen() {
     }
     // Мгновенно возвращаем подсветку на «Главная» как базовую вкладку
     setActiveTab('home');
+    // Сбрасываем смещение, чтобы следующее открытие начиналось из ровного положения.
+    setSheetDragY(0);
   };
 
   const isSheetOpen = sheetMode !== null;
+
+  // Мягкое закрытие: даём анимации контейнера плавно
+  // уехать вниз так же, как при нажатии на фон / крестик.
+  const softCloseSheet = () => {
+    if (!isSheetOpen) return;
+    if (closeSheetTimeoutRef.current) {
+      clearTimeout(closeSheetTimeoutRef.current);
+      closeSheetTimeoutRef.current = null;
+    }
+    closeSheet();
+  };
+
+  // Блокируем зум страницы (pinch, ctrl+wheel) вне области карты,
+  // чтобы зум оставался только на самой карте.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const mapElement = mapRef.current;
+
+    const isInsideMap = (target: EventTarget | null) => {
+      if (!mapElement || !(target instanceof Node)) return false;
+      return mapElement.contains(target);
+    };
+
+    const handleWheel = (event: WheelEvent) => {
+      if (!event.ctrlKey) return;
+      if (isInsideMap(event.target)) return;
+      event.preventDefault();
+    };
+
+    const handleGesture = (event: Event) => {
+      if (isInsideMap(event.target)) return;
+      event.preventDefault();
+    };
+
+    window.addEventListener('wheel', handleWheel, { passive: false });
+    window.addEventListener('gesturestart', handleGesture as EventListener, {
+      passive: false,
+    });
+    window.addEventListener('gesturechange', handleGesture as EventListener, {
+      passive: false,
+    });
+    window.addEventListener('gestureend', handleGesture as EventListener, {
+      passive: false,
+    });
+
+    return () => {
+      window.removeEventListener('wheel', handleWheel);
+      window.removeEventListener('gesturestart', handleGesture as EventListener);
+      window.removeEventListener('gesturechange', handleGesture as EventListener);
+      window.removeEventListener('gestureend', handleGesture as EventListener);
+    };
+  }, []);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -848,6 +909,39 @@ export default function MapScreen() {
     };
   }, [marker]);
 
+  const handleProfileWheel = (event: React.WheelEvent<HTMLDivElement>) => {
+    const el = event.currentTarget;
+    if (el.scrollTop <= 0 && event.deltaY < 0) {
+      event.preventDefault();
+      softCloseSheet();
+    }
+  };
+
+  const handleProfileTouchStart = (event: React.TouchEvent<HTMLDivElement>) => {
+    profileTouchStartYRef.current = event.touches[0]?.clientY ?? null;
+    // На всякий случай сбрасываем смещение простыни,
+    // чтобы жест начинался из ровного положения.
+    setSheetDragY(0);
+    setIsSheetDragging(false);
+  };
+
+  const handleProfileTouchMove = (event: React.TouchEvent<HTMLDivElement>) => {
+    const startY = profileTouchStartYRef.current;
+    const el = profileScrollRef.current;
+    if (startY == null || !el) return;
+
+    const currentY = event.touches[0]?.clientY ?? startY;
+    const delta = currentY - startY;
+
+    // Когда контент профиля уже в самом верху и пользователь тянет вниз,
+    // начинаем "тащить" всю простыню, как в Яндекс.Картах.
+    if (el.scrollTop <= 0 && delta > 0) {
+      event.preventDefault();
+      setIsSheetDragging(true);
+      setSheetDragY(delta);
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-0">
       <div
@@ -937,7 +1031,7 @@ export default function MapScreen() {
               onChange={(e) => setQuery(e.target.value)}
               onFocus={() => suggestions.length > 0 && setShowSuggestions(true)}
               placeholder="Поиск и выбор мест"
-              className="flex-1 bg-transparent text-sm text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-[#6b7280] outline-none"
+              className="flex-1 bg-transparent text-base text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-[#6b7280] outline-none"
             />
             {query && (
               <button
@@ -1218,7 +1312,7 @@ export default function MapScreen() {
                             value={reportTitle}
                             onChange={(e) => setReportTitle(e.target.value)}
                             placeholder="Кратко опишите проблему"
-                            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none dark:bg-[#020617] dark:border-white/10 dark:text-white"
+                            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-base text-slate-900 placeholder:text-slate-400 focus:outline-none dark:bg-[#020617] dark:border-white/10 dark:text-white"
                           />
                         </div>
 
@@ -1231,7 +1325,7 @@ export default function MapScreen() {
                             onChange={(e) => setReportText(e.target.value)}
                             rows={4}
                             placeholder="Опишите, что произошло, когда и при каких условиях"
-                            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none resize-none dark:bg-[#020617] dark:border-white/10 dark:text-white"
+                            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-base text-slate-900 placeholder:text-slate-400 focus:outline-none resize-none dark:bg-[#020617] dark:border-white/10 dark:text-white"
                           />
                         </div>
 
@@ -1379,22 +1473,14 @@ export default function MapScreen() {
               </div>
             ) : (
               <>
-                {/* Заголовок текущей вкладки */}
-                <div className="mb-3">
-                  <p className="text-[11px] uppercase tracking-wide text-[#64748b]">
-                    {activeTab === 'home' && 'Главная'}
-                    {activeTab === 'my' && 'Мои обращения'}
-                    {activeTab === 'all' && 'Все обращения'}
-                    {activeTab === 'profile' && 'Профиль'}
-                    {activeTab === 'settings' && 'Настройки'}
-                    {activeTab === 'auth' && 'Вход и регистрация'}
-                  </p>
-                </div>
-
-                <div
-                  className="flex-1 overflow-y-auto overscroll-contain space-y-4 pb-2"
-                  data-sheet-scrollable="true"
-                >
+              <div
+                className="flex-1 overflow-y-auto overscroll-contain space-y-4 pb-2"
+                data-sheet-scrollable="true"
+                ref={activeTab === 'profile' ? profileScrollRef : null}
+                onWheel={activeTab === 'profile' ? handleProfileWheel : undefined}
+                onTouchStart={activeTab === 'profile' ? handleProfileTouchStart : undefined}
+                onTouchMove={activeTab === 'profile' ? handleProfileTouchMove : undefined}
+              >
                   {activeTab === 'home' && (
                     <div className="space-y-3">
                       <div className="flex items-center justify-between gap-3">
@@ -1715,6 +1801,43 @@ type AuthPanelProps = {
 };
 
 function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
+  const translateAuthError = (raw: unknown, fallback: string) => {
+    const msg =
+      (typeof raw === 'string' && raw) ||
+      ((raw as { error?: string })?.error ??
+        (raw as { message?: string })?.message ??
+        (raw as { detail?: string })?.detail ??
+        '');
+
+    if (!msg) return fallback;
+
+    const low = msg.toLowerCase();
+
+    if (low.includes('invalid credentials') || low.includes('wrong password')) {
+      return 'Неверный логин или пароль.';
+    }
+    if (low.includes('user is blocked') || low.includes('user blocked')) {
+      return 'Пользователь заблокирован. Обратитесь в поддержку.';
+    }
+    if (low.includes('user not found')) {
+      return 'Пользователь не найден.';
+    }
+    if (low.includes('invalid code')) {
+      return 'Неверный код.';
+    }
+    if (low.includes('code expired')) {
+      return 'Код просрочен. Запросите новый.';
+    }
+
+    if (low.includes('email already exists') || low.includes('email already exist')) {
+      return 'Пользователь с такой почтой уже зарегистрирован.';
+    }
+    if (low.includes('phone already exists') || low.includes('phone already exist')) {
+      return 'Пользователь с таким телефоном уже зарегистрирован.';
+    }
+
+    return msg || fallback;
+  };
   const [mode, setMode] = useState<'login' | 'register'>('login');
   const [identifier, setIdentifier] = useState('');
   const [login, setLogin] = useState('');
@@ -1739,6 +1862,12 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
   const [forgotNewPassword, setForgotNewPassword] = useState('');
   const [forgotNewPassword2, setForgotNewPassword2] = useState('');
 
+  const [confirmEmailOpen, setConfirmEmailOpen] = useState(false);
+  const [confirmEmail, setConfirmEmail] = useState('');
+  const [confirmEmailCode, setConfirmEmailCode] = useState('');
+  const [confirmEmailStatus, setConfirmEmailStatus] =
+    useState<'idle' | 'sending' | 'verifying'>('idle');
+
   const API_PREFIX = '/v1';
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -1760,11 +1889,15 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
 
         if (!res.ok) {
           const json = await res.json().catch(() => null);
-          const msg =
+          const raw =
             (json && (json as { error?: string; message?: string; detail?: string }).error) ||
             (json && (json as { error?: string; message?: string; detail?: string }).message) ||
             (json && (json as { error?: string; message?: string; detail?: string }).detail) ||
-            'Не удалось выполнить вход. Проверьте данные и попробуйте ещё раз.';
+            null;
+          const msg = translateAuthError(
+            raw,
+            'Не удалось выполнить вход. Проверьте данные и попробуйте ещё раз.'
+          );
           throw new Error(msg);
         }
 
@@ -1804,21 +1937,73 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
 
         if (!res.ok) {
           const json = await res.json().catch(() => null);
-          const msg =
+          const raw =
             (json && (json as { error?: string; message?: string; detail?: string }).error) ||
             (json && (json as { error?: string; message?: string; detail?: string }).message) ||
             (json && (json as { error?: string; message?: string; detail?: string }).detail) ||
-            'Не удалось выполнить запрос. Проверьте данные и попробуйте ещё раз.';
+            null;
+          const msg = translateAuthError(
+            raw,
+            'Не удалось выполнить запрос. Проверьте данные и попробуйте ещё раз.'
+          );
           throw new Error(msg);
         }
 
         const created = (await res.json().catch(() => null)) as AuthResponseUser | null;
-        setSuccess('Аккаунт создан. Теперь войдите под своими данными.');
-        setMode('login');
-        if (created?.email) setIdentifier(created.email);
+        const targetEmail = created?.email || email;
+
+        if (targetEmail) {
+          setConfirmEmail(targetEmail);
+          setConfirmEmailOpen(true);
+          setConfirmEmailCode('');
+          setConfirmEmailStatus('sending');
+
+          void fetch(`${API_PREFIX}/users/email-code/send`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: targetEmail, purpose: 'register' }),
+          })
+            .then(async (sendRes) => {
+              if (!sendRes.ok) {
+                const json = await sendRes.json().catch(() => null);
+                const raw =
+                  (json &&
+                    (json as { error?: string; message?: string; detail?: string }).error) ||
+                  (json &&
+                    (json as { error?: string; message?: string; detail?: string }).message) ||
+                  (json &&
+                    (json as { error?: string; message?: string; detail?: string }).detail) ||
+                  null;
+                const msg = translateAuthError(
+                  raw,
+                  'Не удалось отправить код для подтверждения почты.'
+                );
+                setError(msg);
+                setConfirmEmailStatus('idle');
+                setConfirmEmailOpen(false);
+                return;
+              }
+              setConfirmEmailStatus('idle');
+              setSuccess('Мы отправили код на вашу почту. Введите его для подтверждения аккаунта.');
+            })
+            .catch(() => {
+              setConfirmEmailStatus('idle');
+              setError('Не удалось отправить код для подтверждения почты.');
+              setConfirmEmailOpen(false);
+            });
+        } else {
+          setSuccess('Аккаунт создан. Теперь войдите под своими данными.');
+          setMode('login');
+          if (created?.email) setIdentifier(created.email);
+        }
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Ошибка запроса.');
+      const fallback = 'Ошибка запроса. Попробуйте ещё раз.';
+      const msg =
+        err instanceof Error
+          ? translateAuthError(err.message, fallback)
+          : translateAuthError(null, fallback);
+      setError(msg);
     } finally {
       setLoading(false);
     }
@@ -1843,11 +2028,15 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
 
       if (!res.ok) {
         const json = await res.json().catch(() => null);
-        const msg =
+        const raw =
           (json && (json as { error?: string; message?: string; detail?: string }).error) ||
           (json && (json as { error?: string; message?: string; detail?: string }).message) ||
           (json && (json as { error?: string; message?: string; detail?: string }).detail) ||
-          'Не удалось отправить код. Проверьте почту и попробуйте ещё раз.';
+          null;
+        const msg = translateAuthError(
+          raw,
+          'Не удалось отправить код. Проверьте почту и попробуйте ещё раз.'
+        );
         throw new Error(msg);
       }
 
@@ -1856,7 +2045,12 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
       setForgotStep('reset');
     } catch (err) {
       setForgotStatus('idle');
-      setError(err instanceof Error ? err.message : 'Ошибка запроса.');
+      const fallback = 'Ошибка запроса. Попробуйте ещё раз.';
+      const msg =
+        err instanceof Error
+          ? translateAuthError(err.message, fallback)
+          : translateAuthError(null, fallback);
+      setError(msg);
     }
   };
 
@@ -1895,11 +2089,15 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
 
       if (!res.ok) {
         const json = await res.json().catch(() => null);
-        const msg =
+        const raw =
           (json && (json as { error?: string; message?: string; detail?: string }).error) ||
           (json && (json as { error?: string; message?: string; detail?: string }).message) ||
           (json && (json as { error?: string; message?: string; detail?: string }).detail) ||
-          'Не удалось сменить пароль. Проверьте код и попробуйте ещё раз.';
+          null;
+        const msg = translateAuthError(
+          raw,
+          'Не удалось сменить пароль. Проверьте код и попробуйте ещё раз.'
+        );
         throw new Error(msg);
       }
 
@@ -1914,15 +2112,83 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
       setMode('login');
     } catch (err) {
       setForgotStatus('sent');
-      setError(err instanceof Error ? err.message : 'Ошибка запроса.');
+      const fallback = 'Ошибка запроса. Попробуйте ещё раз.';
+      const msg =
+        err instanceof Error
+          ? translateAuthError(err.message, fallback)
+          : translateAuthError(null, fallback);
+      setError(msg);
+    }
+  };
+
+  const handleConfirmEmail = async () => {
+    const emailValue = confirmEmail.trim() || email.trim();
+    const code = confirmEmailCode.trim();
+
+    if (!emailValue) {
+      setError('Не удалось определить почту для подтверждения.');
+      return;
+    }
+    if (!code) {
+      setError('Введите код из письма.');
+      return;
+    }
+
+    setError(null);
+    setSuccess(null);
+    setConfirmEmailStatus('verifying');
+
+    try {
+      const res = await fetch(`${API_PREFIX}/users/email-code/verify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: emailValue,
+          purpose: 'register',
+          code,
+        }),
+      });
+
+      if (!res.ok) {
+        const json = await res.json().catch(() => null);
+        const raw =
+          (json && (json as { error?: string; message?: string; detail?: string }).error) ||
+          (json && (json as { error?: string; message?: string; detail?: string }).message) ||
+          (json && (json as { error?: string; message?: string; detail?: string }).detail) ||
+          null;
+        const msg = translateAuthError(raw, 'Неверный или просроченный код.');
+        throw new Error(msg);
+      }
+
+      setConfirmEmailStatus('idle');
+      setConfirmEmailOpen(false);
+      setSuccess('Почта подтверждена. Теперь войдите под своими данными.');
+      setMode('login');
+      if (emailValue) {
+        setIdentifier(emailValue);
+      }
+    } catch (err) {
+      setConfirmEmailStatus('idle');
+      const fallback = 'Не удалось подтвердить почту. Попробуйте ещё раз.';
+      const msg =
+        err instanceof Error
+          ? translateAuthError(err.message, fallback)
+          : translateAuthError(null, fallback);
+      setError(msg);
     }
   };
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between gap-3">
+      <div className="flex items-center justify-between gap-3 scale-100">
         <h2 className="text-base font-semibold text-slate-900 dark:text-white">
-          {forgotOpen ? 'Восстановление пароля' : mode === 'login' ? 'Вход в аккаунт' : 'Регистрация'}
+          {confirmEmailOpen
+            ? 'Подтверждение почты'
+            : forgotOpen
+            ? 'Восстановление пароля'
+            : mode === 'login'
+            ? 'Вход в аккаунт'
+            : 'Регистрация'}
         </h2>
         <button
           type="button"
@@ -1934,7 +2200,7 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
         </button>
       </div>
 
-      {!forgotOpen && (
+      {!forgotOpen && !confirmEmailOpen && (
         <div className="flex gap-2 text-xs font-medium">
           <button
             type="button"
@@ -1963,7 +2229,95 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
         </div>
       )}
 
-      {forgotOpen ? (
+      {confirmEmailOpen ? (
+        <div className="space-y-3">
+          <p className="text-[11px] text-slate-600 dark:text-[#94a3b8]">
+            На вашу почту{' '}
+            <span className="font-semibold text-slate-900 dark:text-white">
+              {confirmEmail || email}
+            </span>{' '}
+            отправлен код подтверждения. Введите его, чтобы завершить регистрацию.
+          </p>
+
+          <div className="space-y-1">
+            <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
+              Код из письма
+            </p>
+            <input
+              type="text"
+              inputMode="numeric"
+              value={confirmEmailCode}
+              onChange={(e) => setConfirmEmailCode(e.target.value)}
+              className="w-full rounded-2xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
+              placeholder="123456"
+            />
+          </div>
+
+          <button
+            type="button"
+            onClick={handleConfirmEmail}
+            disabled={confirmEmailStatus === 'verifying'}
+            className="mt-1 w-full rounded-2xl bg-sky-500 hover:bg-sky-600 disabled:opacity-70 disabled:cursor-not-allowed text-white text-xs font-semibold px-4 py-2 shadow-md shadow-sky-500/40"
+          >
+            {confirmEmailStatus === 'verifying' ? 'Проверка…' : 'Подтвердить почту'}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              if (!confirmEmail) return;
+              setConfirmEmailStatus('sending');
+              void fetch(`${API_PREFIX}/users/email-code/send`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email: confirmEmail, purpose: 'register' }),
+              })
+                .then(async (res) => {
+                  if (!res.ok) {
+                    const json = await res.json().catch(() => null);
+                    const raw =
+                      (json &&
+                        (json as { error?: string; message?: string; detail?: string }).error) ||
+                      (json &&
+                        (json as { error?: string; message?: string; detail?: string }).message) ||
+                      (json &&
+                        (json as { error?: string; message?: string; detail?: string }).detail) ||
+                      null;
+                    const msg = translateAuthError(
+                      raw,
+                      'Не удалось отправить код. Проверьте почту и попробуйте ещё раз.'
+                    );
+                    setError(msg);
+                  } else {
+                    setSuccess('Код повторно отправлен на почту.');
+                  }
+                })
+                .catch(() => {
+                  setError('Не удалось отправить код. Попробуйте ещё раз.');
+                })
+                .finally(() => {
+                  setConfirmEmailStatus('idle');
+                });
+            }}
+            disabled={confirmEmailStatus !== 'idle'}
+            className="w-full text-xs text-slate-600 hover:text-slate-900 dark:text-[#94a3b8] dark:hover:text-white"
+          >
+            Отправить код ещё раз
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setConfirmEmailOpen(false);
+              setConfirmEmailCode('');
+              setConfirmEmailStatus('idle');
+            }}
+            className="w-full text-xs text-slate-600 hover:text-slate-900 dark:text-[#94a3b8] dark:hover:text-white"
+          >
+            ← Назад к регистрации
+          </button>
+        </div>
+      ) : forgotOpen ? (
         <div className="space-y-3">
           {forgotStep === 'email' ? (
             <div className="space-y-1">
@@ -1974,7 +2328,7 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
                 type="email"
                 value={forgotEmail}
                 onChange={(e) => setForgotEmail(e.target.value)}
-                className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
+                className="w-full rounded-2xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
                 placeholder="you@example.com"
               />
               <p className="text-[11px] text-slate-500 dark:text-[#94a3b8]">
@@ -1991,7 +2345,7 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
                   type="email"
                   value={forgotEmail}
                   onChange={(e) => setForgotEmail(e.target.value)}
-                  className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
+                  className="w-full rounded-2xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
                   placeholder="you@example.com"
                 />
               </div>
@@ -2005,7 +2359,7 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
                   inputMode="numeric"
                   value={forgotCode}
                   onChange={(e) => setForgotCode(e.target.value)}
-                  className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
+                  className="w-full rounded-2xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
                   placeholder="123456"
                 />
               </div>
@@ -2018,7 +2372,7 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
                   type="password"
                   value={forgotNewPassword}
                   onChange={(e) => setForgotNewPassword(e.target.value)}
-                  className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
+                  className="w-full rounded-2xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
                   placeholder="Минимум 6 символов"
                 />
               </div>
@@ -2031,7 +2385,7 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
                   type="password"
                   value={forgotNewPassword2}
                   onChange={(e) => setForgotNewPassword2(e.target.value)}
-                  className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
+                  className="w-full rounded-2xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
                   placeholder="Повторите пароль"
                 />
               </div>
@@ -2055,7 +2409,7 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
               type="button"
               onClick={handleSendResetCode}
               disabled={forgotStatus === 'sending'}
-              className="mt-1 w-full rounded-xl bg-sky-500 hover:bg-sky-600 disabled:opacity-70 disabled:cursor-not-allowed text-white text-xs font-semibold px-4 py-2 shadow-md shadow-sky-500/40"
+              className="mt-1 w-full rounded-2xl bg-sky-500 hover:bg-sky-600 disabled:opacity-70 disabled:cursor-not-allowed text-white text-xs font-semibold px-4 py-2 shadow-md shadow-sky-500/40"
             >
               {forgotStatus === 'sending' ? 'Отправка…' : 'Отправить код'}
             </button>
@@ -2065,7 +2419,7 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
                 type="button"
                 onClick={handleResetPassword}
                 disabled={forgotStatus === 'resetting'}
-                className="mt-1 w-full rounded-xl bg-sky-500 hover:bg-sky-600 disabled:opacity-70 disabled:cursor-not-allowed text-white text-xs font-semibold px-4 py-2 shadow-md shadow-sky-500/40"
+                className="mt-1 w-full rounded-2xl bg-sky-500 hover:bg-sky-600 disabled:opacity-70 disabled:cursor-not-allowed text-white text-xs font-semibold px-4 py-2 shadow-md shadow-sky-500/40"
               >
                 {forgotStatus === 'resetting' ? 'Сохранение…' : 'Сменить пароль'}
               </button>
@@ -2110,7 +2464,7 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
               value={identifier}
               onChange={(e) => setIdentifier(e.target.value)}
               required
-              className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
+              className="w-full rounded-2xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
               placeholder="user123 / you@example.com / +79991234567"
             />
           </div>
@@ -2126,7 +2480,7 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
               value={login}
               onChange={(e) => setLogin(e.target.value)}
               required
-              className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
+              className="w-full rounded-2xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
               placeholder="Ваш логин"
             />
           </div>
@@ -2142,7 +2496,7 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
-              className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
+              className="w-full rounded-2xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
               placeholder="you@example.com"
             />
           </div>
@@ -2157,7 +2511,7 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             required
-            className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
+            className="w-full rounded-2xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
             placeholder="Минимум 6 символов"
           />
         </div>
