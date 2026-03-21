@@ -7,12 +7,15 @@ import {
   Plus,
   Minus,
   MapPin,
+  Activity,
+  Tag,
   ChevronRight,
   Copy,
   Navigation,
   Search,
   X,
   Filter,
+  Settings,
   User,
   Car,
   ShoppingBag,
@@ -28,6 +31,8 @@ import { NearbyIncidentsSection } from '@/components/map/NearbyIncidentsSection'
 const ProfileTab = ProfileTabComponent as ComponentType<{
   userId: number;
   onAvatarChange?: (url: string | null) => void;
+  onOpenMyReports?: () => void;
+  onOpenSettings?: () => void;
 }>;
 
 interface GeocodingResult {
@@ -199,6 +204,38 @@ function calculateDistanceKm(from: { lat: number; lng: number }, to: { lat: numb
   return earthRadiusKm * c;
 }
 
+function getProfileIncidentCategoryTagClass(category: string) {
+  const normalized = category.toLowerCase();
+
+  if (normalized.includes('дорог')) {
+    return 'border-amber-300/60 bg-amber-100/70 text-amber-700 dark:border-amber-400/40 dark:bg-amber-500/20 dark:text-amber-200';
+  }
+  if (normalized.includes('парков')) {
+    return 'border-sky-300/60 bg-sky-100/70 text-sky-700 dark:border-sky-400/40 dark:bg-sky-500/20 dark:text-sky-200';
+  }
+  if (normalized.includes('жкх') || normalized.includes('благо')) {
+    return 'border-emerald-300/60 bg-emerald-100/70 text-emerald-700 dark:border-emerald-400/40 dark:bg-emerald-500/20 dark:text-emerald-200';
+  }
+  if (normalized.includes('торгов')) {
+    return 'border-orange-300/60 bg-orange-100/70 text-orange-700 dark:border-orange-400/40 dark:bg-orange-500/20 dark:text-orange-200';
+  }
+
+  return 'border-violet-300/60 bg-violet-100/70 text-violet-700 dark:border-violet-400/40 dark:bg-violet-500/20 dark:text-violet-200';
+}
+
+function getProfileIncidentStatusTagClass(status: string) {
+  const normalized = status.toLowerCase();
+
+  if (normalized.includes('нов')) {
+    return 'border-sky-300/60 bg-sky-100/70 text-sky-700 dark:border-sky-400/40 dark:bg-sky-500/20 dark:text-sky-200';
+  }
+  if (normalized.includes('работ')) {
+    return 'border-orange-300/60 bg-orange-100/70 text-orange-700 dark:border-orange-400/40 dark:bg-orange-500/20 dark:text-orange-200';
+  }
+
+  return 'border-violet-300/60 bg-violet-100/70 text-violet-700 dark:border-violet-400/40 dark:bg-violet-500/20 dark:text-violet-200';
+}
+
 async function searchAddress(q: string): Promise<GeocodingResult[]> {
   if (!q.trim() || q.length < 3) return [];
   const params = new URLSearchParams({ q, format: 'json', limit: '8' });
@@ -240,8 +277,15 @@ export default function MapScreen() {
   const [locating, setLocating] = useState(false);
   const [activeTab, setActiveTab] = useState<Tab>('home');
   const [sheetMode, setSheetMode] = useState<SheetMode>(null);
-  const [settingsView, setSettingsView] = useState<'main' | 'about' | 'feedback'>('main');
-  const [themeMode, setThemeMode] = useState<'light' | 'dark'>('dark');
+  const [settingsView, setSettingsView] = useState<'main' | 'about' | 'feedback' | 'profile'>('main');
+  const [pushNotificationsEnabled, setPushNotificationsEnabled] = useState(() => {
+    if (typeof window === 'undefined') return true;
+    return window.localStorage.getItem('notifications-push') !== 'false';
+  });
+  const [emailNotificationsEnabled, setEmailNotificationsEnabled] = useState(() => {
+    if (typeof window === 'undefined') return true;
+    return window.localStorage.getItem('notifications-email') !== 'false';
+  });
   const [selectedRubric, setSelectedRubric] = useState<Rubric | null>(null);
   const [rubricStep, setRubricStep] = useState<'select' | 'create' | 'preview'>('select');
   const [reportTitle, setReportTitle] = useState('');
@@ -252,6 +296,7 @@ export default function MapScreen() {
     id?: number;
     first_name?: string;
     last_name?: string;
+    email?: string;
     avatar_url?: string | null;
   } | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
@@ -269,10 +314,13 @@ export default function MapScreen() {
   const sheetDragStartYRef = useRef<number | null>(null);
   const [sheetDragY, setSheetDragY] = useState(0);
   const [isSheetDragging, setIsSheetDragging] = useState(false);
+  const [isSheetClosing, setIsSheetClosing] = useState(false);
   const [searchPanelSnap, setSearchPanelSnap] = useState<SearchPanelSnap>('collapsed');
   const [searchPanelDragHeight, setSearchPanelDragHeight] = useState<number | null>(null);
   const [isSearchPanelDragging, setIsSearchPanelDragging] = useState(false);
   const [selectedIncidentCategory, setSelectedIncidentCategory] = useState<string>('Все');
+  const [selectedProfileStatusFilter, setSelectedProfileStatusFilter] = useState<string>('Все');
+  const [selectedProfileCategoryFilter, setSelectedProfileCategoryFilter] = useState<string>('Все');
   const [renderExpandedSearchContent, setRenderExpandedSearchContent] = useState(false);
   const profileScrollRef = useRef<HTMLDivElement | null>(null);
   const profileTouchStartYRef = useRef<number | null>(null);
@@ -368,7 +416,13 @@ export default function MapScreen() {
           Array.isArray(json) ? json[0] : (json as { data?: unknown }).data ?? json;
         if (raw && typeof raw === 'object')
           setUserProfile(
-            raw as { id?: number; first_name?: string; last_name?: string; avatar_url?: string | null },
+            raw as {
+              id?: number;
+              first_name?: string;
+              last_name?: string;
+              email?: string;
+              avatar_url?: string | null;
+            },
           );
       })
       .catch(() => {});
@@ -567,6 +621,64 @@ export default function MapScreen() {
       }),
     [nearbyIncidents, selectedIncidentCategory]
   );
+
+  const userActiveIncidents = useMemo(
+    () => INCIDENT_PREVIEWS.filter((incident) => incident.status !== 'Закрыта').slice(0, 8),
+    []
+  );
+
+  const userIncidentStats = useMemo(() => {
+    const total = INCIDENT_PREVIEWS.length;
+    const inProgress = INCIDENT_PREVIEWS.filter((incident) => incident.status.toLowerCase().includes('работ')).length;
+    const reviewing = INCIDENT_PREVIEWS.filter((incident) => incident.status.toLowerCase().includes('провер')).length;
+    const fresh = INCIDENT_PREVIEWS.filter((incident) => incident.status.toLowerCase().includes('нов')).length;
+
+    return { total, inProgress, reviewing, fresh };
+  }, []);
+
+  const userTrustProgress = useMemo(() => {
+    const confirmed = INCIDENT_PREVIEWS.filter((incident) => {
+      const lowStatus = incident.status.toLowerCase();
+      return lowStatus.includes('провер') || lowStatus.includes('работ');
+    }).length;
+
+    const useful = INCIDENT_PREVIEWS.filter((incident) => incident.status.toLowerCase().includes('работ')).length;
+    const reputationScore = 67;
+
+    const level =
+      reputationScore >= 85
+        ? 'Эксперт'
+        : reputationScore >= 60
+          ? 'Надёжный'
+          : reputationScore >= 35
+            ? 'Активный'
+            : 'Новичок';
+
+    return { confirmed, useful, reputationScore, level };
+  }, []);
+
+  const profileStatusFilters = useMemo(() => ['Все', 'Новые', 'В работе', 'Проверка'], []);
+
+  const profileCategoryFilters = useMemo(
+    () => ['Все', ...Array.from(new Set(userActiveIncidents.map((incident) => incident.category)))],
+    [userActiveIncidents]
+  );
+
+  const filteredUserActiveIncidents = useMemo(() => {
+    return userActiveIncidents.filter((incident) => {
+      const lowStatus = incident.status.toLowerCase();
+      const statusMatch =
+        selectedProfileStatusFilter === 'Все' ||
+        (selectedProfileStatusFilter === 'Новые' && lowStatus.includes('нов')) ||
+        (selectedProfileStatusFilter === 'В работе' && lowStatus.includes('работ')) ||
+        (selectedProfileStatusFilter === 'Проверка' && lowStatus.includes('провер'));
+
+      const categoryMatch =
+        selectedProfileCategoryFilter === 'Все' || incident.category === selectedProfileCategoryFilter;
+
+      return statusMatch && categoryMatch;
+    });
+  }, [selectedProfileCategoryFilter, selectedProfileStatusFilter, userActiveIncidents]);
 
   const openRubricFromSearch = (rubric: Rubric) => {
     const markerPoint = marker ?? {
@@ -880,10 +992,15 @@ export default function MapScreen() {
 
   const openTab = (tab: Tab) => {
     if (tab === 'home') {
-      // Нажатие на «Главная» просто скрывает вкладки
-      setSheetMode(null);
+      // Нажатие на «Главная» закрывает простыню плавно
+      closeSheet();
       return;
     }
+    if (closeSheetTimeoutRef.current) {
+      clearTimeout(closeSheetTimeoutRef.current);
+      closeSheetTimeoutRef.current = null;
+    }
+    setIsSheetClosing(false);
     setSheetDragY(0);
     setActiveTab(tab);
     if (tab === 'settings') {
@@ -893,23 +1010,33 @@ export default function MapScreen() {
   };
 
   const closeSheet = () => {
-    setSheetMode((prev) => {
-      if (prev === 'marker' || prev === 'rubric') {
-        setMarker(null);
-      }
-      return null;
-    });
+    if (isSheetClosing || !isSheetOpen) return;
+
     if (closeSheetTimeoutRef.current) {
       clearTimeout(closeSheetTimeoutRef.current);
       closeSheetTimeoutRef.current = null;
     }
-    // Мгновенно возвращаем подсветку на «Главная» как базовую вкладку
-    setActiveTab('home');
-    // Сбрасываем смещение, чтобы следующее открытие начиналось из ровного положения.
-    setSheetDragY(0);
+
+    setIsSheetClosing(true);
+    setIsSheetDragging(false);
+    sheetDragStartYRef.current = null;
+
+    closeSheetTimeoutRef.current = setTimeout(() => {
+      setSheetMode((prev) => {
+        if (prev === 'marker' || prev === 'rubric') {
+          setMarker(null);
+        }
+        return null;
+      });
+      setActiveTab('home');
+      setSheetDragY(0);
+      setIsSheetClosing(false);
+      closeSheetTimeoutRef.current = null;
+    }, 420);
   };
 
   const isSheetOpen = sheetMode !== null;
+  const isSheetVisible = isSheetOpen || isSheetClosing;
 
   // Мягкое закрытие: даём анимации контейнера плавно
   // уехать вниз так же, как при нажатии на фон / крестик.
@@ -979,7 +1106,6 @@ export default function MapScreen() {
           ? 'dark'
           : 'light';
 
-    setThemeMode(initial);
     window.localStorage.setItem('theme-mode', initial);
 
     if (initial === 'dark') {
@@ -989,22 +1115,11 @@ export default function MapScreen() {
     }
   }, []);
 
-  const applyTheme = (mode: 'light' | 'dark') => {
-    const root = document.documentElement;
-    if (mode === 'dark') {
-      root.classList.add('dark');
-    } else {
-      root.classList.remove('dark');
-    }
-    window.localStorage.setItem('theme-mode', mode);
-    window.localStorage.setItem('theme-simple', mode);
-  };
-
-  const toggleTheme = () => {
-    const next: 'light' | 'dark' = themeMode === 'dark' ? 'light' : 'dark';
-    setThemeMode(next);
-    applyTheme(next);
-  };
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem('notifications-push', String(pushNotificationsEnabled));
+    window.localStorage.setItem('notifications-email', String(emailNotificationsEnabled));
+  }, [emailNotificationsEnabled, pushNotificationsEnabled]);
 
   useEffect(() => {
     const container = mapRef.current;
@@ -1381,6 +1496,8 @@ export default function MapScreen() {
     };
   }, []);
 
+  const isAuthFullscreen = sheetMode === 'tabs' && activeTab === 'auth';
+
   return (
     <div className="fixed inset-0 z-0">
       <div
@@ -1649,47 +1766,63 @@ export default function MapScreen() {
       <div
         className={cn(
           'absolute inset-0 z-[950] flex flex-col items-center justify-end pointer-events-none',
-          isSheetOpen ? 'opacity-100' : 'opacity-0 transition-opacity duration-200'
+          isSheetVisible ? 'opacity-100' : 'opacity-0 transition-opacity duration-300'
         )}
       >
         {/* затемнение карты */}
         <div
           className={cn(
-            'absolute inset-0 bg-black/40 transition-opacity duration-250',
-            isSheetOpen ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
+            'absolute inset-0 bg-black/40 transition-opacity duration-300',
+            isSheetVisible ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
           )}
           onClick={closeSheet}
         />
 
         {/* сама «простыня» */}
         <div
-          className="relative w-full max-w-xl pointer-events-auto transform transition-transform duration-350 ease-[cubic-bezier(0.22,0.61,0.36,1)]"
+          className={cn(
+            'relative w-full pointer-events-auto transform transition-transform duration-350 ease-[cubic-bezier(0.22,0.61,0.36,1)]',
+            isSheetClosing && 'pointer-events-none',
+            isAuthFullscreen ? 'max-w-none' : 'max-w-xl'
+          )}
           style={{
-            transform: isSheetOpen
+            transform: isSheetOpen && !isSheetClosing
               ? `translateY(${sheetDragY}px)`
               : 'translateY(calc(100% + 32px))',
             transition: isSheetDragging ? 'none' : undefined,
             touchAction: 'pan-y',
           }}
-          onTouchStart={handleSheetTouchStart}
-          onTouchMove={handleSheetTouchMove}
-          onTouchEnd={handleSheetTouchEnd}
+          onTouchStart={isAuthFullscreen ? undefined : handleSheetTouchStart}
+          onTouchMove={isAuthFullscreen ? undefined : handleSheetTouchMove}
+          onTouchEnd={isAuthFullscreen ? undefined : handleSheetTouchEnd}
         >
           <div
             className={cn(
               'glass-dock rounded-t-[32px] rounded-b-none px-4 pt-3 pb-6 flex flex-col',
+              isAuthFullscreen &&
+                'rounded-t-[28px] rounded-b-none h-screen px-0 pt-[max(env(safe-area-inset-top),12px)] pb-[max(env(safe-area-inset-bottom),12px)]',
               sheetMode === 'marker'
                 ? 'max-h-[65vh] overflow-hidden'
-                : 'h-[calc(100vh-80px)] overflow-hidden'
+                : isAuthFullscreen
+                  ? 'overflow-hidden'
+                  : 'h-[calc(100vh-80px)] overflow-hidden'
             )}
           >
             {/* Drag handle */}
-            <div
-              data-sheet-drag-handle="true"
-              className="flex items-center justify-center py-5 -mx-4"
-            >
-              <div className="h-1 w-12 rounded-full bg-slate-300/80 dark:bg-white/15" />
-            </div>
+            {!isAuthFullscreen && (
+              <div
+                data-sheet-drag-handle="true"
+                className="flex items-center justify-center py-5 -mx-4"
+              >
+                <div className="h-1 w-12 rounded-full bg-slate-300/80 dark:bg-white/15" />
+              </div>
+            )}
+
+            {isAuthFullscreen && (
+              <div className="pointer-events-none flex items-center justify-center pb-2">
+                <div className="h-1.5 w-12 rounded-full bg-slate-400/55 dark:bg-slate-500/55" />
+              </div>
+            )}
 
             {sheetMode === 'marker' && marker ? (
               <div className="flex-1 overflow-y-auto overscroll-contain pb-2" data-sheet-scrollable="true">
@@ -2000,7 +2133,10 @@ export default function MapScreen() {
             ) : (
               <>
               <div
-                className="flex-1 overflow-y-auto overscroll-contain space-y-4 pb-2"
+                className={cn(
+                  'flex-1 overflow-y-auto overscroll-contain space-y-4 pb-2',
+                  isAuthFullscreen && 'pb-0'
+                )}
                 data-sheet-scrollable="true"
                 ref={activeTab === 'profile' ? profileScrollRef : null}
                 onWheel={activeTab === 'profile' ? handleProfileWheel : undefined}
@@ -2118,21 +2254,17 @@ export default function MapScreen() {
                           Профиль
                         </h2>
                         <div className="flex items-center gap-2">
-                          {isAuthenticated && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                window.localStorage.removeItem('userId');
-                                window.localStorage.removeItem('authToken');
-                                setIsAuthenticated(false);
-                                setUserProfile(null);
-                                openTab('auth');
-                              }}
-                              className="px-3 py-1.5 rounded-full text-xs font-medium border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 dark:border-white/10 dark:bg-black/30 dark:text-[#cbd5f5] dark:hover:bg-white/5"
-                            >
-                              Выйти
-                            </button>
-                          )}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSettingsView('main');
+                              openTab('settings');
+                            }}
+                            className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 shadow-sm border border-slate-300 hover:bg-slate-300 hover:text-slate-800 dark:bg-black/40 dark:text-[#9ca3af] dark:border-transparent dark:hover:bg-black/60"
+                            aria-label="Настройки"
+                          >
+                            <Settings className="h-4 w-4" />
+                          </button>
                           <button
                             type="button"
                             onClick={closeSheet}
@@ -2144,18 +2276,156 @@ export default function MapScreen() {
                         </div>
                       </div>
 
-                      {userProfile && userProfile.id && (
-                        <ProfileTab
-                          userId={userProfile.id}
-                          onAvatarChange={(url) =>
-                            setUserProfile((prev) =>
-                              prev
-                                ? { ...prev, avatar_url: url ?? prev.avatar_url ?? null }
-                                : { avatar_url: url ?? null },
-                            )
-                          }
-                        />
-                      )}
+                      <div className="rounded-2xl p->">
+                        <p className="text-xs text-slate-500 dark:text-[#94a3b8]">Пользователь</p>
+                        <div className="mt-2 flex items-center gap-3">
+                          <Avatar className="h-11 w-11 rounded-full overflow-hidden bg-white dark:bg-slate-800">
+                            {userProfile?.avatar_url && (
+                              <AvatarImage src={resolveAvatarUrl(userProfile.avatar_url) ?? ''} alt="" className="object-cover" />
+                            )}
+                            <AvatarFallback className="rounded-full bg-white text-slate-900 dark:bg-slate-800 dark:text-white">
+                              <User className="h-5 w-5" />
+                            </AvatarFallback>
+                          </Avatar>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2">
+                              <p className="truncate text-sm font-semibold text-slate-900 dark:text-white">
+                                {userProfile
+                                  ? [userProfile.last_name, userProfile.first_name].filter(Boolean).join(' ') || 'Пользователь'
+                                  : 'Пользователь'}
+                              </p>
+                              <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-700 dark:bg-white/10 dark:text-slate-200">
+                                Пользователь
+                              </span>
+                            </div>
+                            <p className="truncate text-xs text-slate-600 dark:text-[#94a3b8]">
+                              {userProfile?.email || 'E-mail не указан'}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+
+                         <div className="rounded-2xl ">
+                        <div className="mb-2 flex items-center justify-between gap-3">
+                          <p className="text-[11px] text-slate-500 dark:text-[#94a3b8]">Прогресс доверия</p>
+                          <span className="rounded-full border border-slate-200 px-2 py-0.5 text-[10px] font-medium text-slate-700 dark:border-white/10 dark:text-slate-200">
+                            {userTrustProgress.level}
+                          </span>
+                        </div>
+                        <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-200/70 dark:bg-white/10">
+                          <div
+                            className="h-full rounded-full bg-slate-900 dark:bg-white"
+                            style={{ width: `${userTrustProgress.reputationScore}%` }}
+                          />
+                        </div>
+                        <div className="mt-2 flex items-center justify-between text-[11px] text-slate-500 dark:text-[#94a3b8]">
+                          <span>Подтверждённые: {userTrustProgress.confirmed}</span>
+                          <span>Полезные: {userTrustProgress.useful}</span>
+                          <span>{userTrustProgress.reputationScore}%</span>
+                        </div>
+                      </div>
+
+                      <div className="rounded-2xl p-1">
+                        <div className="flex items-center justify-between">
+                          <p className="text-sm font-medium text-slate-900 dark:text-white">Ваши активные обращения</p>
+                          <span className="rounded-full px-2 py-0.5 text-xs font-semibold text-slate-600 dark:text-[#94a3b8]">
+                            {userActiveIncidents.length}
+                          </span>
+                        </div>
+                      </div>
+
+
+
+                      <div className="space-y-2">
+                        <div className="flex gap-1.5 overflow-x-auto pb-0.5">
+                          {profileStatusFilters.map((status) => (
+                            <button
+                              key={status}
+                              type="button"
+                              onClick={() => setSelectedProfileStatusFilter(status)}
+                              className={cn(
+                                'shrink-0 rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors',
+                                selectedProfileStatusFilter === status
+                                  ? 'border-foreground bg-foreground text-background'
+                                  : 'border-border/70 bg-muted/25 text-muted-foreground hover:bg-muted/45 hover:text-foreground'
+                              )}
+                            >
+                              {status}
+                            </button>
+                          ))}
+                        </div>
+
+                        <div className="flex gap-1.5 overflow-x-auto pb-0.5">
+                          {profileCategoryFilters.map((category) => (
+                            <button
+                              key={category}
+                              type="button"
+                              onClick={() => setSelectedProfileCategoryFilter(category)}
+                              className={cn(
+                                'shrink-0 rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors',
+                                selectedProfileCategoryFilter === category
+                                  ? 'border-foreground bg-foreground text-background'
+                                  : 'border-border/70 bg-muted/25 text-muted-foreground hover:bg-muted/45 hover:text-foreground'
+                              )}
+                            >
+                              {category}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        {filteredUserActiveIncidents.map((incident) => (
+                          <button
+                            key={incident.id}
+                            type="button"
+                            onClick={() => {
+                              setCenter({ lat: incident.lat, lng: incident.lng });
+                              setMarker({
+                                lat: incident.lat,
+                                lng: incident.lng,
+                                address: incident.title,
+                              });
+                              setSheetMode(null);
+                            }}
+                            className="flex w-full items-start gap-2.5 rounded-[12px] border border-border/70 bg-background/65 p-3 text-left transition-colors hover:bg-muted/40"
+                          >
+                            <div className="mt-0.5 rounded-full border border-border/70 p-1.5 text-muted-foreground">
+                              <MapPin className="h-3.5 w-3.5" />
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <div className="mb-1 flex items-center gap-1.5">
+                                <span
+                                  className={cn(
+                                    'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium',
+                                    getProfileIncidentCategoryTagClass(incident.category)
+                                  )}
+                                >
+                                  <Tag className="h-3 w-3" />
+                                  {incident.category}
+                                </span>
+                                <span
+                                  className={cn(
+                                    'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium',
+                                    getProfileIncidentStatusTagClass(incident.status)
+                                  )}
+                                >
+                                  <Activity className="h-3 w-3" />
+                                  {incident.status}
+                                </span>
+                              </div>
+                              <p className="line-clamp-1 text-xs font-medium text-foreground">{incident.title}</p>
+                            </div>
+                            <span className="shrink-0 text-[11px] font-semibold text-muted-foreground">#{incident.id}</span>
+                          </button>
+                        ))}
+                        {filteredUserActiveIncidents.length === 0 && (
+                          <div className="rounded-2xl border border-border/70 bg-background/65 p-3 text-xs text-muted-foreground">
+                            По выбранным фильтрам обращений не найдено.
+                          </div>
+                        )}
+                      </div>
+
                     </div>
                   )}
                   {activeTab === 'auth' && (
@@ -2173,54 +2443,93 @@ export default function MapScreen() {
                       {settingsView === 'main' && (
                         <>
                           <div className="flex items-center justify-between gap-3">
+                            <button
+                              type="button"
+                              onClick={() => openTab('profile')}
+                              className="text-xs text-slate-600 hover:text-slate-900 dark:text-[#94a3b8] dark:hover:text-white"
+                            >
+                              ← Профиль
+                            </button>
                             <h2 className="text-base font-semibold text-slate-900 dark:text-white">
                               Настройки
                             </h2>
                             <button
                               type="button"
                               onClick={closeSheet}
-                              className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 shadow-sm border border-slate-300 hover:bg-slate-300 hover:text-slate-800 dark:bg-black/40 dark:text-[#9ca3af] dark:border-transparent dark:hover:bg-black/60"
+                              className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 shadow-sm hover:bg-slate-300 hover:text-slate-800 dark:bg-black/40 dark:text-[#9ca3af] dark:hover:bg-black/60"
                               aria-label="Закрыть настройки"
                             >
                               <X className="h-4 w-4" />
                             </button>
                           </div>
 
-                          <div className="mt-1 rounded-2xl border border-slate-200 bg-white dark:border-white/10 dark:bg-[#020617] p-4 flex items-center justify-between">
-                            <div>
-                              <p className="text-sm font-medium text-slate-900 dark:text-white">Тема приложения</p>
-                              <p className="text-xs text-slate-600 dark:text-[#94a3b8]">
-                                Переключение между светлой и тёмной темой
-                              </p>
+                          <div className="rounded-2xl bg-white p-3 dark:bg-transparent">
+                            <div className="flex items-center justify-between gap-3">
+                              <p className="text-sm font-medium text-slate-900 dark:text-white">Уведомления</p>
                             </div>
-                            <button
-                              type="button"
-                              onClick={toggleTheme}
-                              className={cn(
-                                'relative inline-flex h-7 w-12 items-center rounded-full border border-white/15 px-1 transition-all',
-                                themeMode === 'dark'
-                                  ? 'bg-slate-900 text-sky-400'
-                                  : 'bg-slate-100 text-amber-500'
-                              )}
-                            >
-                              <span
-                                className={cn(
-                                  'inline-flex h-5 w-5 items-center justify-center rounded-full shadow-sm text-[11px] transition-transform',
-                                  themeMode === 'dark'
-                                    ? 'translate-x-5 bg-slate-800 text-sky-300'
-                                    : 'translate-x-0 bg-white text-amber-500'
-                                )}
-                              >
-                                {themeMode === 'dark' ? '🌙' : '☀️'}
-                              </span>
-                            </button>
+
+                            <div className="mt-2 divide-y divide-slate-200/80 dark:divide-white/10">
+                              <div className="flex items-center justify-between py-2">
+                                <span className="text-sm font-medium text-slate-700 dark:text-slate-200">Push</span>
+                                <button
+                                  type="button"
+                                  aria-pressed={pushNotificationsEnabled}
+                                  onClick={() => setPushNotificationsEnabled((prev) => !prev)}
+                                  className={cn(
+                                    'relative inline-flex h-6 w-11 items-center rounded-full transition-colors',
+                                    pushNotificationsEnabled ? 'bg-slate-900 dark:bg-white' : 'bg-slate-300 dark:bg-white/20'
+                                  )}
+                                >
+                                  <span
+                                    className={cn(
+                                      'inline-flex h-5 w-5 rounded-full bg-white transition-transform dark:bg-slate-900',
+                                      pushNotificationsEnabled ? 'translate-x-[22px]' : 'translate-x-0.5'
+                                    )}
+                                  />
+                                </button>
+                              </div>
+
+                              <div className="flex items-center justify-between py-2">
+                                <span className="text-sm font-medium text-slate-700 dark:text-slate-200">Email</span>
+                                <button
+                                  type="button"
+                                  aria-pressed={emailNotificationsEnabled}
+                                  onClick={() => setEmailNotificationsEnabled((prev) => !prev)}
+                                  className={cn(
+                                    'relative inline-flex h-6 w-11 items-center rounded-full transition-colors',
+                                    emailNotificationsEnabled ? 'bg-slate-900 dark:bg-white' : 'bg-slate-300 dark:bg-white/20'
+                                  )}
+                                >
+                                  <span
+                                    className={cn(
+                                      'inline-flex h-5 w-5 rounded-full bg-white transition-transform dark:bg-slate-900',
+                                      emailNotificationsEnabled ? 'translate-x-[22px]' : 'translate-x-0.5'
+                                    )}
+                                  />
+                                </button>
+                              </div>
+                            </div>
                           </div>
 
                           <div className="space-y-2">
                             <button
                               type="button"
+                              onClick={() => setSettingsView('profile')}
+                              className="w-full flex items-center justify-between rounded-2xl bg-white hover:bg-slate-50 text-slate-900 dark:bg-transparent dark:hover:bg-transparent px-4 py-3 text-left text-sm dark:text-white transition-colors"
+                            >
+                              <div>
+                                <p className="font-medium">Данные профиля</p>
+                                <p className="text-xs text-[#94a3b8]">
+                                  Изменение личных и контактных данных
+                                </p>
+                              </div>
+                              <ChevronRight className="h-4 w-4 text-[#64748b]" />
+                            </button>
+
+                            <button
+                              type="button"
                               onClick={() => setSettingsView('about')}
-                              className="w-full flex items-center justify-between rounded-2xl bg-white hover:bg-slate-50 border border-slate-200 text-slate-900 dark:bg-[#020617] dark:hover:bg-white/5 dark:border-white/10 px-4 py-3 text-left text-sm dark:text-white transition-colors"
+                              className="w-full flex items-center justify-between rounded-2xl bg-white hover:bg-slate-50 text-slate-900 dark:bg-transparent dark:hover:bg-transparent px-4 py-3 text-left text-sm dark:text-white transition-colors"
                             >
                               <div>
                                 <p className="font-medium">О проекте</p>
@@ -2234,7 +2543,7 @@ export default function MapScreen() {
                             <button
                               type="button"
                               onClick={() => setSettingsView('feedback')}
-                              className="w-full flex items-center justify-between rounded-2xl bg-white hover:bg-slate-50 border border-slate-200 text-slate-900 dark:bg-[#020617] dark:hover:bg:white/5 dark:border-white/10 px-4 py-3 text-left text-sm dark:text-white transition-colors"
+                              className="w-full flex items-center justify-between rounded-2xl bg-white hover:bg-slate-50 text-slate-900 dark:bg-transparent dark:hover:bg-transparent px-4 py-3 text-left text-sm dark:text-white transition-colors"
                             >
                               <div>
                                 <p className="font-medium">Обратная связь</p>
@@ -2244,6 +2553,22 @@ export default function MapScreen() {
                               </div>
                               <ChevronRight className="h-4 w-4 text-[#64748b]" />
                             </button>
+
+                            {isAuthenticated && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  window.localStorage.removeItem('userId');
+                                  window.localStorage.removeItem('authToken');
+                                  setIsAuthenticated(false);
+                                  setUserProfile(null);
+                                  openTab('auth');
+                                }}
+                                className="w-full rounded-2xl bg-white px-4 py-3 text-left text-sm font-medium text-red-600 transition-colors hover:bg-red-50 dark:bg-transparent dark:text-red-400 dark:hover:bg-transparent"
+                              >
+                                Выйти
+                              </button>
+                            )}
                           </div>
                         </>
                       )}
@@ -2261,7 +2586,7 @@ export default function MapScreen() {
                             <button
                               type="button"
                               onClick={closeSheet}
-                              className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 shadow-sm border border-slate-300 hover:bg-slate-300 hover:text-slate-800 dark:bg-black/40 dark:text-[#9ca3af] dark:border-transparent dark:hover:bg-black/60"
+                              className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 shadow-sm hover:bg-slate-300 hover:text-slate-800 dark:bg-black/40 dark:text-[#9ca3af] dark:hover:bg-black/60"
                               aria-label="Закрыть"
                             >
                               <X className="h-4 w-4" />
@@ -2272,6 +2597,47 @@ export default function MapScreen() {
                             Заглушка страницы. Здесь будет описание сервиса, его целей и того, как
                             лучше всего им пользоваться.
                           </p>
+                        </div>
+                      )}
+
+                      {settingsView === 'profile' && (
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between gap-3">
+                            <button
+                              type="button"
+                              onClick={() => setSettingsView('main')}
+                              className="text-xs text-slate-600 hover:text-slate-900 dark:text-[#94a3b8] dark:hover:text-white"
+                            >
+                              ← Назад к настройкам
+                            </button>
+                            <button
+                              type="button"
+                              onClick={closeSheet}
+                              className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 shadow-sm hover:bg-slate-300 hover:text-slate-800 dark:bg-black/40 dark:text-[#9ca3af] dark:hover:bg-black/60"
+                              aria-label="Закрыть"
+                            >
+                              <X className="h-4 w-4" />
+                            </button>
+                          </div>
+
+                          {userProfile && userProfile.id ? (
+                            <ProfileTab
+                              userId={userProfile.id}
+                              onOpenMyReports={() => openTab('my')}
+                              onOpenSettings={() => setSettingsView('main')}
+                              onAvatarChange={(url) =>
+                                setUserProfile((prev) =>
+                                  prev
+                                    ? { ...prev, avatar_url: url ?? prev.avatar_url ?? null }
+                                    : { avatar_url: url ?? null },
+                                )
+                              }
+                            />
+                          ) : (
+                            <div className="rounded-2xl bg-white p-4 text-sm text-slate-600 dark:bg-transparent dark:text-[#94a3b8]">
+                              Не удалось загрузить данные профиля.
+                            </div>
+                          )}
                         </div>
                       )}
 
@@ -2288,7 +2654,7 @@ export default function MapScreen() {
                             <button
                               type="button"
                               onClick={closeSheet}
-                              className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 shadow-sm border border-slate-300 hover:bg-slate-300 hover:text-slate-800 dark:bg-black/40 dark:text-[#9ca3af] dark:border-transparent dark:hover:bg-black/60"
+                              className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 shadow-sm hover:bg-slate-300 hover:text-slate-800 dark:bg-black/40 dark:text-[#9ca3af] dark:hover:bg-black/60"
                               aria-label="Закрыть"
                             >
                               <X className="h-4 w-4" />
@@ -2393,6 +2759,8 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
   const [confirmEmailCode, setConfirmEmailCode] = useState('');
   const [confirmEmailStatus, setConfirmEmailStatus] =
     useState<'idle' | 'sending' | 'verifying'>('idle');
+  const authTouchStartYRef = useRef<number | null>(null);
+  const authCanCloseBySwipeRef = useRef(false);
 
   const API_PREFIX = '/v1';
 
@@ -2704,9 +3072,94 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
     }
   };
 
+  const authInputClass = cn(
+    'w-full rounded-2xl bg-white px-4 py-3 text-base text-slate-900 outline-none transition placeholder:text-slate-400 focus:ring-4 focus:ring-sky-400/15 dark:bg-black/30 dark:text-slate-100 dark:placeholder:text-slate-500',
+    !forgotOpen && !confirmEmailOpen
+      ? 'border border-transparent'
+      : 'border border-slate-200/80 dark:border-white/10'
+  );
+  const authPrimaryButtonClass = cn(
+    'mt-1 w-full rounded-2xl px-4 py-3 text-sm font-semibold transition-all disabled:opacity-70 disabled:cursor-not-allowed shadow-lg',
+    !forgotOpen && !confirmEmailOpen
+      ? 'bg-amber-400 text-slate-900 hover:bg-amber-300 shadow-amber-400/35'
+      : 'bg-sky-500 text-white hover:bg-sky-600 shadow-sky-500/30'
+  );
+  const authGhostButtonClass = cn(
+    'w-full rounded-2xl bg-slate-50 px-3 py-2.5 text-xs text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-colors dark:bg-white/5 dark:text-slate-300 dark:hover:text-white dark:hover:bg-white/10',
+    !forgotOpen && !confirmEmailOpen
+      ? 'border border-transparent'
+      : 'border border-slate-200/80 dark:border-white/10'
+  );
+  const isYandexLikeAuth = !forgotOpen && !confirmEmailOpen;
+
+  const handleAuthTouchStart = (event: React.TouchEvent<HTMLDivElement>) => {
+    authTouchStartYRef.current = event.touches[0]?.clientY ?? null;
+
+    const target = event.target as HTMLElement | null;
+    const sheetScrollable = target?.closest('[data-sheet-scrollable="true"]') as HTMLElement | null;
+    authCanCloseBySwipeRef.current = !sheetScrollable || sheetScrollable.scrollTop <= 0;
+  };
+
+  const handleAuthTouchMove = (event: React.TouchEvent<HTMLDivElement>) => {
+    const startY = authTouchStartYRef.current;
+    if (startY == null) return;
+
+    const currentY = event.touches[0]?.clientY ?? startY;
+    const delta = currentY - startY;
+
+    if (delta <= 0 || !authCanCloseBySwipeRef.current) return;
+
+    const target = event.target as HTMLElement | null;
+    const sheetScrollable = target?.closest('[data-sheet-scrollable="true"]') as HTMLElement | null;
+
+    if (sheetScrollable && sheetScrollable.scrollTop > 0) {
+      authCanCloseBySwipeRef.current = false;
+      return;
+    }
+
+    if (delta > 8) {
+      event.preventDefault();
+    }
+  };
+
+  const handleAuthTouchEnd = (event: React.TouchEvent<HTMLDivElement>) => {
+    const startY = authTouchStartYRef.current;
+    if (startY == null) return;
+
+    const endY = event.changedTouches[0]?.clientY ?? startY;
+    const delta = endY - startY;
+
+    authTouchStartYRef.current = null;
+
+    if (!authCanCloseBySwipeRef.current) {
+      authCanCloseBySwipeRef.current = false;
+      return;
+    }
+
+    authCanCloseBySwipeRef.current = false;
+
+    if (delta > 90) {
+      closeSheet();
+    }
+  };
+
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between gap-3 scale-100">
+    <div
+      className={cn(
+        'relative min-h-full overflow-hidden bg-gradient-to-b from-slate-100/90 via-sky-50/70 to-indigo-100/70 px-0 py-3 dark:from-[#020617]/85 dark:via-[#0b1220]/70 dark:to-[#111827]/80',
+        isYandexLikeAuth &&
+          'flex flex-col justify-end pb-[max(env(safe-area-inset-bottom),16px)]'
+      )}
+      onTouchStart={handleAuthTouchStart}
+      onTouchMove={handleAuthTouchMove}
+      onTouchEnd={handleAuthTouchEnd}
+    >
+      <div
+        className={cn(
+          'relative mx-auto w-full max-w-md rounded-[28px] p-4 backdrop-blur',
+        )}
+      >
+      <div className="mb-1 flex items-center justify-between gap-3">
         <h2 className="text-base font-semibold text-slate-900 dark:text-white">
           {confirmEmailOpen
             ? 'Подтверждение почты'
@@ -2716,25 +3169,18 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
             ? 'Вход в аккаунт'
             : 'Регистрация'}
         </h2>
-        <button
-          type="button"
-          onClick={closeSheet}
-          className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 shadow-sm border border-slate-300 hover:bg-slate-300 hover:text-slate-800 dark:bg-black/40 dark:text-[#9ca3af] dark:border-transparent dark:hover:bg-black/60"
-          aria-label="Закрыть"
-        >
-          <X className="h-4 w-4" />
-        </button>
       </div>
 
-      {!forgotOpen && !confirmEmailOpen && (
-        <div className="flex gap-2 text-xs font-medium">
+      {!forgotOpen && !confirmEmailOpen && !isYandexLikeAuth && (
+        <div className="rounded-2xl border border-slate-200/80 bg-slate-100/90 p-1 dark:border-white/10 dark:bg-white/5">
+          <div className="flex gap-1 text-xs font-medium">
           <button
             type="button"
             className={cn(
-              'flex-1 rounded-full px-3 py-2 border transition-colors',
+              'flex-1 rounded-xl px-3 py-2 border transition-colors',
               mode === 'login'
                 ? 'bg-sky-500 text-white border-sky-500'
-                : 'bg-transparent text-slate-600 dark:text-[#94a3b8] border-slate-300 dark:border-slate-700'
+                : 'bg-transparent text-slate-600 border-slate-300 hover:text-slate-900 dark:text-slate-300 dark:border-white/15 dark:hover:text-white'
             )}
             onClick={() => setMode('login')}
           >
@@ -2743,20 +3189,26 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
           <button
             type="button"
             className={cn(
-              'flex-1 rounded-full px-3 py-2 border transition-colors',
+              'flex-1 rounded-xl px-3 py-2 border transition-colors',
               mode === 'register'
                 ? 'bg-sky-500 text-white border-sky-500'
-                : 'bg-transparent text-slate-600 dark:text-[#94a3b8] border-slate-300 dark:border-slate-700'
+                : 'bg-transparent text-slate-600 border-slate-300 hover:text-slate-900 dark:text-slate-300 dark:border-white/15 dark:hover:text-white'
             )}
             onClick={() => setMode('register')}
           >
             Регистрация
           </button>
+          </div>
         </div>
       )}
 
       {confirmEmailOpen ? (
-        <div className="space-y-3">
+        <div
+          className={cn(
+            'space-y-3 rounded-2xl bg-slate-50/90 p-3 dark:bg-white/5',
+            isYandexLikeAuth ? 'border border-transparent' : 'border border-slate-200/80 dark:border-white/10'
+          )}
+        >
           <p className="text-[11px] text-slate-600 dark:text-[#94a3b8]">
             На вашу почту{' '}
             <span className="font-semibold text-slate-900 dark:text-white">
@@ -2774,7 +3226,7 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
               inputMode="numeric"
               value={confirmEmailCode}
               onChange={(e) => setConfirmEmailCode(e.target.value)}
-              className="w-full rounded-2xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
+              className={authInputClass}
               placeholder="123456"
             />
           </div>
@@ -2783,7 +3235,7 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
             type="button"
             onClick={handleConfirmEmail}
             disabled={confirmEmailStatus === 'verifying'}
-            className="mt-1 w-full rounded-2xl bg-sky-500 hover:bg-sky-600 disabled:opacity-70 disabled:cursor-not-allowed text-white text-xs font-semibold px-4 py-2 shadow-md shadow-sky-500/40"
+            className={authPrimaryButtonClass}
           >
             {confirmEmailStatus === 'verifying' ? 'Проверка…' : 'Подтвердить почту'}
           </button>
@@ -2826,7 +3278,7 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
                 });
             }}
             disabled={confirmEmailStatus !== 'idle'}
-            className="w-full text-xs text-slate-600 hover:text-slate-900 dark:text-[#94a3b8] dark:hover:text-white"
+            className={authGhostButtonClass}
           >
             Отправить код ещё раз
           </button>
@@ -2838,13 +3290,18 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
               setConfirmEmailCode('');
               setConfirmEmailStatus('idle');
             }}
-            className="w-full text-xs text-slate-600 hover:text-slate-900 dark:text-[#94a3b8] dark:hover:text-white"
+            className={authGhostButtonClass}
           >
             ← Назад к регистрации
           </button>
         </div>
       ) : forgotOpen ? (
-        <div className="space-y-3">
+        <div
+          className={cn(
+            'space-y-3 rounded-2xl bg-slate-50/90 p-3 dark:bg-white/5',
+            isYandexLikeAuth ? 'border border-transparent' : 'border border-slate-200/80 dark:border-white/10'
+          )}
+        >
           {forgotStep === 'email' ? (
             <div className="space-y-1">
               <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
@@ -2854,7 +3311,7 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
                 type="email"
                 value={forgotEmail}
                 onChange={(e) => setForgotEmail(e.target.value)}
-                className="w-full rounded-2xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
+                className={authInputClass}
                 placeholder="you@example.com"
               />
               <p className="text-[11px] text-slate-500 dark:text-[#94a3b8]">
@@ -2871,7 +3328,7 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
                   type="email"
                   value={forgotEmail}
                   onChange={(e) => setForgotEmail(e.target.value)}
-                  className="w-full rounded-2xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
+                  className={authInputClass}
                   placeholder="you@example.com"
                 />
               </div>
@@ -2885,7 +3342,7 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
                   inputMode="numeric"
                   value={forgotCode}
                   onChange={(e) => setForgotCode(e.target.value)}
-                  className="w-full rounded-2xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
+                  className={authInputClass}
                   placeholder="123456"
                 />
               </div>
@@ -2898,7 +3355,7 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
                   type="password"
                   value={forgotNewPassword}
                   onChange={(e) => setForgotNewPassword(e.target.value)}
-                  className="w-full rounded-2xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
+                  className={authInputClass}
                   placeholder="Минимум 6 символов"
                 />
               </div>
@@ -2911,7 +3368,7 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
                   type="password"
                   value={forgotNewPassword2}
                   onChange={(e) => setForgotNewPassword2(e.target.value)}
-                  className="w-full rounded-2xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
+                  className={authInputClass}
                   placeholder="Повторите пароль"
                 />
               </div>
@@ -2935,7 +3392,7 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
               type="button"
               onClick={handleSendResetCode}
               disabled={forgotStatus === 'sending'}
-              className="mt-1 w-full rounded-2xl bg-sky-500 hover:bg-sky-600 disabled:opacity-70 disabled:cursor-not-allowed text-white text-xs font-semibold px-4 py-2 shadow-md shadow-sky-500/40"
+              className={authPrimaryButtonClass}
             >
               {forgotStatus === 'sending' ? 'Отправка…' : 'Отправить код'}
             </button>
@@ -2945,7 +3402,7 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
                 type="button"
                 onClick={handleResetPassword}
                 disabled={forgotStatus === 'resetting'}
-                className="mt-1 w-full rounded-2xl bg-sky-500 hover:bg-sky-600 disabled:opacity-70 disabled:cursor-not-allowed text-white text-xs font-semibold px-4 py-2 shadow-md shadow-sky-500/40"
+                className={authPrimaryButtonClass}
               >
                 {forgotStatus === 'resetting' ? 'Сохранение…' : 'Сменить пароль'}
               </button>
@@ -2953,7 +3410,7 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
                 type="button"
                 onClick={handleSendResetCode}
                 disabled={forgotStatus === 'sending' || forgotStatus === 'resetting'}
-                className="w-full text-xs text-slate-600 hover:text-slate-900 dark:text-[#94a3b8] dark:hover:text-white"
+                className={authGhostButtonClass}
               >
                 Отправить код ещё раз
               </button>
@@ -2973,13 +3430,18 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
               setError(null);
               setSuccess(null);
             }}
-            className="w-full text-xs text-slate-600 hover:text-slate-900 dark:text-[#94a3b8] dark:hover:text-white"
+            className={authGhostButtonClass}
           >
             ← Назад ко входу
           </button>
         </div>
       ) : (
-      <form onSubmit={handleSubmit} className="space-y-3">
+      <form
+        onSubmit={handleSubmit}
+        className={cn(
+          'space-y-3 rounded-2xl',
+        )}
+      >
         {mode === 'login' && (
           <div className="space-y-1">
             <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
@@ -2990,8 +3452,8 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
               value={identifier}
               onChange={(e) => setIdentifier(e.target.value)}
               required
-              className="w-full rounded-2xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
-              placeholder="user123 / you@example.com / +79991234567"
+              className={authInputClass}
+              placeholder="Почта, логин или телефон"
             />
           </div>
         )}
@@ -3006,7 +3468,7 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
               value={login}
               onChange={(e) => setLogin(e.target.value)}
               required
-              className="w-full rounded-2xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
+              className={authInputClass}
               placeholder="Ваш логин"
             />
           </div>
@@ -3022,7 +3484,7 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
-              className="w-full rounded-2xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
+              className={authInputClass}
               placeholder="you@example.com"
             />
           </div>
@@ -3037,8 +3499,8 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             required
-            className="w-full rounded-2xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
-            placeholder="Минимум 6 символов"
+            className={authInputClass}
+            placeholder={mode === 'login' ? 'Пароль' : 'Минимум 6 символов'}
           />
         </div>
 
@@ -3053,7 +3515,7 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
                 value={lastName}
                 onChange={(e) => setLastName(e.target.value)}
                 required
-                className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
+                className={authInputClass}
                 placeholder="Иванов"
               />
             </div>
@@ -3067,7 +3529,7 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
                 value={firstName}
                 onChange={(e) => setFirstName(e.target.value)}
                 required
-                className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
+                className={authInputClass}
                 placeholder="Иван"
               />
             </div>
@@ -3080,7 +3542,7 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
                 type="text"
                 value={middleName}
                 onChange={(e) => setMiddleName(e.target.value)}
-                className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
+                className={authInputClass}
                 placeholder="Иванович"
               />
             </div>
@@ -3094,7 +3556,7 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
                 value={phone}
                 onChange={(e) => setPhone(e.target.value)}
                 required
-                className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
+                className={authInputClass}
                 placeholder="+79991234567"
               />
             </div>
@@ -3109,7 +3571,7 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
                   value={city}
                   onChange={(e) => setCity(e.target.value)}
                   required
-                  className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
+                  className={authInputClass}
                   placeholder="Москва"
                 />
               </div>
@@ -3122,7 +3584,7 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
                   value={street}
                   onChange={(e) => setStreet(e.target.value)}
                   required
-                  className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
+                  className={authInputClass}
                   placeholder="Тверская"
                 />
               </div>
@@ -3135,7 +3597,7 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
                   value={house}
                   onChange={(e) => setHouse(e.target.value)}
                   required
-                  className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
+                  className={authInputClass}
                   placeholder="1"
                 />
               </div>
@@ -3147,7 +3609,7 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
                   type="text"
                   value={apartment}
                   onChange={(e) => setApartment(e.target.value)}
-                  className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
+                  className={authInputClass}
                   placeholder="10"
                 />
               </div>
@@ -3170,7 +3632,7 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
         <button
           type="submit"
           disabled={loading}
-          className="mt-1 w-full rounded-xl bg-sky-500 hover:bg-sky-600 disabled:opacity-70 disabled:cursor-not-allowed text-white text-xs font-semibold px-4 py-2 shadow-md shadow-sky-500/40"
+          className={authPrimaryButtonClass}
         >
           {loading
             ? 'Отправка...'
@@ -3178,6 +3640,26 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
             ? 'Войти'
             : 'Зарегистрироваться'}
         </button>
+
+        {isYandexLikeAuth && mode === 'login' && (
+          <button
+            type="button"
+            onClick={() => setMode('register')}
+            className="w-full text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
+          >
+            Нет аккаунта? Зарегистрироваться
+          </button>
+        )}
+
+        {isYandexLikeAuth && mode === 'register' && (
+          <button
+            type="button"
+            onClick={() => setMode('login')}
+            className="w-full text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
+          >
+            Уже есть аккаунт? Войти
+          </button>
+        )}
 
         {mode === 'login' && (
           <button
@@ -3189,13 +3671,14 @@ function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
               setError(null);
               setSuccess(null);
             }}
-            className="w-full text-xs text-slate-600 hover:text-slate-900 dark:text-[#94a3b8] dark:hover:text-white"
+            className={authGhostButtonClass}
           >
             Забыли пароль?
           </button>
         )}
       </form>
       )}
+    </div>
     </div>
   );
 }
