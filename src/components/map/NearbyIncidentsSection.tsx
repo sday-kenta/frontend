@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { Activity, MapPin, Tag } from 'lucide-react';
+import { MapPin } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 type BaseIncident = {
@@ -11,9 +11,6 @@ type BaseIncident = {
 };
 
 type NearbyIncidentsSectionProps<T extends BaseIncident> = {
-  categories: string[];
-  selectedCategory: string;
-  onSelectCategory: (category: string) => void;
   incidents: T[];
   onSelectIncident: (incident: T) => void;
   isFullHeight: boolean;
@@ -55,10 +52,25 @@ function getIncidentStatusTagClass(status: string) {
   return 'border-violet-300/60 bg-violet-100/70 text-violet-700 dark:border-violet-400/40 dark:bg-violet-500/20 dark:text-violet-200';
 }
 
+function getIncidentCategoryIcon(category: string) {
+  const normalized = category.toLowerCase();
+  if (normalized.includes('жкх') || normalized.includes('благо')) return '🏠';
+  if (normalized.includes('дорог')) return '🛣️';
+  if (normalized.includes('парков')) return '🚗';
+  if (normalized.includes('торгов')) return '🛒';
+  if (normalized.includes('эколог')) return '🌿';
+  return '📍';
+}
+
+function getIncidentStatusIcon(status: string) {
+  const normalized = status.toLowerCase();
+  if (normalized.includes('нов')) return '🆕';
+  if (normalized.includes('работ')) return '🛠️';
+  if (normalized.includes('провер')) return '🔎';
+  return 'ℹ️';
+}
+
 export function NearbyIncidentsSection<T extends BaseIncident>({
-  categories,
-  selectedCategory,
-  onSelectCategory,
   incidents,
   onSelectIncident,
   isFullHeight,
@@ -81,23 +93,6 @@ export function NearbyIncidentsSection<T extends BaseIncident>({
       <div className="mb-2 flex items-center justify-between">
         <h3 className="text-sm font-semibold text-foreground">Ближайшие инциденты</h3>
         <span className="text-xs text-muted-foreground">Рядом с вами</span>
-      </div>
-      <div className="mb-2 flex gap-1 overflow-x-auto pb-1">
-        {categories.map((category) => (
-          <button
-            key={category}
-            type="button"
-            onClick={() => onSelectCategory(category)}
-            className={cn(
-              'shrink-0 rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors',
-              selectedCategory === category
-                ? 'border-foreground bg-foreground text-background'
-                : 'border-border/70 bg-background/65 text-muted-foreground hover:bg-muted/40 hover:text-foreground'
-            )}
-          >
-            {category}
-          </button>
-        ))}
       </div>
       <div
         ref={incidentsScrollRef}
@@ -123,7 +118,7 @@ export function NearbyIncidentsSection<T extends BaseIncident>({
                     getIncidentCategoryTagClass(incident.category)
                   )}
                 >
-                  <Tag className="h-3 w-3" />
+                  <span>{getIncidentCategoryIcon(incident.category)}</span>
                   {incident.category}
                 </span>
                 <span
@@ -132,7 +127,7 @@ export function NearbyIncidentsSection<T extends BaseIncident>({
                     getIncidentStatusTagClass(incident.status)
                   )}
                 >
-                  <Activity className="h-3 w-3" />
+                  <span>{getIncidentStatusIcon(incident.status)}</span>
                   {incident.status}
                 </span>
               </div>

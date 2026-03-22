@@ -1,33 +1,26 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ComponentType } from 'react';
-import maplibregl, { type MapMouseEvent } from 'maplibre-gl';
+import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import {
-  Loader2,
-  Plus,
-  Minus,
-  MapPin,
-  Activity,
-  Tag,
-  ChevronRight,
-  Copy,
-  Navigation,
-  Search,
-  X,
-  Filter,
-  Settings,
-  User,
   Car,
   ShoppingBag,
-  Camera,
 } from 'lucide-react';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import { cn, resolveAvatarUrl } from '@/lib/utils';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import ProfileTabComponent from '@/components/ProfileTab';
-import { SearchRubricsSection } from '@/components/map/SearchRubricsSection';
-import { NearbyIncidentsSection } from '@/components/map/NearbyIncidentsSection';
+import { MapControls } from '@/components/map/MapControls';
+import { SearchInputBar } from '@/components/map/SearchInputBar';
+import { QuickSearchChips } from '@/components/map/QuickSearchChips';
+import { SearchSuggestionsList } from '@/components/map/SearchSuggestionsList';
+import { MapSearchPanel } from '@/components/map/MapSearchPanel';
+import { MapSearchExpandedContent } from '@/components/map/MapSearchExpandedContent';
+import { AuthPanel } from '@/components/map/AuthPanel';
+import { MapProfileFab } from '@/components/map/MapProfileFab';
+import { MapMarkerSheetContent } from '@/components/map/MapMarkerSheetContent';
+import { MapRubricSheetContent } from '@/components/map/MapRubricSheetContent';
+import { MapTabsSheetContent } from '@/components/map/MapTabsSheetContent';
 
 const ProfileTab = ProfileTabComponent as ComponentType<{
   userId: number;
@@ -193,6 +186,39 @@ const INCIDENT_PREVIEWS: IncidentPreview[] = [
 
 const QUICK_SEARCH_CHIPS = ['Парковка', 'Просрочка', 'ЖКХ', 'Дороги', 'Мусор рядом'];
 
+type IncidentDetails = {
+  description: string;
+  tags: string[];
+  photoUrls: string[];
+};
+
+const INCIDENT_DETAILS: Record<number, IncidentDetails> = {
+  1: {
+    description: 'Автомобиль регулярно оставляют на тротуаре, пешеходам и коляскам приходится обходить по проезжей части.',
+    tags: ['парковка', 'тротуар', 'безопасность'],
+    photoUrls: [
+      'https://picsum.photos/seed/incident-1/960/540',
+      'https://picsum.photos/seed/incident-1b/960/540',
+    ],
+  },
+  2: {
+    description: 'В торговом зале обнаружены продукты с истекшим сроком годности. Нужна проверка магазина.',
+    tags: ['торговля', 'просрочка', 'правапотребителей'],
+    photoUrls: [
+      'https://picsum.photos/seed/incident-2/960/540',
+      'https://picsum.photos/seed/incident-2b/960/540',
+    ],
+  },
+  3: {
+    description: 'Контейнерная площадка переполнена, мусор разлетается по двору и создает антисанитарию.',
+    tags: ['жкх', 'мусор', 'двор'],
+    photoUrls: [
+      'https://picsum.photos/seed/incident-3/960/540',
+      'https://picsum.photos/seed/incident-3b/960/540',
+    ],
+  },
+};
+
 function calculateDistanceKm(from: { lat: number; lng: number }, to: { lat: number; lng: number }) {
   const toRad = (value: number) => (value * Math.PI) / 180;
   const earthRadiusKm = 6371;
@@ -237,6 +263,41 @@ function getProfileIncidentStatusTagClass(status: string) {
   return 'border-violet-300/60 bg-violet-100/70 text-violet-700 dark:border-violet-400/40 dark:bg-violet-500/20 dark:text-violet-200';
 }
 
+function getTagIcon(tag: string) {
+  const normalized = tag.toLowerCase().replace(/^#/, '');
+
+  if (normalized.includes('жкх') || normalized.includes('благо') || normalized.includes('двор')) return '🏠';
+  if (normalized.includes('дорог') || normalized.includes('яма') || normalized.includes('тротуар')) return '🛣️';
+  if (normalized.includes('парков') || normalized.includes('авто')) return '🚗';
+  if (normalized.includes('торгов') || normalized.includes('магаз') || normalized.includes('просроч')) return '🛒';
+  if (normalized.includes('эко') || normalized.includes('мусор') || normalized.includes('свалк')) return '🌿';
+
+  return '📍';
+}
+
+function normalizeFilterToken(value: string) {
+  return value.toLowerCase().replace(/^#/, '').trim();
+}
+
+function matchesIncidentByTagFilter(incident: IncidentPreview, normalizedFilter: string) {
+  if (!normalizedFilter) return true;
+
+  const details = INCIDENT_DETAILS[incident.id];
+  const searchableParts = [incident.title, incident.category, ...(details?.tags ?? [])].map(normalizeFilterToken);
+
+  return searchableParts.some(
+    (part) => part.includes(normalizedFilter) || normalizedFilter.includes(part)
+  );
+}
+
+function getStatusIcon(status: string) {
+  const normalized = status.toLowerCase();
+  if (normalized.includes('нов')) return '🆕';
+  if (normalized.includes('работ')) return '🛠️';
+  if (normalized.includes('провер')) return '🔎';
+  return 'ℹ️';
+}
+
 async function searchAddress(q: string): Promise<GeocodingResult[]> {
   if (!q.trim() || q.length < 3) return [];
   const params = new URLSearchParams({ q, format: 'json', limit: '8' });
@@ -262,8 +323,10 @@ export default function MapScreen() {
   const mapInstanceRef = useRef<maplibregl.Map | null>(null);
   const markerInstanceRef = useRef<maplibregl.Marker | null>(null);
   const userLocationMarkerRef = useRef<maplibregl.Marker | null>(null);
+  const incidentMarkersRef = useRef<maplibregl.Marker[]>([]);
 
   const [center, setCenter] = useState({ lat: 53.2, lng: 50.15 });
+  const centerRef = useRef(center);
   const [zoom] = useState(13);
   const [marker, setMarker] = useState<{
     lat: number;
@@ -276,7 +339,6 @@ export default function MapScreen() {
   const [loading, setLoading] = useState(false);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [locating, setLocating] = useState(false);
-  const [locateError, setLocateError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>('home');
   const [sheetMode, setSheetMode] = useState<SheetMode>(null);
   const [settingsView, setSettingsView] = useState<'main' | 'about' | 'feedback' | 'profile'>('main');
@@ -311,12 +373,7 @@ export default function MapScreen() {
   const profileAvatarInputRef = useRef<HTMLInputElement | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const suggestionsRef = useRef<HTMLDivElement>(null);
-  const longPressRef = useRef<{
-    timer: ReturnType<typeof setTimeout> | null;
-    coords: { lat: number; lng: number } | null;
-  }>({ timer: null, coords: null });
   const closeSheetTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const locateErrorTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sheetDragStartYRef = useRef<number | null>(null);
   const [sheetDragY, setSheetDragY] = useState(0);
   const [isSheetDragging, setIsSheetDragging] = useState(false);
@@ -324,7 +381,8 @@ export default function MapScreen() {
   const [searchPanelSnap, setSearchPanelSnap] = useState<SearchPanelSnap>('collapsed');
   const [searchPanelDragHeight, setSearchPanelDragHeight] = useState<number | null>(null);
   const [isSearchPanelDragging, setIsSearchPanelDragging] = useState(false);
-  const [selectedIncidentCategory, setSelectedIncidentCategory] = useState<string>('Все');
+  const [selectedMapTagFilter, setSelectedMapTagFilter] = useState<string | null>(null);
+  const [selectedMapIncidentId, setSelectedMapIncidentId] = useState<number | null>(null);
   const [selectedProfileStatusFilter, setSelectedProfileStatusFilter] = useState<string>('Все');
   const [selectedProfileCategoryFilter, setSelectedProfileCategoryFilter] = useState<string>('Все');
   const [renderExpandedSearchContent, setRenderExpandedSearchContent] = useState(false);
@@ -335,11 +393,15 @@ export default function MapScreen() {
   const searchPanelTouchTargetRef = useRef<HTMLElement | null>(null);
   const searchPanelCanDragRef = useRef(false);
   const searchPanelSettleTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const searchPanelContentShowTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const searchPanelContentHideTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const searchPanelDragRafRef = useRef<number | null>(null);
   const searchPanelPendingHeightRef = useRef<number | null>(null);
   const expandedSearchContentRef = useRef<HTMLDivElement | null>(null);
-  const incidentsSectionRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    centerRef.current = center;
+  }, [center]);
 
   type Rubric = {
     id: number;
@@ -382,11 +444,12 @@ export default function MapScreen() {
         .then((data) => {
           // сортируем варианты по близости к текущему центру, но показываем все
           type WithDist = GeocodingResult & { _dist: number };
+          const currentCenter = centerRef.current;
           const withDistance: WithDist[] = data.map((s) => ({
             ...s,
             _dist:
-              Math.pow(s.lat - center.lat, 2) +
-              Math.pow(s.lng - center.lng, 2),
+              Math.pow(s.lat - currentCenter.lat, 2) +
+              Math.pow(s.lng - currentCenter.lng, 2),
           }));
           withDistance.sort((a, b) => a._dist - b._dist);
           const sorted: GeocodingResult[] = withDistance.map(
@@ -397,7 +460,7 @@ export default function MapScreen() {
         })
         .finally(() => setLoading(false));
     },
-    [center]
+      []
   );
 
   useEffect(() => {
@@ -451,16 +514,18 @@ export default function MapScreen() {
     return () => document.removeEventListener('click', handler);
   }, []);
 
-  const handleSelectSuggestion = (s: GeocodingResult) => {
+  const handleSelectSuggestion = useCallback((s: GeocodingResult) => {
     setCenter({ lat: s.lat, lng: s.lng });
     setMarker({ lat: s.lat, lng: s.lng, address: s.display_name });
+    setSelectedMapIncidentId(null);
     setQuery(s.display_name);
     setShowSuggestions(false);
-  };
+  }, []);
 
   const handlePlaceMarker = useCallback((lat: number, lng: number) => {
     setMarker({ lat, lng });
     setCenter({ lat, lng });
+    setSelectedMapIncidentId(null);
     setSheetMode('marker');
     const params = new URLSearchParams({
       lat: String(lat),
@@ -488,12 +553,13 @@ export default function MapScreen() {
       .catch(() => {});
   }, []);
 
-  const clearMarker = () => {
+  const clearMarker = useCallback(() => {
     setMarker(null);
+    setSelectedMapIncidentId(null);
     if (sheetMode === 'marker') {
       setSheetMode(null);
     }
-  };
+  }, [sheetMode]);
 
   const handleSheetTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
     if (!isSheetOpen) return;
@@ -543,34 +609,8 @@ export default function MapScreen() {
     sheetDragStartYRef.current = null;
   };
 
-  const handleLocateMe = () => {
-    const showLocateError = (message: string) => {
-      setLocateError(message);
-      if (locateErrorTimeoutRef.current) {
-        clearTimeout(locateErrorTimeoutRef.current);
-      }
-      locateErrorTimeoutRef.current = setTimeout(() => {
-        setLocateError(null);
-        locateErrorTimeoutRef.current = null;
-      }, 2600);
-    };
-
-    if (!window.isSecureContext) {
-      showLocateError('Геолокация работает только по HTTPS.');
-      return;
-    }
-
-    if (!navigator.geolocation) {
-      showLocateError('Геолокация не поддерживается на этом устройстве.');
-      return;
-    }
-
-    if (!mapInstanceRef.current) {
-      showLocateError('Карта ещё загружается. Попробуйте ещё раз.');
-      return;
-    }
-
-    setLocateError(null);
+  const handleLocateMe = useCallback(() => {
+    if (!navigator.geolocation || !mapInstanceRef.current) return;
     setLocating(true);
     navigator.geolocation.getCurrentPosition(
       (pos) => {
@@ -605,40 +645,21 @@ export default function MapScreen() {
         }
         setLocating(false);
       },
-      (error) => {
-        setLocating(false);
-
-        if (error.code === error.PERMISSION_DENIED) {
-          showLocateError('Доступ к геолокации запрещён в браузере.');
-          return;
-        }
-
-        if (error.code === error.POSITION_UNAVAILABLE) {
-          showLocateError('Не удалось определить местоположение.');
-          return;
-        }
-
-        if (error.code === error.TIMEOUT) {
-          showLocateError('Истекло время ожидания геолокации.');
-          return;
-        }
-
-        showLocateError('Ошибка геолокации. Попробуйте снова.');
-      },
+      () => setLocating(false),
       {
-        enableHighAccuracy: true,
-        timeout: 9000,
+        enableHighAccuracy: false,
+        timeout: 5000,
         maximumAge: 60000,
       }
     );
-  };
+  }, []);
 
-  const handleCreateReport = () => {
+  const handleCreateReport = useCallback(() => {
     if (!marker) return;
     setSelectedRubric(null);
     setRubricStep('select');
     setSheetMode('rubric');
-  };
+  }, [marker]);
 
   const nearbyIncidents = useMemo(
     () =>
@@ -659,18 +680,56 @@ export default function MapScreen() {
     [center]
   );
 
-  const incidentCategories = useMemo(
-    () => ['Все', ...Array.from(new Set(nearbyIncidents.map((incident) => incident.category)))],
+  const nearbyIncidentsById = useMemo(
+    () => new Map(nearbyIncidents.map((incident) => [incident.id, incident])),
     [nearbyIncidents]
+  );
+
+  const normalizedSelectedMapTagFilter = useMemo(
+    () => (selectedMapTagFilter ? normalizeFilterToken(selectedMapTagFilter) : ''),
+    [selectedMapTagFilter]
   );
 
   const filteredNearbyIncidents = useMemo(
     () =>
-      nearbyIncidents.filter((incident) => {
-        if (selectedIncidentCategory === 'Все') return true;
-        return incident.category === selectedIncidentCategory;
-      }),
-    [nearbyIncidents, selectedIncidentCategory]
+      nearbyIncidents.filter((incident) => matchesIncidentByTagFilter(incident, normalizedSelectedMapTagFilter)),
+    [nearbyIncidents, normalizedSelectedMapTagFilter]
+  );
+
+  const selectedMapIncident = useMemo(() => {
+    if (selectedMapIncidentId == null) return null;
+
+    const incidentWithDistance = nearbyIncidentsById.get(selectedMapIncidentId);
+    if (incidentWithDistance) return incidentWithDistance;
+
+    return INCIDENT_PREVIEWS.find((incident) => incident.id === selectedMapIncidentId) ?? null;
+  }, [nearbyIncidentsById, selectedMapIncidentId]);
+
+  const selectedMapIncidentDistanceLabel = useMemo(() => {
+    if (selectedMapIncidentId == null) return null;
+    return nearbyIncidentsById.get(selectedMapIncidentId)?.distanceLabel ?? null;
+  }, [nearbyIncidentsById, selectedMapIncidentId]);
+
+  const selectedMapIncidentDetails = useMemo(() => {
+    if (!selectedMapIncident) return null;
+
+    const details = INCIDENT_DETAILS[selectedMapIncident.id];
+    if (details) return details;
+
+    return {
+      description: `Заявка по категории «${selectedMapIncident.category}». Статус: ${selectedMapIncident.status}. Требуется проверка ответственной службы и контроль выполнения.`,
+      tags: [selectedMapIncident.category.toLowerCase().replace(/\s+/g, ''), 'обращение', 'контроль'],
+      photoUrls: [
+        `https://picsum.photos/seed/incident-${selectedMapIncident.id}/960/540`,
+        `https://picsum.photos/seed/incident-${selectedMapIncident.id}-b/960/540`,
+      ],
+    };
+  }, [selectedMapIncident]);
+
+  const mapVisibleIncidents = useMemo(
+    () =>
+      INCIDENT_PREVIEWS.filter((incident) => matchesIncidentByTagFilter(incident, normalizedSelectedMapTagFilter)),
+    [normalizedSelectedMapTagFilter]
   );
 
   const userActiveIncidents = useMemo(
@@ -722,7 +781,7 @@ export default function MapScreen() {
     });
   }, [selectedProfileCategoryFilter, selectedProfileStatusFilter, userActiveIncidents]);
 
-  const openRubricFromSearch = (rubric: Rubric) => {
+  const openCreateReportFromSearch = useCallback(() => {
     const markerPoint = marker ?? {
       lat: center.lat,
       lng: center.lng,
@@ -733,18 +792,32 @@ export default function MapScreen() {
       setMarker(markerPoint);
     }
 
-    setSelectedRubric(rubric);
-    setRubricStep('create');
+    setSelectedRubric(null);
+    setRubricStep('select');
     setSheetMode('rubric');
     setShowSuggestions(false);
     setSearchPanelSnap('collapsed');
-  };
+  }, [center.lat, center.lng, marker]);
 
-  const handleQuickSearch = (value: string) => {
-    setQuery(value);
+  const handleQuickSearch = useCallback((value: string) => {
+    setSelectedMapTagFilter((prev) => (prev === value ? null : value));
     setSearchPanelSnap((prev) => (prev === 'collapsed' ? 'half' : prev));
     setShowSuggestions(false);
-  };
+  }, []);
+
+  type IncidentSelectionTarget = Pick<IncidentPreview, 'id' | 'lat' | 'lng' | 'title'>;
+
+  const focusIncidentOnMap = useCallback((incident: IncidentSelectionTarget) => {
+    setSelectedMapIncidentId(incident.id);
+    setCenter({ lat: incident.lat, lng: incident.lng });
+    setMarker({
+      lat: incident.lat,
+      lng: incident.lng,
+      address: incident.title,
+    });
+    setSearchPanelSnap('full');
+    setShowSuggestions(false);
+  }, []);
 
   const scheduleSearchPanelHeight = useCallback((nextHeight: number) => {
     searchPanelPendingHeightRef.current = nextHeight;
@@ -769,12 +842,12 @@ export default function MapScreen() {
     });
   }, []);
 
-  const copyCoords = () => {
+  const copyCoords = useCallback(() => {
     if (!marker) return;
     navigator.clipboard.writeText(
       `${marker.lat.toFixed(6)}, ${marker.lng.toFixed(6)}`
     );
-  };
+  }, [marker]);
 
   const normalizeAvatarValue = (raw: unknown): string | null => {
     if (typeof raw !== 'string' || !raw.trim()) return null;
@@ -1137,34 +1210,16 @@ export default function MapScreen() {
     }
   };
 
-  const zoomIn = () => {
+  const zoomIn = useCallback(() => {
     mapInstanceRef.current?.zoomIn();
-  };
-  const zoomOut = () => {
+  }, []);
+
+  const zoomOut = useCallback(() => {
     mapInstanceRef.current?.zoomOut();
-  };
+  }, []);
 
-  const openTab = (tab: Tab) => {
-    if (tab === 'home') {
-      // Нажатие на «Главная» закрывает простыню плавно
-      closeSheet();
-      return;
-    }
-    if (closeSheetTimeoutRef.current) {
-      clearTimeout(closeSheetTimeoutRef.current);
-      closeSheetTimeoutRef.current = null;
-    }
-    setIsSheetClosing(false);
-    setSheetDragY(0);
-    setActiveTab(tab);
-    if (tab === 'settings') {
-      setSettingsView('main');
-    }
-    setSheetMode('tabs');
-  };
-
-  const closeSheet = () => {
-    if (isSheetClosing || !isSheetOpen) return;
+  const closeSheet = useCallback(() => {
+    if (isSheetClosing || sheetMode === null) return;
 
     if (closeSheetTimeoutRef.current) {
       clearTimeout(closeSheetTimeoutRef.current);
@@ -1187,21 +1242,40 @@ export default function MapScreen() {
       setIsSheetClosing(false);
       closeSheetTimeoutRef.current = null;
     }, 420);
-  };
+  }, [isSheetClosing, sheetMode]);
+
+  const openTab = useCallback((tab: Tab) => {
+    if (tab === 'home') {
+      // Нажатие на «Главная» закрывает простыню плавно
+      closeSheet();
+      return;
+    }
+    if (closeSheetTimeoutRef.current) {
+      clearTimeout(closeSheetTimeoutRef.current);
+      closeSheetTimeoutRef.current = null;
+    }
+    setIsSheetClosing(false);
+    setSheetDragY(0);
+    setActiveTab(tab);
+    if (tab === 'settings') {
+      setSettingsView('main');
+    }
+    setSheetMode('tabs');
+  }, [closeSheet]);
 
   const isSheetOpen = sheetMode !== null;
   const isSheetVisible = isSheetOpen || isSheetClosing;
 
   // Мягкое закрытие: даём анимации контейнера плавно
   // уехать вниз так же, как при нажатии на фон / крестик.
-  const softCloseSheet = () => {
-    if (!isSheetOpen) return;
+  const softCloseSheet = useCallback(() => {
+    if (sheetMode === null) return;
     if (closeSheetTimeoutRef.current) {
       clearTimeout(closeSheetTimeoutRef.current);
       closeSheetTimeoutRef.current = null;
     }
     closeSheet();
-  };
+  }, [closeSheet, sheetMode]);
 
   // Блокируем зум страницы (pinch, ctrl+wheel) вне области карты,
   // чтобы зум оставался только на самой карте.
@@ -1287,8 +1361,9 @@ export default function MapScreen() {
     });
 
     map.addControl(new maplibregl.NavigationControl(), 'top-right');
+    map.doubleClickZoom.disable();
 
-    map.on('click', (e) => {
+    map.on('dblclick', (e) => {
       handlePlaceMarker(e.lngLat.lat, e.lngLat.lng);
     });
 
@@ -1297,40 +1372,11 @@ export default function MapScreen() {
       handlePlaceMarker(e.lngLat.lat, e.lngLat.lng);
     });
 
-    const cancelLongPress = () => {
-      if (longPressRef.current.timer) {
-        clearTimeout(longPressRef.current.timer);
-        longPressRef.current.timer = null;
-      }
-      longPressRef.current.coords = null;
-    };
-
-    const handlePointerDown = (e: MapMouseEvent) => {
-      if (e.originalEvent.button !== 0) return;
-      const lngLat = e.lngLat;
-      longPressRef.current.coords = { lat: lngLat.lat, lng: lngLat.lng };
-      longPressRef.current.timer = setTimeout(() => {
-        longPressRef.current.timer = null;
-        const c = longPressRef.current.coords;
-        if (c) handlePlaceMarker(c.lat, c.lng);
-        longPressRef.current.coords = null;
-      }, 600);
-    };
-
-    map.on('mousedown', handlePointerDown);
-    map.on('mouseup', cancelLongPress);
-    map.on('mouseleave', cancelLongPress);
-    map.on('mousemove', (e) => {
-      if (!longPressRef.current.timer || !longPressRef.current.coords) return;
-      const c = longPressRef.current.coords;
-      const dx = Math.abs(e.lngLat.lng - c.lng);
-      const dy = Math.abs(e.lngLat.lat - c.lat);
-      if (dx > 0.001 || dy > 0.001) cancelLongPress();
-    });
-
     mapInstanceRef.current = map;
 
     return () => {
+      incidentMarkersRef.current.forEach((incidentMarker) => incidentMarker.remove());
+      incidentMarkersRef.current = [];
       map.remove();
       mapInstanceRef.current = null;
       markerInstanceRef.current = null;
@@ -1343,7 +1389,102 @@ export default function MapScreen() {
         closeSheetTimeoutRef.current = null;
       }
     };
-  }, [handlePlaceMarker, isAuthenticated]);
+  }, [handlePlaceMarker]);
+
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    if (!map) return;
+
+    incidentMarkersRef.current.forEach((incidentMarker) => incidentMarker.remove());
+    incidentMarkersRef.current = [];
+
+    const getIncidentColor = (category: string) => {
+      const normalizedCategory = category.toLowerCase();
+      if (normalizedCategory.includes('жкх') || normalizedCategory.includes('благо')) return '#10b981';
+      if (normalizedCategory.includes('дорог')) return '#f59e0b';
+      if (normalizedCategory.includes('парков')) return '#0ea5e9';
+      if (normalizedCategory.includes('торгов')) return '#f97316';
+      if (normalizedCategory.includes('эколог')) return '#22c55e';
+      return '#ef4444';
+    };
+
+    const getCategoryIcon = (category: string, tags?: string[]) => {
+      const normalizedTags = (tags ?? []).map((tag) => tag.toLowerCase().replace(/^#/, ''));
+
+      if (normalizedTags.some((tag) => tag.includes('жкх') || tag.includes('благо') || tag.includes('двор'))) {
+        return '🏠';
+      }
+      if (normalizedTags.some((tag) => tag.includes('дорог') || tag.includes('яма') || tag.includes('тротуар'))) {
+        return '🛣️';
+      }
+      if (normalizedTags.some((tag) => tag.includes('парков') || tag.includes('авто'))) {
+        return '🚗';
+      }
+      if (normalizedTags.some((tag) => tag.includes('торгов') || tag.includes('магаз') || tag.includes('просроч'))) {
+        return '🛒';
+      }
+      if (normalizedTags.some((tag) => tag.includes('эко') || tag.includes('мусор') || tag.includes('свалк'))) {
+        return '🌿';
+      }
+
+      const normalizedCategory = category.toLowerCase();
+      if (normalizedCategory.includes('жкх') || normalizedCategory.includes('благо')) return '🏠';
+      if (normalizedCategory.includes('дорог')) return '🛣️';
+      if (normalizedCategory.includes('парков')) return '🚗';
+      if (normalizedCategory.includes('торгов')) return '🛒';
+      if (normalizedCategory.includes('эколог')) return '🌿';
+      return '📍';
+    };
+
+    const getStatusText = (status: string) => {
+      const normalizedStatus = status.toLowerCase();
+      if (normalizedStatus.includes('нов')) return 'Новая';
+      if (normalizedStatus.includes('работ')) return 'В работе';
+      if (normalizedStatus.includes('провер')) return 'Проверка';
+      return status;
+    };
+
+    const markers = mapVisibleIncidents.map((incident) => {
+      const pinColor = getIncidentColor(incident.category);
+      const incidentTags = INCIDENT_DETAILS[incident.id]?.tags;
+      const categoryIcon = getCategoryIcon(incident.category, incidentTags);
+      const statusText = getStatusText(incident.status);
+      const el = document.createElement('button');
+      el.type = 'button';
+      el.setAttribute('aria-label', incident.title);
+      el.setAttribute('title', `${incident.title} • ${incident.category} • ${statusText}`);
+      el.innerHTML = `
+        <div style="position: relative; transform: translateY(-8px); display: inline-flex; flex-direction: column; align-items: center; gap: 3px;">
+          <div style="width: 30px; height: 30px; border-radius: 9999px; border: 3px solid white; background: ${pinColor}; box-shadow: 0 4px 12px rgba(15,23,42,0.38); color: white; font-size: 15px; display: flex; align-items: center; justify-content: center; text-shadow: 0 1px 2px rgba(15,23,42,0.55);">
+            ${categoryIcon}
+          </div>
+          <div style="width: 10px; height: 10px; border-radius: 9999px; background: white; border: 2px solid ${pinColor}; box-shadow: 0 2px 6px rgba(15,23,42,0.25);"></div>
+          </div>
+        </div>
+      `;
+      el.style.background = 'transparent';
+      el.style.border = 'none';
+      el.style.padding = '0';
+      el.style.cursor = 'pointer';
+
+      el.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        focusIncidentOnMap(incident);
+      });
+
+      return new maplibregl.Marker({ element: el, anchor: 'bottom' })
+        .setLngLat([incident.lng, incident.lat])
+        .addTo(map);
+    });
+
+    incidentMarkersRef.current = markers;
+
+    return () => {
+      markers.forEach((incidentMarker) => incidentMarker.remove());
+      incidentMarkersRef.current = [];
+    };
+  }, [mapVisibleIncidents, focusIncidentOnMap]);
 
   useEffect(() => {
     const map = mapInstanceRef.current;
@@ -1419,23 +1560,21 @@ export default function MapScreen() {
     };
   }, [marker]);
 
-  const handleProfileWheel = (event: React.WheelEvent<HTMLDivElement>) => {
+  const handleProfileWheel = useCallback((event: React.WheelEvent<HTMLDivElement>) => {
     const el = event.currentTarget;
     if (el.scrollTop <= 0 && event.deltaY < 0) {
       event.preventDefault();
       softCloseSheet();
     }
-  };
+  }, [softCloseSheet]);
 
-  const handleProfileTouchStart = (event: React.TouchEvent<HTMLDivElement>) => {
+  const handleProfileTouchStart = useCallback((event: React.TouchEvent<HTMLDivElement>) => {
     profileTouchStartYRef.current = event.touches[0]?.clientY ?? null;
-    // На всякий случай сбрасываем смещение простыни,
-    // чтобы жест начинался из ровного положения.
     setSheetDragY(0);
     setIsSheetDragging(false);
-  };
+  }, []);
 
-  const handleProfileTouchMove = (event: React.TouchEvent<HTMLDivElement>) => {
+  const handleProfileTouchMove = useCallback((event: React.TouchEvent<HTMLDivElement>) => {
     const startY = profileTouchStartYRef.current;
     const el = profileScrollRef.current;
     if (startY == null || !el) return;
@@ -1443,23 +1582,21 @@ export default function MapScreen() {
     const currentY = event.touches[0]?.clientY ?? startY;
     const delta = currentY - startY;
 
-    // Когда контент профиля уже в самом верху и пользователь тянет вниз,
-    // начинаем "тащить" всю простыню, как в Яндекс.Картах.
     if (el.scrollTop <= 0 && delta > 0) {
       event.preventDefault();
       setIsSheetDragging(true);
       setSheetDragY(delta);
     }
-  };
+  }, []);
 
-  const getSearchPanelSnapHeightPx = (snap: SearchPanelSnap) => {
+  const getSearchPanelSnapHeightPx = useCallback((snap: SearchPanelSnap) => {
     if (typeof window === 'undefined') return 160;
     if (snap === 'full') return window.innerHeight;
     if (snap === 'half') return window.innerHeight * 0.44;
     return 160;
-  };
+  }, []);
 
-  const getNearestSearchPanelSnap = (heightPx: number): SearchPanelSnap => {
+  const getNearestSearchPanelSnap = useCallback((heightPx: number): SearchPanelSnap => {
     const points = [
       { snap: 'collapsed' as SearchPanelSnap, height: getSearchPanelSnapHeightPx('collapsed') },
       { snap: 'half' as SearchPanelSnap, height: getSearchPanelSnapHeightPx('half') },
@@ -1471,9 +1608,9 @@ export default function MapScreen() {
       const currentDiff = Math.abs(point.height - heightPx);
       return currentDiff < bestDiff ? point : best;
     }).snap;
-  };
+  }, [getSearchPanelSnapHeightPx]);
 
-  const handleSearchPanelTouchStart = (event: React.TouchEvent<HTMLDivElement>) => {
+  const handleSearchPanelTouchStart = useCallback((event: React.TouchEvent<HTMLDivElement>) => {
     if (searchPanelSettleTimeoutRef.current) {
       clearTimeout(searchPanelSettleTimeoutRef.current);
       searchPanelSettleTimeoutRef.current = null;
@@ -1483,9 +1620,9 @@ export default function MapScreen() {
     searchPanelStartSnapRef.current = searchPanelSnap;
     searchPanelTouchTargetRef.current = event.target as HTMLElement | null;
     searchPanelCanDragRef.current = false;
-  };
+  }, [searchPanelSnap]);
 
-  const handleSearchPanelTouchMove = (event: React.TouchEvent<HTMLDivElement>) => {
+  const handleSearchPanelTouchMove = useCallback((event: React.TouchEvent<HTMLDivElement>) => {
     const startY = searchPanelTouchStartYRef.current;
     if (startY == null) return;
 
@@ -1527,6 +1664,13 @@ export default function MapScreen() {
 
     event.preventDefault();
 
+    const isActiveIncidentSwipeDownMode =
+      selectedMapIncidentId !== null && searchPanelStartSnapRef.current === 'full' && delta > 0;
+
+    if (isActiveIncidentSwipeDownMode) {
+      return;
+    }
+
     const minHeight = getSearchPanelSnapHeightPx('collapsed');
     const maxHeight = getSearchPanelSnapHeightPx('full');
     const baseHeight = getSearchPanelSnapHeightPx(searchPanelStartSnapRef.current);
@@ -1539,9 +1683,9 @@ export default function MapScreen() {
     }
 
     scheduleSearchPanelHeight(nextHeight);
-  };
+  }, [getSearchPanelSnapHeightPx, isSearchPanelDragging, scheduleSearchPanelHeight, selectedMapIncidentId]);
 
-  const handleSearchPanelTouchEnd = (event: React.TouchEvent<HTMLDivElement>) => {
+  const handleSearchPanelTouchEnd = useCallback((event: React.TouchEvent<HTMLDivElement>) => {
     const startY = searchPanelTouchStartYRef.current;
     if (startY == null) return;
 
@@ -1565,9 +1709,20 @@ export default function MapScreen() {
     const threshold = 24;
     let targetSnap = searchPanelStartSnapRef.current;
 
-    if (Math.abs(delta) < threshold) {
+    const isClosingOpenedIncidentBySwipeDown =
+      selectedMapIncidentId !== null &&
+      searchPanelStartSnapRef.current === 'full' &&
+      delta > threshold;
+
+    if (isClosingOpenedIncidentBySwipeDown) {
+      setSelectedMapIncidentId(null);
+      setShowSuggestions(false);
+      targetSnap = 'collapsed';
+    }
+
+    if (!isClosingOpenedIncidentBySwipeDown && Math.abs(delta) < threshold) {
       targetSnap = searchPanelStartSnapRef.current;
-    } else {
+    } else if (!isClosingOpenedIncidentBySwipeDown) {
       targetSnap = getNearestSearchPanelSnap(clampedHeight);
     }
 
@@ -1590,7 +1745,7 @@ export default function MapScreen() {
       setSearchPanelDragHeight(null);
       searchPanelSettleTimeoutRef.current = null;
     }, 320);
-  };
+  }, [getNearestSearchPanelSnap, getSearchPanelSnapHeightPx, searchPanelDragHeight, selectedMapIncidentId]);
 
   useEffect(() => {
     const shouldShowExpandedContent =
@@ -1601,8 +1756,27 @@ export default function MapScreen() {
         clearTimeout(searchPanelContentHideTimeoutRef.current);
         searchPanelContentHideTimeoutRef.current = null;
       }
-      setRenderExpandedSearchContent(true);
+
+      if (renderExpandedSearchContent) {
+        return;
+      }
+
+      if (searchPanelContentShowTimeoutRef.current) {
+        clearTimeout(searchPanelContentShowTimeoutRef.current);
+        searchPanelContentShowTimeoutRef.current = null;
+      }
+
+      const showDelayMs = isSearchPanelDragging ? 180 : 110;
+      searchPanelContentShowTimeoutRef.current = setTimeout(() => {
+        setRenderExpandedSearchContent(true);
+        searchPanelContentShowTimeoutRef.current = null;
+      }, showDelayMs);
       return;
+    }
+
+    if (searchPanelContentShowTimeoutRef.current) {
+      clearTimeout(searchPanelContentShowTimeoutRef.current);
+      searchPanelContentShowTimeoutRef.current = null;
     }
 
     if (searchPanelContentHideTimeoutRef.current) {
@@ -1614,30 +1788,10 @@ export default function MapScreen() {
       setRenderExpandedSearchContent(false);
       searchPanelContentHideTimeoutRef.current = null;
     }, 260);
-  }, [searchPanelDragHeight, searchPanelSnap, isSearchPanelDragging]);
-
-  useEffect(() => {
-    if (searchPanelSnap !== 'full' || !renderExpandedSearchContent) return;
-
-    const contentEl = expandedSearchContentRef.current;
-    const incidentsEl = incidentsSectionRef.current;
-    if (!contentEl || !incidentsEl) return;
-
-    const rafId = requestAnimationFrame(() => {
-      const targetTop = Math.max(incidentsEl.offsetTop - 8, 0);
-      contentEl.scrollTo({ top: targetTop, behavior: 'smooth' });
-    });
-
-    return () => cancelAnimationFrame(rafId);
-  }, [searchPanelSnap, renderExpandedSearchContent]);
+  }, [searchPanelDragHeight, searchPanelSnap, isSearchPanelDragging, renderExpandedSearchContent]);
 
   useEffect(() => {
     return () => {
-      if (locateErrorTimeoutRef.current) {
-        clearTimeout(locateErrorTimeoutRef.current);
-        locateErrorTimeoutRef.current = null;
-      }
-
       if (searchPanelDragRafRef.current !== null) {
         cancelAnimationFrame(searchPanelDragRafRef.current);
         searchPanelDragRafRef.current = null;
@@ -1646,6 +1800,11 @@ export default function MapScreen() {
       if (searchPanelContentHideTimeoutRef.current) {
         clearTimeout(searchPanelContentHideTimeoutRef.current);
         searchPanelContentHideTimeoutRef.current = null;
+      }
+
+      if (searchPanelContentShowTimeoutRef.current) {
+        clearTimeout(searchPanelContentShowTimeoutRef.current);
+        searchPanelContentShowTimeoutRef.current = null;
       }
 
       if (searchPanelSettleTimeoutRef.current) {
@@ -1660,17 +1819,50 @@ export default function MapScreen() {
   const currentSearchPanelHeight = searchPanelDragHeight ?? getSearchPanelSnapHeightPx(searchPanelSnap);
   const mapControlsLiftPx = Math.max(0, currentSearchPanelHeight - collapsedSearchPanelHeight);
 
+  const handleProfileFabClick = useCallback(() => {
+    if (isAuthenticated) {
+      openTab('profile');
+    } else {
+      openTab('auth');
+    }
+  }, [isAuthenticated, openTab]);
+
+  const handleSearchInputFocus = useCallback(() => {
+    setSearchPanelSnap((prev) => (prev === 'collapsed' ? 'half' : prev));
+    if (suggestions.length > 0) {
+      setShowSuggestions(true);
+    }
+  }, [suggestions.length]);
+
+  const handleSearchInputClear = useCallback(() => {
+    setQuery('');
+    setSuggestions([]);
+    setShowSuggestions(false);
+    inputRef.current?.focus();
+  }, []);
+
+  const handleAuthenticated = useCallback((payload: {
+    id?: number;
+    first_name?: string;
+    last_name?: string;
+    email?: string;
+    avatar_url?: string | null;
+  } | null) => {
+    if (!payload) return;
+    setIsAuthenticated(true);
+    setUserProfile(payload);
+    setActiveTab('home');
+    setSheetMode(null);
+  }, []);
+
+  const noopCloseSheet = useCallback(() => {}, []);
+
   if (!isAuthenticated) {
     return (
       <div className="fixed inset-0 z-[1200] bg-background">
         <AuthPanel
-          onAuthenticated={(payload) => {
-            setIsAuthenticated(true);
-            setUserProfile(payload);
-            setActiveTab('home');
-            setSheetMode(null);
-          }}
-          closeSheet={() => {}}
+          onAuthenticated={handleAuthenticated}
+          closeSheet={noopCloseSheet}
         />
       </div>
     );
@@ -1691,279 +1883,88 @@ export default function MapScreen() {
       {/* Аватар профиля в левом верхнем углу.
           Когда открыта полноэкранная вкладка, он уходит под затемнение
           и становится визуально неактивным, как карта. */}
-      <button
-        type="button"
-        onClick={() => {
-          if (isAuthenticated) {
-            openTab('profile');
-          } else {
-            openTab('auth');
-          }
-        }}
-        aria-label="Аккаунт"
-        className={cn(
-          'absolute top-4 left-4 z-[900] flex h-14 w-14 items-center justify-center rounded-[22px] bg-white/90 text-slate-900 shadow-lg ring-1 ring-slate-200 dark:bg-black/85 dark:text-white dark:ring-white/10 focus:outline-none overflow-hidden transition-opacity duration-200',
-          sheetMode === 'tabs' && isSheetOpen ? 'opacity-50' : 'opacity-100'
-        )}
-      >
-        <span className="inline-flex rounded-full bg-gradient-to-tr from-rose-500 via-fuchsia-500 to-indigo-500 p-[2px]">
-          <Avatar className="h-10 w-10 rounded-full overflow-hidden bg-white dark:bg-slate-800">
-            {(userProfile?.avatar_url || localAvatarPreviewUrl) && (
-              <AvatarImage
-                src={localAvatarPreviewUrl ?? resolveAvatarUrl(userProfile?.avatar_url) ?? ''}
-                alt=""
-                className="object-cover"
-              />
-            )}
-            <AvatarFallback className="rounded-full bg-white text-slate-900 dark:bg-slate-800 dark:text-white">
-              <User className="h-5 w-5" />
-            </AvatarFallback>
-          </Avatar>
-        </span>
-      </button>
+      <MapProfileFab
+        isDimmed={sheetMode === 'tabs' && isSheetOpen}
+        avatarSrc={localAvatarPreviewUrl ?? resolveAvatarUrl(userProfile?.avatar_url) ?? null}
+        onClick={handleProfileFabClick}
+      />
 
       {/* Справа: zoom + фильтр доносов + геолокация */}
-      <div
-        className={cn(
-          'absolute right-3 bottom-[calc(env(safe-area-inset-bottom)+170px)] z-[950] transition-opacity duration-200 md:top-28 md:bottom-auto',
-          searchPanelSnap === 'full' ? 'opacity-0 pointer-events-none' : 'opacity-100'
-        )}
-        style={{
-          transform: `translateY(-${mapControlsLiftPx}px)`,
-          transition: isSearchPanelDragging
-            ? 'none'
-            : 'transform 320ms cubic-bezier(0.22, 1, 0.36, 1), opacity 200ms ease',
-        }}
-      >
-        {locateError && (
-          <div className="mb-2 w-[220px] rounded-2xl bg-black/80 px-3 py-2 text-xs text-white shadow-lg backdrop-blur-sm dark:bg-black/70">
-            {locateError}
-          </div>
-        )}
-        <div className="flex flex-col gap-2 rounded-[24px] bg-white/90 p-0.5 shadow-xl ring-1 ring-slate-200/80 backdrop-blur-md dark:bg-black/55 dark:ring-white/10">
-          <button
-            type="button"
-            onClick={zoomIn}
-            aria-label="Приблизить карту"
-            title="Приблизить"
-            className="flex h-12 w-12 touch-manipulation items-center justify-center rounded-2xl text-slate-900 transition-all hover:bg-slate-100 active:scale-95 dark:text-white dark:hover:bg-white/10"
-          >
-            <Plus className="h-5 w-5" />
-          </button>
-          <button
-            type="button"
-            onClick={zoomOut}
-            aria-label="Отдалить карту"
-            title="Отдалить"
-            className="flex h-12 w-12 touch-manipulation items-center justify-center rounded-2xl text-slate-900 transition-all hover:bg-slate-100 active:scale-95 dark:text-white dark:hover:bg-white/10"
-          >
-            <Minus className="h-5 w-5" />
-          </button>
-          <button
-            type="button"
-            aria-label="Фильтры"
-            title="Фильтры"
-            className="flex h-12 w-12 touch-manipulation items-center justify-center rounded-2xl text-slate-900 transition-all hover:bg-slate-100 active:scale-95 dark:text-white dark:hover:bg-white/10"
-          >
-            <Filter className="h-5 w-5" />
-          </button>
-          <button
-            type="button"
-            onClick={handleLocateMe}
-            aria-label="Моё местоположение"
-            title="Моё местоположение"
-            className="flex h-12 w-12 touch-manipulation items-center justify-center rounded-2xl text-slate-900 transition-all hover:bg-slate-100 active:scale-95 dark:text-white dark:hover:bg-white/10"
-          >
-            {locating ? (
-              <Loader2 className="h-5 w-5 animate-spin" />
-            ) : (
-              <Navigation className="h-5 w-5" />
-            )}
-          </button>
-        </div>
-      </div>
+      <MapControls
+        isHidden={searchPanelSnap === 'full'}
+        mapControlsLiftPx={mapControlsLiftPx}
+        isSearchPanelDragging={isSearchPanelDragging}
+        onZoomIn={zoomIn}
+        onZoomOut={zoomOut}
+        onLocateMe={handleLocateMe}
+        locating={locating}
+      />
 
       {/* Нижняя панель: только поиск */}
-      <div className="absolute inset-x-0 bottom-0 z-[900]">
-        <div
-          className="w-full rounded-t-[40px] rounded-b-none border-t border-border/70 bg-background/95 px-4 pt-2 overflow-hidden"
-          style={{
-            maxHeight:
-              searchPanelDragHeight !== null
-                ? `${searchPanelDragHeight}px`
-                : searchPanelSnap === 'full'
-                  ? '100vh'
-                  : searchPanelSnap === 'half'
-                    ? '44vh'
-                    : '160px',
-            paddingBottom:
-              searchPanelSnap === 'collapsed'
-                ? 'max(env(safe-area-inset-bottom),16px)'
-                : 'max(env(safe-area-inset-bottom),10px)',
-            transition: isSearchPanelDragging
-              ? 'none'
-              : 'max-height 360ms cubic-bezier(0.22, 1, 0.36, 1)',
-            touchAction: 'pan-y',
-          }}
-          onTouchStart={handleSearchPanelTouchStart}
-          onTouchMove={handleSearchPanelTouchMove}
-          onTouchEnd={handleSearchPanelTouchEnd}
-        >
-          <div className="flex items-center justify-center py-2" data-search-drag-handle="true">
-            <div className="h-1 w-10 rounded-full bg-muted-foreground/35" />
-          </div>
+      <MapSearchPanel
+        searchPanelDragHeight={searchPanelDragHeight}
+        searchPanelSnap={searchPanelSnap}
+        isSearchPanelDragging={isSearchPanelDragging}
+        onTouchStart={handleSearchPanelTouchStart}
+        onTouchMove={handleSearchPanelTouchMove}
+        onTouchEnd={handleSearchPanelTouchEnd}
+      >
 
           {/* Поиск */}
-          <div className="flex items-center gap-2 rounded-full border border-border/70 bg-muted/35 px-4 py-3">
-            <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
-            <input
-              ref={inputRef}
-              type="text"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              onFocus={() => {
-                setSearchPanelSnap((prev) => (prev === 'collapsed' ? 'half' : prev));
-                if (suggestions.length > 0) {
-                  setShowSuggestions(true);
-                }
-              }}
-              placeholder="Поиск и выбор мест"
-              className="flex-1 bg-transparent text-base text-foreground placeholder:text-muted-foreground outline-none"
+          <SearchInputBar
+            inputRef={inputRef}
+            query={query}
+            loading={loading}
+            onQueryChange={setQuery}
+            onFocus={handleSearchInputFocus}
+            onClear={handleSearchInputClear}
+          />
+
+          {!selectedMapIncident && (
+            <div className="mt-1.5 flex items-center justify-between px-1 text-[11px] text-muted-foreground">
+              <span className="line-clamp-1">Поиск по адресам, рубрикам и точкам рядом</span>
+              <span className="shrink-0">{nearbyIncidents.length} рядом</span>
+            </div>
+          )}
+
+          {!selectedMapIncident && (
+            <QuickSearchChips
+              chips={QUICK_SEARCH_CHIPS}
+              selectedChip={selectedMapTagFilter}
+              onSelectChip={handleQuickSearch}
+              getTagIcon={getTagIcon}
             />
-            {query && (
-              <button
-                type="button"
-                onClick={() => {
-                  setQuery('');
-                  setSuggestions([]);
-                  setShowSuggestions(false);
-                  inputRef.current?.focus();
-                }}
-                className="text-muted-foreground hover:text-foreground"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            )}
-            {loading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
-          </div>
+          )}
 
-          <div className="mt-1.5 flex items-center justify-between px-1 text-[11px] text-muted-foreground">
-            <span className="line-clamp-1">Поиск по адресам, рубрикам и точкам рядом</span>
-            <span className="shrink-0">{nearbyIncidents.length} рядом</span>
-          </div>
-
-          <div className="mt-2 flex gap-1.5 overflow-x-auto " data-search-scrollable="true">
-            {QUICK_SEARCH_CHIPS.map((chip) => (
-              <button
-                key={chip}
-                type="button"
-                onClick={() => handleQuickSearch(chip)}
-                className={cn(
-                  'shrink-0 rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors',
-                  query.toLowerCase().includes(chip.toLowerCase())
-                    ? 'border-foreground bg-foreground text-background'
-                    : 'border-border/70 bg-muted/25 text-muted-foreground hover:bg-muted/45 hover:text-foreground'
-                )}
-              >
-                {chip}
-              </button>
-            ))}
-          </div>
-
-          {showSuggestions && suggestions.length > 0 && (
-            <div
-              ref={suggestionsRef}
-              data-search-scrollable="true"
-              className={cn(
-                'mt-2 overflow-hidden overflow-y-auto rounded-3xl border border-border/70 bg-background',
+          {!selectedMapIncident && showSuggestions && suggestions.length > 0 && (
+            <SearchSuggestionsList
+              suggestionsRef={suggestionsRef}
+              suggestions={suggestions}
+              maxHeightClassName={
                 searchPanelSnap === 'full'
                   ? 'max-h-96'
                   : searchPanelSnap === 'half'
                     ? 'max-h-72'
                     : 'max-h-60'
-              )}
-            >
-              {suggestions.map((s, idx) => (
-                <button
-                  key={s.place_id ?? idx}
-                  type="button"
-                  onClick={() => handleSelectSuggestion(s)}
-                  className="flex w-full items-start gap-3 px-4 py-3 text-left text-sm text-foreground transition-colors hover:bg-muted/45"
-                >
-                  <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-                  <span className="line-clamp-2">{s.display_name}</span>
-                  <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
-                </button>
-              ))}
-            </div>
+              }
+              onSelectSuggestion={handleSelectSuggestion}
+            />
           )}
 
-          {renderExpandedSearchContent && (
-            <div
-              ref={expandedSearchContentRef}
-              className={cn(
-                'mt-3 space-y-3 overflow-y-auto pb-2 transition-all duration-250 ease-out',
-                searchPanelSnap === 'collapsed' && !isSearchPanelDragging
-                  ? 'pointer-events-none translate-y-2 opacity-0'
-                  : 'translate-y-0 opacity-100'
-              )}
-              data-search-scrollable="true"
-            >
-              {searchPanelSnap === 'full' ? (
-                <>
-                  <div ref={incidentsSectionRef}>
-                    <NearbyIncidentsSection
-                      categories={incidentCategories}
-                      selectedCategory={selectedIncidentCategory}
-                      onSelectCategory={setSelectedIncidentCategory}
-                      incidents={filteredNearbyIncidents}
-                      isFullHeight={true}
-                      autoFocusScroll={true}
-                      onSelectIncident={(incident) => {
-                        setCenter({ lat: incident.lat, lng: incident.lng });
-                        setMarker({
-                          lat: incident.lat,
-                          lng: incident.lng,
-                          address: incident.title,
-                        });
-                        setSearchPanelSnap('collapsed');
-                        setShowSuggestions(false);
-                      }}
-                    />
-                  </div>
-
-                  <SearchRubricsSection rubrics={rubrics} onSelectRubric={openRubricFromSearch} />
-                </>
-              ) : (
-                <>
-                  <SearchRubricsSection rubrics={rubrics} onSelectRubric={openRubricFromSearch} />
-
-                  <div ref={incidentsSectionRef}>
-                    <NearbyIncidentsSection
-                      categories={incidentCategories}
-                      selectedCategory={selectedIncidentCategory}
-                      onSelectCategory={setSelectedIncidentCategory}
-                      incidents={filteredNearbyIncidents}
-                      isFullHeight={false}
-                      autoFocusScroll={true}
-                      onSelectIncident={(incident) => {
-                        setCenter({ lat: incident.lat, lng: incident.lng });
-                        setMarker({
-                          lat: incident.lat,
-                          lng: incident.lng,
-                          address: incident.title,
-                        });
-                        setSearchPanelSnap('collapsed');
-                        setShowSuggestions(false);
-                      }}
-                    />
-                  </div>
-                </>
-              )}
-            </div>
-          )}
-        </div>
-      </div>
+          <MapSearchExpandedContent
+            renderExpandedSearchContent={renderExpandedSearchContent}
+            expandedSearchContentRef={expandedSearchContentRef}
+            searchPanelSnap={searchPanelSnap}
+            isSearchPanelDragging={isSearchPanelDragging}
+            selectedMapIncident={selectedMapIncident}
+            selectedMapIncidentDetails={selectedMapIncidentDetails}
+            selectedMapIncidentDistanceLabel={selectedMapIncidentDistanceLabel}
+            getTagIcon={getTagIcon}
+            openCreateReportFromSearch={openCreateReportFromSearch}
+            filteredNearbyIncidents={filteredNearbyIncidents}
+            focusIncidentOnMap={focusIncidentOnMap}
+          />
+      </MapSearchPanel>
 
       {/* Большая панель как в Яндекс.Картах */}
       <div
@@ -2022,1856 +2023,76 @@ export default function MapScreen() {
             )}
 
             {sheetMode === 'marker' && marker ? (
-              <div className="flex-1 overflow-y-auto overscroll-contain pb-2" data-sheet-scrollable="true">
-                <p className="text-[11px] uppercase tracking-wide text-[#64748b] mb-1">
-                  Выбранная точка
-                </p>
-                <h2 className="text-base font-semibold text-slate-900 dark:text-white line-clamp-3">
-                  {marker.address ?? 'Адрес уточняется…'}
-                </h2>
-                <p className="text-xs text-slate-600 dark:text-[#9ca3af] mt-1 flex items-center gap-2">
-                  {marker.lat.toFixed(6)}, {marker.lng.toFixed(6)}
-                  <button
-                    type="button"
-                    onClick={copyCoords}
-                    className="text-sky-600 hover:text-sky-500 dark:text-[#3b82f6] dark:hover:text-sky-400"
-                  >
-                    <Copy className="h-3 w-3" />
-                  </button>
-                </p>
-
-                <div className="mt-4">
-                  <button
-                    type="button"
-                    onClick={handleCreateReport}
-                    className="w-full flex items-center gap-3 rounded-2xl bg-sky-50 hover:bg-sky-100 border border-sky-100 text-slate-900 dark:bg-[#0b1120] dark:hover:bg-white/5 dark:border-white/10 px-3 py-3 text-left text-sm dark:text-white transition-colors"
-                  >
-                    <div className="flex h-9 w-9 items-center justify-center rounded-2xl bg-gradient-to-br from-sky-500 to-indigo-500 text-white">
-                      <MapPin className="h-4 w-4" />
-                    </div>
-                    <div className="flex-1">
-                      <p className="font-medium">Создать обращение</p>
-                      <p className="text-xs text-[#94a3b8]">
-                        Откроется выбор рубрики и оформление доноса
-                      </p>
-                    </div>
-                    <ChevronRight className="h-4 w-4 text-[#64748b]" />
-                  </button>
-                </div>
-              </div>
+              <MapMarkerSheetContent marker={marker} onCopyCoords={copyCoords} onCreateReport={handleCreateReport} />
             ) : sheetMode === 'rubric' && marker ? (
-              <div
-                className="flex-1 overflow-y-auto overscroll-contain pb-2 sheet-swap-enter"
-                data-sheet-scrollable="true"
-              >
-                {!selectedRubric ? (
-                  <>
-                    <div className="mb-1 flex items-center justify-between gap-3">
-                      <h2 className="text-base font-semibold text-slate-900 dark:text-white">
-                        Выбор рубрики
-                      </h2>
-                      <button
-                        type="button"
-                        onClick={closeSheet}
-                        className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 shadow-sm border border-slate-300 hover:bg-slate-300 hover:text-slate-800 dark:bg-black/40 dark:text-[#9ca3af] dark:border-transparent dark:hover:bg-black/60"
-                        aria-label="Закрыть"
-                      >
-                        <X className="h-4 w-4" />
-                      </button>
-                    </div>
-                    <p className="text-[11px] uppercase tracking-wide text-[#64748b] mb-1">
-                      Выберите тип инцидента
-                    </p>
-                    <p className="text-xs text-slate-600 dark:text-[#94a3b8] mb-4">
-                      По адресу {marker.address ?? 'адрес уточняется'}:{' '}
-                      {marker.lat.toFixed(6)}, {marker.lng.toFixed(6)}
-                    </p>
-
-                    <div className="space-y-3">
-                      {rubrics.map((rubric) => (
-                        <button
-                          key={rubric.id}
-                          type="button"
-                          onClick={() => {
-                            setSelectedRubric(rubric);
-                            setRubricStep('create');
-                          }}
-                          className="w-full group relative bg-white rounded-[12px] border border-slate-200 hover:border-slate-300 dark:bg-[#020617] dark:border-white/10 dark:hover:border-white/20 transition-all overflow-hidden text-left"
-                        >
-                          <div
-                            className={`absolute left-0 top-0 bottom-0 w-1.5 bg-gradient-to-b ${rubric.color}`}
-                          />
-                          <div className="flex items-center p-5 pl-7">
-                            <div
-                              className={`flex-shrink-0 w-14 h-14 rounded-[12px] bg-gradient-to-br ${rubric.color} flex items-center justify-center text-white opacity-90`}
-                            >
-                              {rubric.icon}
-                            </div>
-                            <div className="flex-1 text-left ml-4">
-                              <h3 className="text-sm font-medium text-slate-900 dark:text-white group-hover:text-sky-500 dark:group-hover:text-sky-400 transition-colors">
-                                {rubric.title}
-                              </h3>
-                              <p className="text-xs text-[#94a3b8] mt-0.5 line-clamp-2">
-                                {rubric.description}
-                              </p>
-                            </div>
-                            <ChevronRight className="h-4 w-4 text-[#64748b] group-hover:text-sky-400 group-hover:translate-x-1 transition-all" />
-                          </div>
-                        </button>
-                      ))}
-                    </div>
-                  </>
-                ) : rubricStep === 'create' ? (
-                  selectedRubric && (
-                    <div className="space-y-4">
-                      <div className="flex items-center justify-between gap-3">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setRubricStep('select');
-                            setSelectedRubric(null);
-                          }}
-                          className="text-xs text-slate-600 hover:text-slate-900 dark:text-[#94a3b8] dark:hover:text-white"
-                        >
-                          ← Назад к выбору рубрики
-                        </button>
-                        <button
-                          type="button"
-                          onClick={closeSheet}
-                          className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 shadow-sm border border-slate-300 hover:bg-slate-300 hover:text-slate-800 dark:bg-black/40 dark:text-[#9ca3af] dark:border-transparent dark:hover:bg-black/60"
-                          aria-label="Закрыть"
-                        >
-                          <X className="h-4 w-4" />
-                        </button>
-                      </div>
-
-                      <div>
-                        <p className="text-[11px] uppercase tracking-wide text-[#64748b] mb-1">
-                          Создание обращения
-                        </p>
-                        <h2 className="text-base font-semibold text-slate-900 dark:text-white">
-                          {selectedRubric.title}
-                        </h2>
-                        <p className="text-xs text-slate-600 dark:text-[#94a3b8] mt-1">
-                          {marker.address ?? 'Адрес уточняется'} —{' '}
-                          {marker.lat.toFixed(6)}, {marker.lng.toFixed(6)}
-                        </p>
-                      </div>
-
-                      <div className="space-y-3">
-                        <div className="space-y-1">
-                          <label className="text-xs font-medium text-slate-700 dark:text-slate-200">
-                            Тема обращения
-                          </label>
-                          <input
-                            type="text"
-                            value={reportTitle}
-                            onChange={(e) => setReportTitle(e.target.value)}
-                            placeholder="Кратко опишите проблему"
-                            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-base text-slate-900 placeholder:text-slate-400 focus:outline-none dark:bg-[#020617] dark:border-white/10 dark:text-white"
-                          />
-                        </div>
-
-                        <div className="space-y-1">
-                          <label className="text-xs font-medium text-slate-700 dark:text-slate-200">
-                            Текст обращения
-                          </label>
-                          <textarea
-                            value={reportText}
-                            onChange={(e) => setReportText(e.target.value)}
-                            rows={4}
-                            placeholder="Опишите, что произошло, когда и при каких условиях"
-                            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-base text-slate-900 placeholder:text-slate-400 focus:outline-none resize-none dark:bg-[#020617] dark:border-white/10 dark:text-white"
-                          />
-                        </div>
-
-                        <div className="space-y-2">
-                          <label className="text-xs font-medium text-slate-700 dark:text-slate-200">
-                            Фото
-                          </label>
-                          <label className="flex cursor-pointer items-center justify-center rounded-xl border border-dashed border-slate-300 bg-white/40 px-3 py-3 text-xs text-slate-600 hover:bg-slate-50 dark:border-white/10 dark:bg-[#020617] dark:text-[#94a3b8] dark:hover:bg-white/5">
-                            <span>Добавить фото</span>
-                            <input
-                              type="file"
-                              accept="image/*"
-                              multiple
-                              className="hidden"
-                              onChange={handleReportPhotosChange}
-                            />
-                          </label>
-                          {reportPhotos.length > 0 && (
-                            <p className="text-[11px] text-slate-500 dark:text-[#9ca3af]">
-                              Выбрано файлов: {reportPhotos.length}
-                            </p>
-                          )}
-                        </div>
-                      </div>
-
-                      <button
-                        type="button"
-                        onClick={() => setRubricStep('preview')}
-                        className="w-full rounded-2xl bg-sky-500 px-4 py-3 text-sm font-medium text-white shadow-md hover:bg-sky-600 active:bg-sky-700 transition-colors"
-                        disabled={!reportTitle || !reportText}
-                      >
-                        Далее
-                      </button>
-                    </div>
-                  )
-                ) : (
-                  selectedRubric && (
-                    <div className="space-y-4">
-                      <div className="flex items-center justify-between gap-3">
-                        <button
-                          type="button"
-                          onClick={() => setRubricStep('create')}
-                          className="text-xs text-slate-600 hover:text-slate-900 dark:text-[#94a3b8] dark:hover:text-white"
-                        >
-                          ← Назад к редактированию
-                        </button>
-                        <button
-                          type="button"
-                          onClick={closeSheet}
-                          className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 shadow-sm border border-slate-300 hover:bg-slate-300 hover:text-slate-800 dark:bg-black/40 dark:text-[#9ca3af] dark:border-transparent dark:hover:bg-black/60"
-                          aria-label="Закрыть"
-                        >
-                          <X className="h-4 w-4" />
-                        </button>
-                      </div>
-
-                      <div>
-                        <p className="text-[11px] uppercase tracking-wide text-[#64748b] mb-1">
-                          Предпросмотр
-                        </p>
-                        <h2 className="text-base font-semibold text-slate-900 dark:text-white">
-                          {reportTitle || 'Без темы'}
-                        </h2>
-                        <p className="text-xs text-slate-600 dark:text-[#94a3b8] mt-1">
-                          {selectedRubric.title} • {marker.address ?? 'Адрес уточняется'} •{' '}
-                          {marker.lat.toFixed(6)}, {marker.lng.toFixed(6)}
-                        </p>
-                      </div>
-
-                      <div className="rounded-2xl border border-slate-200 bg-white/70 p-4 text-sm text-slate-900 dark:border-white/10 dark:bg-[#020617] dark:text-white">
-                        <div className="whitespace-pre-wrap break-words">
-                          {reportText || 'Текст не указан'}
-                        </div>
-                      </div>
-
-                      <div className="space-y-2">
-                        <p className="text-xs font-medium text-slate-700 dark:text-slate-200">
-                          Фото
-                        </p>
-                        {reportPhotoPreviews.length === 0 ? (
-                          <p className="text-xs text-slate-500 dark:text-[#9ca3af]">Фото не добавлены</p>
-                        ) : (
-                          <>
-                            <div className="w-32">
-                              <img
-                                src={reportPhotoPreviews[0]}
-                                alt="Превью первого фото"
-                                className="aspect-square w-full rounded-xl object-cover border border-slate-200 dark:border-white/10"
-                              />
-                            </div>
-                            <p className="text-[11px] text-slate-500 dark:text-[#9ca3af]">
-                              Всего фото: {reportPhotoPreviews.length}
-                            </p>
-                          </>
-                        )}
-                      </div>
-
-                      <button
-                        type="button"
-                        onClick={handlePublishReport}
-                        className="w-full rounded-2xl bg-sky-500 px-4 py-3 text-sm font-medium text-white shadow-md hover:bg-sky-600 active:bg-sky-700 transition-colors"
-                        disabled={!reportTitle || !reportText}
-                      >
-                        Опубликовать обращение
-                      </button>
-
-                      <div className="space-y-2 pt-1">
-                        <p className="text-[11px] uppercase tracking-wide text-[#64748b]">
-                          Дополнительные действия
-                        </p>
-                        <div className="grid grid-cols-2 gap-2">
-                          <button
-                            type="button"
-                            onClick={handleSaveDraft}
-                            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 hover:bg-slate-50 dark:border-white/10 dark:bg-[#020617] dark:text-[#e5e7eb] dark:hover:bg-white/5"
-                          >
-                            В черновики приложения
-                          </button>
-                          <button
-                            type="button"
-                            onClick={handleSaveToFiles}
-                            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 hover:bg-slate-50 dark:border-white/10 dark:bg-[#020617] dark:text-[#e5e7eb] dark:hover:bg:white/5"
-                          >
-                            В документы смартфона
-                          </button>
-                          <button
-                            type="button"
-                            onClick={handleSendEmail}
-                            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 hover:bg-slate-50 dark:border-white/10 dark:bg-[#020617] dark:text-[#e5e7eb] dark:hover:bg:white/5"
-                          >
-                            На e‑mail пользователя
-                          </button>
-                          <button
-                            type="button"
-                            onClick={handlePrint}
-                            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 hover:bg-slate-50 dark:border:white/10 dark:bg-[#020617] dark:text-[#e5e7eb] dark:hover:bg:white/5"
-                          >
-                            Отправить на печать
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  )
-                )}
-              </div>
+              <MapRubricSheetContent
+                marker={marker}
+                selectedRubric={selectedRubric}
+                rubricStep={rubricStep}
+                rubrics={rubrics}
+                setSelectedRubric={setSelectedRubric}
+                setRubricStep={setRubricStep}
+                closeSheet={closeSheet}
+                reportTitle={reportTitle}
+                setReportTitle={setReportTitle}
+                reportText={reportText}
+                setReportText={setReportText}
+                reportPhotos={reportPhotos}
+                reportPhotoPreviews={reportPhotoPreviews}
+                handleReportPhotosChange={handleReportPhotosChange}
+                handlePublishReport={handlePublishReport}
+                handleSaveDraft={handleSaveDraft}
+                handleSaveToFiles={handleSaveToFiles}
+                handleSendEmail={handleSendEmail}
+                handlePrint={handlePrint}
+              />
             ) : (
-              <>
-              <div
-                className={cn(
-                  'flex-1 overflow-y-auto overscroll-contain space-y-4 pb-2',
-                  isAuthFullscreen && 'pb-0'
-                )}
-                data-sheet-scrollable="true"
-                ref={activeTab === 'profile' ? profileScrollRef : null}
-                onWheel={activeTab === 'profile' ? handleProfileWheel : undefined}
-                onTouchStart={activeTab === 'profile' ? handleProfileTouchStart : undefined}
-                onTouchMove={activeTab === 'profile' ? handleProfileTouchMove : undefined}
-              >
-                  {activeTab === 'home' && (
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between gap-3">
-                        <h2 className="text-base font-semibold text-slate-900 dark:text-white">
-                          Главная
-                        </h2>
-                        <button
-                          type="button"
-                          onClick={closeSheet}
-                          className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 shadow-sm border border-slate-300 hover:bg-slate-300 hover:text-slate-800 dark:bg-black/40 dark:text-[#9ca3af] dark:border-transparent dark:hover:bg-black/60"
-                          aria-label="Закрыть"
-                        >
-                          <X className="h-4 w-4" />
-                        </button>
-                      </div>
-                      <div className="flex gap-2 overflow-x-auto pb-1">
-                        {Array.from({ length: 4 }).map((_, i) => (
-                          <div
-                            key={i}
-                            className="min-w-[160px] rounded-2xl bg-white border border-slate-200 dark:bg-[#020617] dark:border-white/10 overflow-hidden"
-                          >
-                            <div className="h-24 bg-gradient-to-br from-sky-500/40 via-indigo-500/40 to-fuchsia-500/40" />
-                            <div className="p-3">
-                              <p className="text-xs text-slate-500 dark:text-[#9ca3af]">Заглушка карточки</p>
-                              <p className="text-sm font-medium text-slate-900 dark:text-white mt-0.5">
-                                Здесь будут подборки мест
-                              </p>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-
-                      <div className="space-y-3">
-                        {Array.from({ length: 5 }).map((_, i) => (
-                          <div
-                            key={i}
-                            className="flex items-center gap-3 rounded-2xl bg-white border border-slate-200 dark:bg-[#020617] dark:border-white/10 p-3"
-                          >
-                            <div className="h-16 w-16 rounded-2xl bg-gradient-to-br from-sky-500 to-indigo-500" />
-                            <div className="flex-1">
-                              <p className="text-sm font-medium text-slate-900 dark:text-white">
-                                Место #{i + 1}
-                              </p>
-                              <p className="text-xs text-[#9ca3af] mt-0.5">
-                                Здесь будет краткое описание, рейтинг и т.д.
-                              </p>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {activeTab === 'my' && (
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between gap-3">
-                        <h2 className="text-base font-semibold text-slate-900 dark:text-white">
-                          Мои обращения
-                        </h2>
-                        <button
-                          type="button"
-                          onClick={closeSheet}
-                          className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 shadow-sm border border-slate-300 hover:bg-slate-300 hover:text-slate-800 dark:bg-black/40 dark:text-[#9ca3af] dark:border-transparent dark:hover:bg-black/60"
-                          aria-label="Закрыть"
-                        >
-                          <X className="h-4 w-4" />
-                        </button>
-                      </div>
-                      <p className="text-sm text-slate-600 dark:text-[#94a3b8]">
-                        Заглушка страницы. Тут будет список ваших обращений и фильтры.
-                      </p>
-                      <div className="mt-2 rounded-2xl border border-slate-200 bg-white dark:border-white/10 dark:bg-[#020617] p-4">
-                        <p className="text-sm text-slate-600 dark:text-[#94a3b8]">
-                          Пока нет данных. Добавим список обращений позже.
-                        </p>
-                      </div>
-                    </div>
-                  )}
-
-                  {activeTab === 'all' && (
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between gap-3">
-                        <h2 className="text-base font-semibold text-slate-900 dark:text-white">
-                          Все обращения
-                        </h2>
-                        <button
-                          type="button"
-                          onClick={closeSheet}
-                          className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 shadow-sm border border-slate-300 hover:bg-slate-300 hover:text-slate-800 dark:bg-black/40 dark:text-[#9ca3af] dark:border-transparent dark:hover:bg-black/60"
-                          aria-label="Закрыть"
-                        >
-                          <X className="h-4 w-4" />
-                        </button>
-                      </div>
-                      <p className="text-sm text-slate-600 dark:text-[#94a3b8]">
-                        Здесь будет общий поток обращений (пока заглушка).
-                      </p>
-                      <div className="mt-2 rounded-2xl border border-slate-200 bg-white dark:border-white/10 dark:bg-[#020617] p-4">
-                        <p className="text-sm text-slate-600 dark:text-[#94a3b8]">
-                          Позже добавим ленту и фильтры по городу, району и типу инцидентов.
-                        </p>
-                      </div>
-                    </div>
-                  )}
-                  {activeTab === 'profile' && (
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between gap-3">
-                        <h2 className="text-base font-semibold text-slate-900 dark:text-white">
-                          Профиль
-                        </h2>
-                        <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setSettingsView('main');
-                              openTab('settings');
-                            }}
-                            className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 shadow-sm border border-slate-300 hover:bg-slate-300 hover:text-slate-800 dark:bg-black/40 dark:text-[#9ca3af] dark:border-transparent dark:hover:bg-black/60"
-                            aria-label="Настройки"
-                          >
-                            <Settings className="h-4 w-4" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={closeSheet}
-                            className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 shadow-sm border border-slate-300 hover:bg-slate-300 hover:text-slate-800 dark:bg-black/40 dark:text-[#9ca3af] dark:border-transparent dark:hover:bg-black/60"
-                            aria-label="Закрыть"
-                          >
-                            <X className="h-4 w-4" />
-                          </button>
-                        </div>
-                      </div>
-
-                      <div className="rounded-2xl p->">
-                        <p className="text-xs text-slate-500 dark:text-[#94a3b8]">Пользователь</p>
-                        <div className="mt-2 flex items-center gap-3">
-                          <button
-                            type="button"
-                            onClick={() => profileAvatarInputRef.current?.click()}
-                            className="relative rounded-full focus:outline-none"
-                            aria-label="Сменить фото профиля"
-                          >
-                            <Avatar className="h-11 w-11 rounded-full overflow-hidden bg-white dark:bg-slate-800">
-                              {(userProfile?.avatar_url || localAvatarPreviewUrl) && (
-                                <AvatarImage
-                                  src={localAvatarPreviewUrl ?? resolveAvatarUrl(userProfile?.avatar_url) ?? ''}
-                                  alt=""
-                                  className="object-cover"
-                                />
-                              )}
-                              <AvatarFallback className="rounded-full bg-white text-slate-900 dark:bg-slate-800 dark:text-white">
-                                <User className="h-5 w-5" />
-                              </AvatarFallback>
-                            </Avatar>
-                            <span className="absolute -right-1 -bottom-1 inline-flex h-5 w-5 items-center justify-center rounded-full bg-slate-900 text-white dark:bg-white dark:text-slate-900">
-                              {isAvatarUploading ? (
-                                <Loader2 className="h-3 w-3 animate-spin" />
-                              ) : (
-                                <Camera className="h-3 w-3" />
-                              )}
-                            </span>
-                          </button>
-                          <input
-                            ref={profileAvatarInputRef}
-                            type="file"
-                            accept="image/*"
-                            className="hidden"
-                            onChange={handleProfileAvatarFileChange}
-                          />
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-2">
-                              <p className="truncate text-sm font-semibold text-slate-900 dark:text-white">
-                                {userProfile
-                                  ? [userProfile.last_name, userProfile.first_name].filter(Boolean).join(' ') || 'Пользователь'
-                                  : 'Пользователь'}
-                              </p>
-                              <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-700 dark:bg-white/10 dark:text-slate-200">
-                                Пользователь
-                              </span>
-                            </div>
-                            <p className="truncate text-xs text-slate-600 dark:text-[#94a3b8]">
-                              {userProfile?.email || 'E-mail не указан'}
-                            </p>
-                          </div>
-                        </div>
-                      </div>
-
-                         <div className="rounded-2xl ">
-                        <div className="mb-2 flex items-center justify-between gap-3">
-                          <p className="text-[11px] text-slate-500 dark:text-[#94a3b8]">Прогресс доверия</p>
-                          <span className="rounded-full border border-slate-200 px-2 py-0.5 text-[10px] font-medium text-slate-700 dark:border-white/10 dark:text-slate-200">
-                            {userTrustProgress.level}
-                          </span>
-                        </div>
-                        <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-200/70 dark:bg-white/10">
-                          <div
-                            className="h-full rounded-full bg-slate-900 dark:bg-white"
-                            style={{ width: `${userTrustProgress.reputationScore}%` }}
-                          />
-                        </div>
-                        <div className="mt-2 flex items-center justify-between text-[11px] text-slate-500 dark:text-[#94a3b8]">
-                          <span>Подтверждённые: {userTrustProgress.confirmed}</span>
-                          <span>Полезные: {userTrustProgress.useful}</span>
-                          <span>{userTrustProgress.reputationScore}%</span>
-                        </div>
-                      </div>
-
-                      <div className="rounded-2xl p-1">
-                        <div className="flex items-center justify-between">
-                          <p className="text-sm font-medium text-slate-900 dark:text-white">Ваши активные обращения</p>
-                          <span className="rounded-full px-2 py-0.5 text-xs font-semibold text-slate-600 dark:text-[#94a3b8]">
-                            {userActiveIncidents.length}
-                          </span>
-                        </div>
-                      </div>
-
-
-
-                      <div className="space-y-2">
-                        <div className="flex gap-1.5 overflow-x-auto pb-0.5">
-                          {profileStatusFilters.map((status) => (
-                            <button
-                              key={status}
-                              type="button"
-                              onClick={() => setSelectedProfileStatusFilter(status)}
-                              className={cn(
-                                'shrink-0 rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors',
-                                selectedProfileStatusFilter === status
-                                  ? 'border-foreground bg-foreground text-background'
-                                  : 'border-border/70 bg-muted/25 text-muted-foreground hover:bg-muted/45 hover:text-foreground'
-                              )}
-                            >
-                              {status}
-                            </button>
-                          ))}
-                        </div>
-
-                        <div className="flex gap-1.5 overflow-x-auto pb-0.5">
-                          {profileCategoryFilters.map((category) => (
-                            <button
-                              key={category}
-                              type="button"
-                              onClick={() => setSelectedProfileCategoryFilter(category)}
-                              className={cn(
-                                'shrink-0 rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors',
-                                selectedProfileCategoryFilter === category
-                                  ? 'border-foreground bg-foreground text-background'
-                                  : 'border-border/70 bg-muted/25 text-muted-foreground hover:bg-muted/45 hover:text-foreground'
-                              )}
-                            >
-                              {category}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-
-                      <div className="space-y-2">
-                        {filteredUserActiveIncidents.map((incident) => (
-                          <button
-                            key={incident.id}
-                            type="button"
-                            onClick={() => {
-                              setCenter({ lat: incident.lat, lng: incident.lng });
-                              setMarker({
-                                lat: incident.lat,
-                                lng: incident.lng,
-                                address: incident.title,
-                              });
-                              setSheetMode(null);
-                            }}
-                            className="flex w-full items-start gap-2.5 rounded-[12px] border border-border/70 bg-background/65 p-3 text-left transition-colors hover:bg-muted/40"
-                          >
-                            <div className="mt-0.5 rounded-full border border-border/70 p-1.5 text-muted-foreground">
-                              <MapPin className="h-3.5 w-3.5" />
-                            </div>
-                            <div className="min-w-0 flex-1">
-                              <div className="mb-1 flex items-center gap-1.5">
-                                <span
-                                  className={cn(
-                                    'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium',
-                                    getProfileIncidentCategoryTagClass(incident.category)
-                                  )}
-                                >
-                                  <Tag className="h-3 w-3" />
-                                  {incident.category}
-                                </span>
-                                <span
-                                  className={cn(
-                                    'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium',
-                                    getProfileIncidentStatusTagClass(incident.status)
-                                  )}
-                                >
-                                  <Activity className="h-3 w-3" />
-                                  {incident.status}
-                                </span>
-                              </div>
-                              <p className="line-clamp-1 text-xs font-medium text-foreground">{incident.title}</p>
-                            </div>
-                            <span className="shrink-0 text-[11px] font-semibold text-muted-foreground">#{incident.id}</span>
-                          </button>
-                        ))}
-                        {filteredUserActiveIncidents.length === 0 && (
-                          <div className="rounded-2xl border border-border/70 bg-background/65 p-3 text-xs text-muted-foreground">
-                            По выбранным фильтрам обращений не найдено.
-                          </div>
-                        )}
-                      </div>
-
-                    </div>
-                  )}
-                  {activeTab === 'auth' && (
-                    <AuthPanel
-                      onAuthenticated={(payload) => {
-                        setIsAuthenticated(true);
-                        setUserProfile(payload);
-                        openTab('profile');
-                      }}
-                      closeSheet={closeSheet}
-                    />
-                  )}
-                  {activeTab === 'settings' && (
-                    <div className="space-y-4">
-                      {settingsView === 'main' && (
-                        <>
-                          <div className="flex items-center justify-between gap-3">
-                            <button
-                              type="button"
-                              onClick={() => openTab('profile')}
-                              className="text-xs text-slate-600 hover:text-slate-900 dark:text-[#94a3b8] dark:hover:text-white"
-                            >
-                              ← Профиль
-                            </button>
-                            <h2 className="text-base font-semibold text-slate-900 dark:text-white">
-                              Настройки
-                            </h2>
-                            <button
-                              type="button"
-                              onClick={closeSheet}
-                              className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 shadow-sm hover:bg-slate-300 hover:text-slate-800 dark:bg-black/40 dark:text-[#9ca3af] dark:hover:bg-black/60"
-                              aria-label="Закрыть настройки"
-                            >
-                              <X className="h-4 w-4" />
-                            </button>
-                          </div>
-
-                          <div className="rounded-2xl bg-white p-3 dark:bg-transparent">
-                            <div className="flex items-center justify-between gap-3">
-                              <p className="text-sm font-medium text-slate-900 dark:text-white">Уведомления</p>
-                            </div>
-
-                            <div className="mt-2 divide-y divide-slate-200/80 dark:divide-white/10">
-                              <div className="flex items-center justify-between py-2">
-                                <span className="text-sm font-medium text-slate-700 dark:text-slate-200">Push</span>
-                                <button
-                                  type="button"
-                                  aria-pressed={pushNotificationsEnabled}
-                                  onClick={() => setPushNotificationsEnabled((prev) => !prev)}
-                                  className={cn(
-                                    'relative inline-flex h-6 w-11 items-center rounded-full transition-colors',
-                                    pushNotificationsEnabled ? 'bg-slate-900 dark:bg-white' : 'bg-slate-300 dark:bg-white/20'
-                                  )}
-                                >
-                                  <span
-                                    className={cn(
-                                      'inline-flex h-5 w-5 rounded-full bg-white transition-transform dark:bg-slate-900',
-                                      pushNotificationsEnabled ? 'translate-x-[22px]' : 'translate-x-0.5'
-                                    )}
-                                  />
-                                </button>
-                              </div>
-
-                              <div className="flex items-center justify-between py-2">
-                                <span className="text-sm font-medium text-slate-700 dark:text-slate-200">Email</span>
-                                <button
-                                  type="button"
-                                  aria-pressed={emailNotificationsEnabled}
-                                  onClick={() => setEmailNotificationsEnabled((prev) => !prev)}
-                                  className={cn(
-                                    'relative inline-flex h-6 w-11 items-center rounded-full transition-colors',
-                                    emailNotificationsEnabled ? 'bg-slate-900 dark:bg-white' : 'bg-slate-300 dark:bg-white/20'
-                                  )}
-                                >
-                                  <span
-                                    className={cn(
-                                      'inline-flex h-5 w-5 rounded-full bg-white transition-transform dark:bg-slate-900',
-                                      emailNotificationsEnabled ? 'translate-x-[22px]' : 'translate-x-0.5'
-                                    )}
-                                  />
-                                </button>
-                              </div>
-                            </div>
-                          </div>
-
-                          <div className="space-y-2">
-                            <button
-                              type="button"
-                              onClick={() => setSettingsView('profile')}
-                              className="w-full flex items-center justify-between rounded-2xl bg-white hover:bg-slate-50 text-slate-900 dark:bg-transparent dark:hover:bg-transparent px-4 py-3 text-left text-sm dark:text-white transition-colors"
-                            >
-                              <div>
-                                <p className="font-medium">Данные профиля</p>
-                                <p className="text-xs text-[#94a3b8]">
-                                  Изменение личных и контактных данных
-                                </p>
-                              </div>
-                              <ChevronRight className="h-4 w-4 text-[#64748b]" />
-                            </button>
-
-                            <button
-                              type="button"
-                              onClick={() => setSettingsView('about')}
-                              className="w-full flex items-center justify-between rounded-2xl bg-white hover:bg-slate-50 text-slate-900 dark:bg-transparent dark:hover:bg-transparent px-4 py-3 text-left text-sm dark:text-white transition-colors"
-                            >
-                              <div>
-                                <p className="font-medium">О проекте</p>
-                                <p className="text-xs text-[#94a3b8]">
-                                  Краткая информация о задумке и целях
-                                </p>
-                              </div>
-                              <ChevronRight className="h-4 w-4 text-[#64748b]" />
-                            </button>
-
-                            <button
-                              type="button"
-                              onClick={() => setSettingsView('feedback')}
-                              className="w-full flex items-center justify-between rounded-2xl bg-white hover:bg-slate-50 text-slate-900 dark:bg-transparent dark:hover:bg-transparent px-4 py-3 text-left text-sm dark:text-white transition-colors"
-                            >
-                              <div>
-                                <p className="font-medium">Обратная связь</p>
-                                <p className="text-xs text-[#94a3b8]">
-                                  Как связаться с командой проекта
-                                </p>
-                              </div>
-                              <ChevronRight className="h-4 w-4 text-[#64748b]" />
-                            </button>
-
-                            {isAuthenticated && (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  window.localStorage.removeItem('userId');
-                                  window.localStorage.removeItem('authToken');
-                                  setIsAuthenticated(false);
-                                  setUserProfile(null);
-                                  openTab('auth');
-                                }}
-                                className="w-full rounded-2xl bg-white px-4 py-3 text-left text-sm font-medium text-red-600 transition-colors hover:bg-red-50 dark:bg-transparent dark:text-red-400 dark:hover:bg-transparent"
-                              >
-                                Выйти
-                              </button>
-                            )}
-                          </div>
-                        </>
-                      )}
-
-                      {settingsView === 'about' && (
-                        <div className="space-y-3">
-                          <div className="flex items-center justify-between gap-3">
-                            <button
-                              type="button"
-                              onClick={() => setSettingsView('main')}
-                              className="text-xs text-slate-600 hover:text-slate-900 dark:text-[#94a3b8] dark:hover:text-white"
-                            >
-                              ← Назад к настройкам
-                            </button>
-                            <button
-                              type="button"
-                              onClick={closeSheet}
-                              className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 shadow-sm hover:bg-slate-300 hover:text-slate-800 dark:bg-black/40 dark:text-[#9ca3af] dark:hover:bg-black/60"
-                              aria-label="Закрыть"
-                            >
-                              <X className="h-4 w-4" />
-                            </button>
-                          </div>
-                          <h2 className="text-base font-semibold text-slate-900 dark:text-white">О проекте</h2>
-                          <p className="text-sm text-slate-600 dark:text-[#94a3b8]">
-                            Заглушка страницы. Здесь будет описание сервиса, его целей и того, как
-                            лучше всего им пользоваться.
-                          </p>
-                        </div>
-                      )}
-
-                      {settingsView === 'profile' && (
-                        <div className="space-y-3">
-                          <div className="flex items-center justify-between gap-3">
-                            <button
-                              type="button"
-                              onClick={() => setSettingsView('main')}
-                              className="text-xs text-slate-600 hover:text-slate-900 dark:text-[#94a3b8] dark:hover:text-white"
-                            >
-                              ← Назад к настройкам
-                            </button>
-                            <button
-                              type="button"
-                              onClick={closeSheet}
-                              className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 shadow-sm hover:bg-slate-300 hover:text-slate-800 dark:bg-black/40 dark:text-[#9ca3af] dark:hover:bg-black/60"
-                              aria-label="Закрыть"
-                            >
-                              <X className="h-4 w-4" />
-                            </button>
-                          </div>
-
-                          {userProfile && userProfile.id ? (
-                            <ProfileTab
-                              userId={userProfile.id}
-                              onOpenMyReports={() => openTab('my')}
-                              onOpenSettings={() => setSettingsView('main')}
-                              onAvatarChange={(url) =>
-                                setUserProfile((prev) =>
-                                  prev
-                                    ? { ...prev, avatar_url: url ?? prev.avatar_url ?? null }
-                                    : { avatar_url: url ?? null },
-                                )
-                              }
-                            />
-                          ) : (
-                            <div className="rounded-2xl bg-white p-4 text-sm text-slate-600 dark:bg-transparent dark:text-[#94a3b8]">
-                              Не удалось загрузить данные профиля.
-                            </div>
-                          )}
-                        </div>
-                      )}
-
-                      {settingsView === 'feedback' && (
-                        <div className="space-y-3">
-                          <div className="flex items-center justify-between gap-3">
-                            <button
-                              type="button"
-                              onClick={() => setSettingsView('main')}
-                              className="text-xs text-slate-600 hover:text-slate-900 dark:text-[#94a3b8] dark:hover:text-white"
-                            >
-                              ← Назад к настройкам
-                            </button>
-                            <button
-                              type="button"
-                              onClick={closeSheet}
-                              className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 shadow-sm hover:bg-slate-300 hover:text-slate-800 dark:bg-black/40 dark:text-[#9ca3af] dark:hover:bg-black/60"
-                              aria-label="Закрыть"
-                            >
-                              <X className="h-4 w-4" />
-                            </button>
-                          </div>
-                          <h2 className="text-base font-semibold text-slate-900 dark:text-white">Обратная связь</h2>
-                          <p className="text-sm text-slate-600 dark:text-[#94a3b8]">
-                            Заглушка страницы. Здесь позже появятся формы и контакты для связи с
-                            разработчиками проекта.
-                          </p>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </>
+              <MapTabsSheetContent
+                isAuthFullscreen={isAuthFullscreen}
+                activeTab={activeTab}
+                settingsView={settingsView}
+                closeSheet={closeSheet}
+                openTab={openTab}
+                setSettingsView={setSettingsView}
+                profileScrollRef={profileScrollRef}
+                handleProfileWheel={handleProfileWheel}
+                handleProfileTouchStart={handleProfileTouchStart}
+                handleProfileTouchMove={handleProfileTouchMove}
+                profileAvatarInputRef={profileAvatarInputRef}
+                userProfile={userProfile}
+                localAvatarPreviewUrl={localAvatarPreviewUrl}
+                isAvatarUploading={isAvatarUploading}
+                handleProfileAvatarFileChange={handleProfileAvatarFileChange}
+                userTrustProgress={userTrustProgress}
+                userActiveIncidents={userActiveIncidents}
+                profileStatusFilters={profileStatusFilters}
+                selectedProfileStatusFilter={selectedProfileStatusFilter}
+                setSelectedProfileStatusFilter={setSelectedProfileStatusFilter}
+                profileCategoryFilters={profileCategoryFilters}
+                selectedProfileCategoryFilter={selectedProfileCategoryFilter}
+                setSelectedProfileCategoryFilter={setSelectedProfileCategoryFilter}
+                filteredUserActiveIncidents={filteredUserActiveIncidents}
+                focusIncidentOnMap={focusIncidentOnMap}
+                setSheetMode={setSheetMode}
+                getTagIcon={getTagIcon}
+                getProfileIncidentCategoryTagClass={getProfileIncidentCategoryTagClass}
+                getProfileIncidentStatusTagClass={getProfileIncidentStatusTagClass}
+                getStatusIcon={getStatusIcon}
+                incidentDetails={INCIDENT_DETAILS}
+                nearbyIncidentsById={nearbyIncidentsById}
+                setIsAuthenticated={setIsAuthenticated}
+                setUserProfile={setUserProfile}
+                isAuthenticated={isAuthenticated}
+                pushNotificationsEnabled={pushNotificationsEnabled}
+                setPushNotificationsEnabled={setPushNotificationsEnabled}
+                emailNotificationsEnabled={emailNotificationsEnabled}
+                setEmailNotificationsEnabled={setEmailNotificationsEnabled}
+                ProfileTab={ProfileTab}
+              />
             )}
           </div>
         </div>
       </div>
-    </div>
-  );
-}
-
-type AuthResponseUser = {
-  id?: number;
-  email?: string;
-  first_name?: string;
-  last_name?: string;
-  avatar_url?: string | null;
-};
-
-type AuthPanelProps = {
-  onAuthenticated: (user: AuthResponseUser | null) => void;
-  closeSheet: () => void;
-};
-
-function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
-  const translateAuthError = (raw: unknown, fallback: string) => {
-    const msg =
-      (typeof raw === 'string' && raw) ||
-      ((raw as { error?: string })?.error ??
-        (raw as { message?: string })?.message ??
-        (raw as { detail?: string })?.detail ??
-        '');
-
-    if (!msg) return fallback;
-
-    const low = msg.toLowerCase();
-
-    if (low.includes('invalid credentials') || low.includes('wrong password')) {
-      return 'Неверный логин или пароль.';
-    }
-    if (low.includes('user is blocked') || low.includes('user blocked')) {
-      return 'Пользователь заблокирован. Обратитесь в поддержку.';
-    }
-    if (low.includes('user not found')) {
-      return 'Пользователь не найден.';
-    }
-    if (low.includes('invalid code')) {
-      return 'Неверный код.';
-    }
-    if (low.includes('code expired')) {
-      return 'Код просрочен. Запросите новый.';
-    }
-
-    if (low.includes('email already exists') || low.includes('email already exist')) {
-      return 'Пользователь с такой почтой уже зарегистрирован.';
-    }
-    if (low.includes('phone already exists') || low.includes('phone already exist')) {
-      return 'Пользователь с таким телефоном уже зарегистрирован.';
-    }
-
-    return msg || fallback;
-  };
-  const [mode, setMode] = useState<'login' | 'register'>('login');
-  const [identifier, setIdentifier] = useState('');
-  const [login, setLogin] = useState('');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [lastName, setLastName] = useState('');
-  const [firstName, setFirstName] = useState('');
-  const [middleName, setMiddleName] = useState('');
-  const [phone, setPhone] = useState('');
-  const [city, setCity] = useState('');
-  const [street, setStreet] = useState('');
-  const [house, setHouse] = useState('');
-  const [apartment, setApartment] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<string | null>(null);
-  const [forgotOpen, setForgotOpen] = useState(false);
-  const [forgotEmail, setForgotEmail] = useState('');
-  const [forgotStatus, setForgotStatus] = useState<'idle' | 'sending' | 'sent' | 'resetting'>('idle');
-  const [forgotStep, setForgotStep] = useState<'email' | 'reset'>('email');
-  const [forgotCode, setForgotCode] = useState('');
-  const [forgotNewPassword, setForgotNewPassword] = useState('');
-  const [forgotNewPassword2, setForgotNewPassword2] = useState('');
-
-  const [confirmEmailOpen, setConfirmEmailOpen] = useState(false);
-  const [confirmEmail, setConfirmEmail] = useState('');
-  const [confirmEmailCode, setConfirmEmailCode] = useState('');
-  const [confirmEmailStatus, setConfirmEmailStatus] =
-    useState<'idle' | 'sending' | 'verifying'>('idle');
-  const authTouchStartYRef = useRef<number | null>(null);
-  const authCanCloseBySwipeRef = useRef(false);
-
-  const API_PREFIX = '/v1';
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(null);
-    setSuccess(null);
-    setLoading(true);
-
-    try {
-      if (mode === 'login') {
-        const res = await fetch(`${API_PREFIX}/auth/login`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            identifier: identifier.trim(),
-            password,
-          }),
-        });
-
-        if (!res.ok) {
-          const json = await res.json().catch(() => null);
-          const raw =
-            (json && (json as { error?: string; message?: string; detail?: string }).error) ||
-            (json && (json as { error?: string; message?: string; detail?: string }).message) ||
-            (json && (json as { error?: string; message?: string; detail?: string }).detail) ||
-            null;
-          const msg = translateAuthError(
-            raw,
-            'Не удалось выполнить вход. Проверьте данные и попробуйте ещё раз.'
-          );
-          throw new Error(msg);
-        }
-
-        const user = (await res.json()) as AuthResponseUser | null;
-        if (!user?.id) {
-          throw new Error('Не удалось получить пользователя после входа.');
-        }
-
-        if (typeof window !== 'undefined') {
-          window.localStorage.setItem('userId', String(user.id));
-        }
-
-        onAuthenticated(user);
-        closeSheet();
-      } else {
-        const res = await fetch(`${API_PREFIX}/users`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            login,
-            email,
-            password,
-            last_name: lastName,
-            first_name: firstName,
-            middle_name: middleName || undefined,
-            phone,
-            city,
-            street,
-            house,
-            apartment: apartment || undefined,
-            is_blocked: false,
-            role: 'user',
-          }),
-        });
-
-        if (!res.ok) {
-          const json = await res.json().catch(() => null);
-          const raw =
-            (json && (json as { error?: string; message?: string; detail?: string }).error) ||
-            (json && (json as { error?: string; message?: string; detail?: string }).message) ||
-            (json && (json as { error?: string; message?: string; detail?: string }).detail) ||
-            null;
-          const msg = translateAuthError(
-            raw,
-            'Не удалось выполнить запрос. Проверьте данные и попробуйте ещё раз.'
-          );
-          throw new Error(msg);
-        }
-
-        const created = (await res.json().catch(() => null)) as AuthResponseUser | null;
-        const targetEmail = created?.email || email;
-
-        if (targetEmail) {
-          setConfirmEmail(targetEmail);
-          setConfirmEmailOpen(true);
-          setConfirmEmailCode('');
-          setConfirmEmailStatus('sending');
-
-          void fetch(`${API_PREFIX}/users/email-code/send`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email: targetEmail, purpose: 'register' }),
-          })
-            .then(async (sendRes) => {
-              if (!sendRes.ok) {
-                const json = await sendRes.json().catch(() => null);
-                const raw =
-                  (json &&
-                    (json as { error?: string; message?: string; detail?: string }).error) ||
-                  (json &&
-                    (json as { error?: string; message?: string; detail?: string }).message) ||
-                  (json &&
-                    (json as { error?: string; message?: string; detail?: string }).detail) ||
-                  null;
-                const msg = translateAuthError(
-                  raw,
-                  'Не удалось отправить код для подтверждения почты.'
-                );
-                setError(msg);
-                setConfirmEmailStatus('idle');
-                setConfirmEmailOpen(false);
-                return;
-              }
-              setConfirmEmailStatus('idle');
-              setSuccess('Мы отправили код на вашу почту. Введите его для подтверждения аккаунта.');
-            })
-            .catch(() => {
-              setConfirmEmailStatus('idle');
-              setError('Не удалось отправить код для подтверждения почты.');
-              setConfirmEmailOpen(false);
-            });
-        } else {
-          setSuccess('Аккаунт создан. Теперь войдите под своими данными.');
-          setMode('login');
-          if (created?.email) setIdentifier(created.email);
-        }
-      }
-    } catch (err) {
-      const fallback = 'Ошибка запроса. Попробуйте ещё раз.';
-      const msg =
-        err instanceof Error
-          ? translateAuthError(err.message, fallback)
-          : translateAuthError(null, fallback);
-      setError(msg);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleSendResetCode = async () => {
-    const target = forgotEmail.trim();
-    if (!target) {
-      setError('Введите почту.');
-      return;
-    }
-
-    setError(null);
-    setSuccess(null);
-    setForgotStatus('sending');
-    try {
-      const res = await fetch(`${API_PREFIX}/users/password-reset/send-code`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: target }),
-      });
-
-      if (!res.ok) {
-        const json = await res.json().catch(() => null);
-        const raw =
-          (json && (json as { error?: string; message?: string; detail?: string }).error) ||
-          (json && (json as { error?: string; message?: string; detail?: string }).message) ||
-          (json && (json as { error?: string; message?: string; detail?: string }).detail) ||
-          null;
-        const msg = translateAuthError(
-          raw,
-          'Не удалось отправить код. Проверьте почту и попробуйте ещё раз.'
-        );
-        throw new Error(msg);
-      }
-
-      setForgotStatus('sent');
-      setSuccess('Код отправлен на почту. Проверьте входящие.');
-      setForgotStep('reset');
-    } catch (err) {
-      setForgotStatus('idle');
-      const fallback = 'Ошибка запроса. Попробуйте ещё раз.';
-      const msg =
-        err instanceof Error
-          ? translateAuthError(err.message, fallback)
-          : translateAuthError(null, fallback);
-      setError(msg);
-    }
-  };
-
-  const handleResetPassword = async () => {
-    const email = forgotEmail.trim();
-    const code = forgotCode.trim();
-    const p1 = forgotNewPassword;
-    const p2 = forgotNewPassword2;
-
-    if (!email) {
-      setError('Введите почту.');
-      return;
-    }
-    if (!code) {
-      setError('Введите код из письма.');
-      return;
-    }
-    if (!p1 || p1.length < 6) {
-      setError('Пароль слишком короткий (минимум 6 символов).');
-      return;
-    }
-    if (p1 !== p2) {
-      setError('Пароли не совпадают.');
-      return;
-    }
-
-    setError(null);
-    setSuccess(null);
-    setForgotStatus('resetting');
-    try {
-      const res = await fetch(`${API_PREFIX}/users/password-reset/reset`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, code, new_password: p1 }),
-      });
-
-      if (!res.ok) {
-        const json = await res.json().catch(() => null);
-        const raw =
-          (json && (json as { error?: string; message?: string; detail?: string }).error) ||
-          (json && (json as { error?: string; message?: string; detail?: string }).message) ||
-          (json && (json as { error?: string; message?: string; detail?: string }).detail) ||
-          null;
-        const msg = translateAuthError(
-          raw,
-          'Не удалось сменить пароль. Проверьте код и попробуйте ещё раз.'
-        );
-        throw new Error(msg);
-      }
-
-      setSuccess('Пароль обновлён. Теперь войдите с новым паролем.');
-      setForgotOpen(false);
-      setForgotStatus('idle');
-      setForgotStep('email');
-      setForgotCode('');
-      setForgotNewPassword('');
-      setForgotNewPassword2('');
-      setPassword('');
-      setMode('login');
-    } catch (err) {
-      setForgotStatus('sent');
-      const fallback = 'Ошибка запроса. Попробуйте ещё раз.';
-      const msg =
-        err instanceof Error
-          ? translateAuthError(err.message, fallback)
-          : translateAuthError(null, fallback);
-      setError(msg);
-    }
-  };
-
-  const handleConfirmEmail = async () => {
-    const emailValue = confirmEmail.trim() || email.trim();
-    const code = confirmEmailCode.trim();
-
-    if (!emailValue) {
-      setError('Не удалось определить почту для подтверждения.');
-      return;
-    }
-    if (!code) {
-      setError('Введите код из письма.');
-      return;
-    }
-
-    setError(null);
-    setSuccess(null);
-    setConfirmEmailStatus('verifying');
-
-    try {
-      const res = await fetch(`${API_PREFIX}/users/email-code/verify`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email: emailValue,
-          purpose: 'register',
-          code,
-        }),
-      });
-
-      if (!res.ok) {
-        const json = await res.json().catch(() => null);
-        const raw =
-          (json && (json as { error?: string; message?: string; detail?: string }).error) ||
-          (json && (json as { error?: string; message?: string; detail?: string }).message) ||
-          (json && (json as { error?: string; message?: string; detail?: string }).detail) ||
-          null;
-        const msg = translateAuthError(raw, 'Неверный или просроченный код.');
-        throw new Error(msg);
-      }
-
-      setConfirmEmailStatus('idle');
-      setConfirmEmailOpen(false);
-      setSuccess('Почта подтверждена. Теперь войдите под своими данными.');
-      setMode('login');
-      if (emailValue) {
-        setIdentifier(emailValue);
-      }
-    } catch (err) {
-      setConfirmEmailStatus('idle');
-      const fallback = 'Не удалось подтвердить почту. Попробуйте ещё раз.';
-      const msg =
-        err instanceof Error
-          ? translateAuthError(err.message, fallback)
-          : translateAuthError(null, fallback);
-      setError(msg);
-    }
-  };
-
-  const authInputClass = cn(
-    'w-full rounded-2xl bg-transparent px-4 py-3.5 text-base text-slate-900 outline-none transition placeholder:text-slate-400 focus:ring-2 focus:ring-sky-400/30 dark:text-slate-100 dark:placeholder:text-slate-500'
-  );
-  const authPrimaryButtonClass = cn(
-    'mt-1 w-full rounded-2xl px-4 py-3 text-sm font-semibold text-white transition-all disabled:cursor-not-allowed disabled:opacity-70 bg-sky-500 hover:bg-sky-600 shadow-lg shadow-sky-500/25'
-  );
-  const authGhostButtonClass = cn(
-    'w-full rounded-2xl px-3 py-2.5 text-xs text-slate-600 transition-colors hover:text-slate-900 dark:text-slate-300 dark:hover:text-white'
-  );
-  const isYandexLikeAuth = !forgotOpen && !confirmEmailOpen;
-
-  const handleAuthTouchStart = (event: React.TouchEvent<HTMLDivElement>) => {
-    authTouchStartYRef.current = event.touches[0]?.clientY ?? null;
-
-    const target = event.target as HTMLElement | null;
-    const sheetScrollable = target?.closest('[data-sheet-scrollable="true"]') as HTMLElement | null;
-    authCanCloseBySwipeRef.current = !sheetScrollable || sheetScrollable.scrollTop <= 0;
-  };
-
-  const handleAuthTouchMove = (event: React.TouchEvent<HTMLDivElement>) => {
-    const startY = authTouchStartYRef.current;
-    if (startY == null) return;
-
-    const currentY = event.touches[0]?.clientY ?? startY;
-    const delta = currentY - startY;
-
-    if (delta <= 0 || !authCanCloseBySwipeRef.current) return;
-
-    const target = event.target as HTMLElement | null;
-    const sheetScrollable = target?.closest('[data-sheet-scrollable="true"]') as HTMLElement | null;
-
-    if (sheetScrollable && sheetScrollable.scrollTop > 0) {
-      authCanCloseBySwipeRef.current = false;
-      return;
-    }
-
-    if (delta > 8) {
-      event.preventDefault();
-    }
-  };
-
-  const handleAuthTouchEnd = (event: React.TouchEvent<HTMLDivElement>) => {
-    const startY = authTouchStartYRef.current;
-    if (startY == null) return;
-
-    const endY = event.changedTouches[0]?.clientY ?? startY;
-    const delta = endY - startY;
-
-    authTouchStartYRef.current = null;
-
-    if (!authCanCloseBySwipeRef.current) {
-      authCanCloseBySwipeRef.current = false;
-      return;
-    }
-
-    authCanCloseBySwipeRef.current = false;
-
-    if (delta > 90) {
-      closeSheet();
-    }
-  };
-
-  return (
-    <div
-      className={cn(
-        'relative min-h-full overflow-hidden bg-gradient-to-b from-slate-100/90 via-slate-50/70 to-slate-100/80 px-0 py-3 dark:from-[#020617]/85 dark:via-[#0b1220]/70 dark:to-[#111827]/80',
-        isYandexLikeAuth &&
-          'flex flex-col justify-start pt-[max(env(safe-area-inset-top),8px)]'
-      )}
-      onTouchStart={handleAuthTouchStart}
-      onTouchMove={handleAuthTouchMove}
-      onTouchEnd={handleAuthTouchEnd}
-    >
-      <div
-        className={cn(
-          'relative mx-auto w-full max-w-md rounded-[28px] p-4 backdrop-blur',
-        )}
-      >
-      <div
-        className={cn(
-          'mb-1 flex items-center gap-3',
-          !confirmEmailOpen && !forgotOpen && mode === 'login'
-            ? 'justify-center'
-            : 'justify-between'
-        )}
-      >
-        <h2
-          className={cn(
-            'text-slate-900 dark:text-white',
-            !confirmEmailOpen && !forgotOpen && mode === 'login'
-              ? 'text-3xl font-bold uppercase tracking-wide text-center'
-              : 'text-base font-semibold'
-          )}
-        >
-          {confirmEmailOpen
-            ? 'Подтверждение почты'
-            : forgotOpen
-            ? 'Восстановление пароля'
-            : mode === 'login'
-            ? 'Войти'
-            : 'Регистрация'}
-        </h2>
-      </div>
-
-      <div
-        className={cn(
-          !confirmEmailOpen && !forgotOpen && mode === 'login'
-            ? 'flex min-h-[calc(100vh-210px)] flex-col justify-center'
-            : ''
-        )}
-      >
-
-      {!forgotOpen && !confirmEmailOpen && !isYandexLikeAuth && (
-        <div className="rounded-2xl p-1">
-          <div className="flex gap-1 text-xs font-medium">
-          <button
-            type="button"
-            className={cn(
-              'flex-1 rounded-xl px-3 py-2 transition-colors',
-              mode === 'login'
-                ? 'bg-sky-500 text-white'
-                : 'bg-transparent text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white'
-            )}
-            onClick={() => setMode('login')}
-          >
-            Вход
-          </button>
-          <button
-            type="button"
-            className={cn(
-              'flex-1 rounded-xl px-3 py-2 transition-colors',
-              mode === 'register'
-                ? 'bg-sky-500 text-white'
-                : 'bg-transparent text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white'
-            )}
-            onClick={() => setMode('register')}
-          >
-            Регистрация
-          </button>
-          </div>
-        </div>
-      )}
-
-      {confirmEmailOpen ? (
-        <div
-          className={cn(
-            'space-y-3 rounded-2xl p-3'
-          )}
-        >
-          <p className="text-[11px] text-slate-600 dark:text-[#94a3b8]">
-            На вашу почту{' '}
-            <span className="font-semibold text-slate-900 dark:text-white">
-              {confirmEmail || email}
-            </span>{' '}
-            отправлен код подтверждения. Введите его, чтобы завершить регистрацию.
-          </p>
-
-          <div className="space-y-1">
-            <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
-              Код из письма
-            </p>
-            <input
-              type="text"
-              inputMode="numeric"
-              value={confirmEmailCode}
-              onChange={(e) => setConfirmEmailCode(e.target.value)}
-              className={authInputClass}
-              placeholder="123456"
-            />
-          </div>
-
-          <button
-            type="button"
-            onClick={handleConfirmEmail}
-            disabled={confirmEmailStatus === 'verifying'}
-            className={authPrimaryButtonClass}
-          >
-            {confirmEmailStatus === 'verifying' ? 'Проверка…' : 'Подтвердить почту'}
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              if (!confirmEmail) return;
-              setConfirmEmailStatus('sending');
-              void fetch(`${API_PREFIX}/users/email-code/send`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ email: confirmEmail, purpose: 'register' }),
-              })
-                .then(async (res) => {
-                  if (!res.ok) {
-                    const json = await res.json().catch(() => null);
-                    const raw =
-                      (json &&
-                        (json as { error?: string; message?: string; detail?: string }).error) ||
-                      (json &&
-                        (json as { error?: string; message?: string; detail?: string }).message) ||
-                      (json &&
-                        (json as { error?: string; message?: string; detail?: string }).detail) ||
-                      null;
-                    const msg = translateAuthError(
-                      raw,
-                      'Не удалось отправить код. Проверьте почту и попробуйте ещё раз.'
-                    );
-                    setError(msg);
-                  } else {
-                    setSuccess('Код повторно отправлен на почту.');
-                  }
-                })
-                .catch(() => {
-                  setError('Не удалось отправить код. Попробуйте ещё раз.');
-                })
-                .finally(() => {
-                  setConfirmEmailStatus('idle');
-                });
-            }}
-            disabled={confirmEmailStatus !== 'idle'}
-            className={authGhostButtonClass}
-          >
-            Отправить код ещё раз
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              setConfirmEmailOpen(false);
-              setConfirmEmailCode('');
-              setConfirmEmailStatus('idle');
-            }}
-            className={authGhostButtonClass}
-          >
-            ← Назад к регистрации
-          </button>
-        </div>
-      ) : forgotOpen ? (
-        <div
-          className={cn(
-            'space-y-3 rounded-2xl p-3'
-          )}
-        >
-          {forgotStep === 'email' ? (
-            <div className="space-y-1">
-              <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
-                Почта
-              </p>
-              <input
-                type="email"
-                value={forgotEmail}
-                onChange={(e) => setForgotEmail(e.target.value)}
-                className={authInputClass}
-                placeholder="you@example.com"
-              />
-              <p className="text-[11px] text-slate-500 dark:text-[#94a3b8]">
-                Мы отправим код восстановления на эту почту.
-              </p>
-            </div>
-          ) : (
-            <>
-              <div className="space-y-1">
-                <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
-                  Почта
-                </p>
-                <input
-                  type="email"
-                  value={forgotEmail}
-                  onChange={(e) => setForgotEmail(e.target.value)}
-                  className={authInputClass}
-                  placeholder="you@example.com"
-                />
-              </div>
-
-              <div className="space-y-1">
-                <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
-                  Код из письма
-                </p>
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  value={forgotCode}
-                  onChange={(e) => setForgotCode(e.target.value)}
-                  className={authInputClass}
-                  placeholder="123456"
-                />
-              </div>
-
-              <div className="space-y-1">
-                <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
-                  Новый пароль
-                </p>
-                <input
-                  type="password"
-                  value={forgotNewPassword}
-                  onChange={(e) => setForgotNewPassword(e.target.value)}
-                  className={authInputClass}
-                  placeholder="Минимум 6 символов"
-                />
-              </div>
-
-              <div className="space-y-1">
-                <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
-                  Повтор пароля
-                </p>
-                <input
-                  type="password"
-                  value={forgotNewPassword2}
-                  onChange={(e) => setForgotNewPassword2(e.target.value)}
-                  className={authInputClass}
-                  placeholder="Повторите пароль"
-                />
-              </div>
-            </>
-          )}
-
-          {success && (
-            <p className="text-[11px] text-emerald-700 dark:text-emerald-200 px-1 py-1">
-              {success}
-            </p>
-          )}
-
-          {error && (
-            <p className="text-[11px] text-red-600 dark:text-red-400 px-1 py-1">
-              {error}
-            </p>
-          )}
-
-          {forgotStep === 'email' ? (
-            <button
-              type="button"
-              onClick={handleSendResetCode}
-              disabled={forgotStatus === 'sending'}
-              className={authPrimaryButtonClass}
-            >
-              {forgotStatus === 'sending' ? 'Отправка…' : 'Отправить код'}
-            </button>
-          ) : (
-            <div className="space-y-2">
-              <button
-                type="button"
-                onClick={handleResetPassword}
-                disabled={forgotStatus === 'resetting'}
-                className={authPrimaryButtonClass}
-              >
-                {forgotStatus === 'resetting' ? 'Сохранение…' : 'Сменить пароль'}
-              </button>
-              <button
-                type="button"
-                onClick={handleSendResetCode}
-                disabled={forgotStatus === 'sending' || forgotStatus === 'resetting'}
-                className={authGhostButtonClass}
-              >
-                Отправить код ещё раз
-              </button>
-            </div>
-          )}
-
-          <button
-            type="button"
-            onClick={() => {
-              setForgotOpen(false);
-              setForgotStatus('idle');
-              setForgotStep('email');
-              setForgotEmail('');
-              setForgotCode('');
-              setForgotNewPassword('');
-              setForgotNewPassword2('');
-              setError(null);
-              setSuccess(null);
-            }}
-            className={authGhostButtonClass}
-          >
-            ← Назад ко входу
-          </button>
-        </div>
-      ) : (
-      <form
-        onSubmit={handleSubmit}
-        className={cn(
-          'space-y-3 rounded-2xl p-3',
-        )}
-      >
-        {mode === 'login' && (
-          <div className="space-y-1">
-            <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
-              Логин / почта / телефон
-            </p>
-            <input
-              type="text"
-              value={identifier}
-              onChange={(e) => setIdentifier(e.target.value)}
-              required
-              className={authInputClass}
-              placeholder="Почта, логин или телефон"
-            />
-          </div>
-        )}
-
-        {mode === 'register' && (
-          <div className="space-y-1">
-            <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
-              Логин
-            </p>
-            <input
-              type="text"
-              value={login}
-              onChange={(e) => setLogin(e.target.value)}
-              required
-              className={authInputClass}
-              placeholder="Ваш логин"
-            />
-          </div>
-        )}
-
-        {mode === 'register' && (
-          <div className="space-y-1">
-            <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
-              Почта
-            </p>
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
-              className={authInputClass}
-              placeholder="you@example.com"
-            />
-          </div>
-        )}
-
-        <div className="space-y-1">
-          <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
-            Пароль
-          </p>
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-            className={authInputClass}
-            placeholder={mode === 'login' ? 'Пароль' : 'Минимум 6 символов'}
-          />
-        </div>
-
-        {mode === 'register' && (
-          <>
-            <div className="grid grid-cols-2 gap-2">
-              <input
-                type="text"
-                value={lastName}
-                onChange={(e) => setLastName(e.target.value)}
-                required
-                className={authInputClass}
-                placeholder="Фамилия"
-              />
-              <input
-                type="text"
-                value={firstName}
-                onChange={(e) => setFirstName(e.target.value)}
-                required
-                className={authInputClass}
-                placeholder="Имя"
-              />
-
-              <input
-                type="text"
-                value={middleName}
-                onChange={(e) => setMiddleName(e.target.value)}
-                className={authInputClass}
-                placeholder="Отчество (опц.)"
-              />
-              <input
-                type="tel"
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                required
-                className={authInputClass}
-                placeholder="Телефон"
-              />
-
-              <input
-                type="text"
-                value={city}
-                onChange={(e) => setCity(e.target.value)}
-                required
-                className={authInputClass}
-                placeholder="Город"
-              />
-              <input
-                type="text"
-                value={street}
-                onChange={(e) => setStreet(e.target.value)}
-                required
-                className={authInputClass}
-                placeholder="Улица"
-              />
-
-              <input
-                type="text"
-                value={house}
-                onChange={(e) => setHouse(e.target.value)}
-                required
-                className={authInputClass}
-                placeholder="Дом"
-              />
-              <input
-                type="text"
-                value={apartment}
-                onChange={(e) => setApartment(e.target.value)}
-                className={authInputClass}
-                placeholder="Квартира (опц.)"
-              />
-            </div>
-          </>
-        )}
-
-        {success && (
-          <p className="text-[11px] text-emerald-700 dark:text-emerald-200 px-1 py-1">
-            {success}
-          </p>
-        )}
-
-        {error && (
-          <p className="text-[11px] text-red-600 dark:text-red-400 px-1 py-1">
-            {error}
-          </p>
-        )}
-
-        <button
-          type="submit"
-          disabled={loading}
-          className={authPrimaryButtonClass}
-        >
-          {loading
-            ? 'Отправка...'
-            : mode === 'login'
-            ? 'Войти'
-            : 'Зарегистрироваться'}
-        </button>
-
-        {isYandexLikeAuth && mode === 'login' && (
-          <button
-            type="button"
-            onClick={() => setMode('register')}
-            className="w-full text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
-          >
-            Нет аккаунта? Зарегистрироваться
-          </button>
-        )}
-
-        {isYandexLikeAuth && mode === 'register' && (
-          <button
-            type="button"
-            onClick={() => setMode('login')}
-            className="w-full text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
-          >
-            Уже есть аккаунт? Войти
-          </button>
-        )}
-
-        {mode === 'login' && (
-          <button
-            type="button"
-            onClick={() => {
-              setForgotOpen(true);
-              setForgotEmail('');
-              setForgotStatus('idle');
-              setError(null);
-              setSuccess(null);
-            }}
-            className={authGhostButtonClass}
-          >
-            Забыли пароль?
-          </button>
-        )}
-      </form>
-      )}
-      </div>
-    </div>
     </div>
   );
 }
