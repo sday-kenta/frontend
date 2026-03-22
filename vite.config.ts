@@ -18,9 +18,9 @@ export default defineConfig(({ mode }) => {
         registerType: "autoUpdate",
         includeAssets: ["vite.svg"],
         manifest: {
-          name: "proekt",
-          short_name: "proekt",
-          description: "proekt",
+          name: "Сдай кента",
+          short_name: "Сдай кента",
+          description: "Сдай кента",
           start_url: "/frontend/",
           scope: "/frontend/",
           display: "standalone",

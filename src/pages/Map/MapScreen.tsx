@@ -9,6 +9,7 @@ import {
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import { cn, resolveAvatarUrl } from '@/lib/utils';
+import { withApiBase } from '@/lib/api';
 import ProfileTabComponent from '@/components/ProfileTab';
 import { MapControls } from '@/components/map/MapControls';
 import { SearchInputBar } from '@/components/map/SearchInputBar';
@@ -477,7 +478,7 @@ export default function MapScreen() {
     const userId = window.localStorage.getItem('userId');
     if (!userId) return;
 
-    fetch(`/v1/users/${userId}`)
+    fetch(withApiBase(`/v1/users/${userId}`))
       .then(async (res) => (res.ok ? res.json() : null))
       .then((json: unknown) => {
         if (!json) return;
@@ -871,9 +872,9 @@ export default function MapScreen() {
     setIsAvatarUploading(true);
 
     const uploadCandidates = [
-      `/v1/users/${userProfile.id}/avatar`,
-      '/v1/avatars/upload',
-      '/v1/avatars',
+      withApiBase(`/v1/users/${userProfile.id}/avatar`),
+      withApiBase('/v1/avatars/upload'),
+      withApiBase('/v1/avatars'),
     ];
 
     let resolvedAvatar: string | null = null;
@@ -912,7 +913,7 @@ export default function MapScreen() {
 
     if (uploadedOnServer && resolvedAvatar) {
       try {
-        await fetch(`/v1/users/${userProfile.id}`, {
+        await fetch(withApiBase(`/v1/users/${userProfile.id}`), {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ avatar_url: resolvedAvatar }),
@@ -923,7 +924,7 @@ export default function MapScreen() {
 
     if (uploadedOnServer) {
       try {
-        const profileRes = await fetch(`/v1/users/${userProfile.id}`);
+        const profileRes = await fetch(withApiBase(`/v1/users/${userProfile.id}`));
         if (profileRes.ok) {
           const json = await profileRes.json();
           const raw =
