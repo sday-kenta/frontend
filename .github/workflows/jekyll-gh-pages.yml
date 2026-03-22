@@ -47,6 +47,7 @@ jobs:
           # Можно добавить переменные окружения для сборки
           CI: false # Отключаем CI режим чтобы предупреждения не останавливали сборку
           VITE_BASE_URL: '/frontend'
+          VITE_API_BASE_URL: 'https://api.theaesthetics.ru'
       
       # Загрузка артефакта для деплоя
       - name: Upload artifact
