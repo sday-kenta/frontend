@@ -1,5 +1,6 @@
 import { clsx, type ClassValue } from "clsx"
 import { twMerge } from "tailwind-merge"
+import { withApiBase } from "@/lib/api"
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
@@ -11,5 +12,5 @@ export function resolveAvatarUrl(url: string | null | undefined): string | undef
   const u = url.trim();
   if (u.startsWith("http://") || u.startsWith("https://")) return u;
   const filename = u.replace(/^\/+/, "");
-  return filename ? `/v1/avatars/${filename}` : undefined;
+  return filename ? withApiBase(`/v1/avatars/${filename}`) : undefined;
 }

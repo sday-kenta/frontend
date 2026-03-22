@@ -4,6 +4,7 @@ import { Menu, Bell, Home, Map, User, Settings, LogOut, ChevronRight, FolderOpen
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { resolveAvatarUrl } from "@/lib/utils";
+import { withApiBase } from "@/lib/api";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 export function Navbar() {
   const [isOpen, setIsOpen] = React.useState(false);
@@ -154,7 +155,7 @@ export function Navbar() {
 
   // Временный пользователь для теста (id = 1)
   React.useEffect(() => {
-    fetch("/v1/users/1")
+    fetch(withApiBase('/v1/users/1'))
       .then(async (res) => {
         if (!res.ok) return null;
         const json = await res.json();

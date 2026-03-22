@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import { cn } from '@/lib/utils';
+import { withApiBase } from '@/lib/api';
 
 export type AuthResponseUser = {
   id?: number;
@@ -84,7 +85,7 @@ export function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
   const authTouchStartYRef = useRef<number | null>(null);
   const authCanCloseBySwipeRef = useRef(false);
 
-  const API_PREFIX = '/v1';
+  const API_PREFIX = withApiBase('/v1');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

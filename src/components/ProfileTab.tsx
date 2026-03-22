@@ -5,6 +5,7 @@ import { Lock, Check, X, User, Mail, Phone, House } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { withApiBase } from '@/lib/api';
 
 type UserProfile = {
   id: number;
@@ -72,8 +73,8 @@ const ProfileTab: FC<ProfileTabProps> = ({
   onOpenMyReports: _onOpenMyReports,
   onOpenSettings: _onOpenSettings,
 }) => {
-  // Используем тот же прокси, что и в админке: /v1 -> VITE_API_PROXY_TARGET
-  const API_PREFIX = '/v1';
+  // В dev работает через proxy, в production через VITE_API_BASE_URL.
+  const API_PREFIX = withApiBase('/v1');
 
   const [initialProfile, setInitialProfile] = useState<UserProfile | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
