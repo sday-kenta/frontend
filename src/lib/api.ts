@@ -166,15 +166,25 @@ export class ApiError extends Error {
 }
 
 const RAW_BASE_URL =
-  (typeof import.meta !== 'undefined' && (import.meta as ImportMeta & { env?: Record<string, string> }).env?.VITE_API_BASE_URL) ||
+  (typeof import.meta !== 'undefined' &&
+    (import.meta as ImportMeta & { env?: Record<string, string> }).env?.VITE_API_BASE_URL) ||
   '/v1';
 
-const DEFAULT_BASE_URL = RAW_BASE_URL.replace(/\/$/, '');
+const DEFAULT_BASE_URL = RAW_BASE_URL.replace(/\/+$/, '');
 const DEFAULT_API_ORIGIN = DEFAULT_BASE_URL.replace(/\/v1$/, '');
 
-export function withApiBase(path: string) {
-  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
-  return `${DEFAULT_API_ORIGIN}${normalizedPath}`;
+export function withApiBase(path: string): string {
+  if (!path) return path;
+
+  if (/^https?:\/\//i.test(path)) {
+    return path;
+  }
+
+  if (!DEFAULT_API_ORIGIN) {
+    return path;
+  }
+
+  return `${DEFAULT_API_ORIGIN}${path.startsWith('/') ? '' : '/'}${path}`;
 }
 
 function buildQuery(params?: Record<string, string | number | boolean | undefined | null>) {
