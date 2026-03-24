@@ -1,11 +1,11 @@
-import { useEffect, useState, useRef } from 'react';
-import type { FC, FormEvent, ChangeEvent } from 'react';
-import { Lock, Check, X, Camera } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import type { FC, FormEvent } from 'react';
+import { Lock, Check, X, User, Mail, Phone, House } from 'lucide-react';
 
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { resolveAvatarUrl } from '@/lib/utils';
+import { cn } from '@/lib/utils';
+import { withApiBase } from '@/lib/api';
 
 type UserProfile = {
   id: number;
@@ -29,6 +29,8 @@ type UserProfile = {
 type ProfileTabProps = {
   userId: number;
   onAvatarChange?: (url: string | null) => void;
+  onOpenMyReports?: () => void;
+  onOpenSettings?: () => void;
 };
 
 function formatPhone(input: string): string {
@@ -65,9 +67,14 @@ function formatPhone(input: string): string {
   return result;
 }
 
-const ProfileTab: FC<ProfileTabProps> = ({ userId, onAvatarChange }) => {
-  // Используем тот же прокси, что и в админке: /v1 -> VITE_API_PROXY_TARGET
-  const API_PREFIX = '/v1';
+const ProfileTab: FC<ProfileTabProps> = ({
+  userId,
+  onAvatarChange,
+  onOpenMyReports: _onOpenMyReports,
+  onOpenSettings: _onOpenSettings,
+}) => {
+  // В dev работает через proxy, в production через VITE_API_BASE_URL.
+  const API_PREFIX = withApiBase('/v1');
 
   const [initialProfile, setInitialProfile] = useState<UserProfile | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
@@ -77,7 +84,7 @@ const ProfileTab: FC<ProfileTabProps> = ({ userId, onAvatarChange }) => {
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
   const [confirmCode, setConfirmCode] = useState('');
   const [confirmError, setConfirmError] = useState<string | null>(null);
-  const [passwordPanelOpen, setPasswordPanelOpen] = useState(false);
+  const [activeProfileTab, setActiveProfileTab] = useState<'profile' | 'password'>('profile');
   const [pwdStatus, setPwdStatus] = useState<'idle' | 'sending' | 'saving'>('idle');
   const [pwdCode, setPwdCode] = useState('');
   const [pwdNew, setPwdNew] = useState('');
@@ -86,8 +93,6 @@ const ProfileTab: FC<ProfileTabProps> = ({ userId, onAvatarChange }) => {
 
   const [status, setStatus] = useState<'idle' | 'success' | 'error'>('idle');
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
-  const [avatarUploading, setAvatarUploading] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const hasEmailChanged =
     !!profile && !!initialProfile && profile.email !== initialProfile.email;
@@ -104,7 +109,7 @@ const ProfileTab: FC<ProfileTabProps> = ({ userId, onAvatarChange }) => {
     fetch(`${API_PREFIX}/users/${userId}`)
       .then(async (res) => {
         if (!res.ok) {
-          throw new Error('Failed to load profile');
+          throw new Error('Не удалось загрузить профиль.');
         }
         const json = await res.json();
         console.log('PROFILE RESPONSE', json);
@@ -214,6 +219,12 @@ const ProfileTab: FC<ProfileTabProps> = ({ userId, onAvatarChange }) => {
     if (low.includes('code expired')) return 'Код просрочен. Запросите новый.';
     if (low.includes('invalid credentials')) return 'Неверные данные для входа.';
     if (low.includes('user is blocked')) return 'Пользователь заблокирован.';
+    if (low.includes('email already exists') || low.includes('email already exist')) {
+      return 'Пользователь с такой почтой уже зарегистрирован.';
+    }
+    if (low.includes('phone already exists') || low.includes('phone already exist')) {
+      return 'Пользователь с таким телефоном уже зарегистрирован.';
+    }
     return msg;
   };
 
@@ -275,7 +286,7 @@ const ProfileTab: FC<ProfileTabProps> = ({ userId, onAvatarChange }) => {
       setPwdNew('');
       setPwdNew2('');
       setPwdMessage('Пароль успешно изменён.');
-      setPasswordPanelOpen(false);
+      setActiveProfileTab('profile');
     } catch (e) {
       setPwdMessage(e instanceof Error ? e.message : 'Не удалось сменить пароль.');
     } finally {
@@ -314,128 +325,97 @@ const ProfileTab: FC<ProfileTabProps> = ({ userId, onAvatarChange }) => {
     await handleSaveProfile();
   };
 
-  const handleAvatarChange = async (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file || !profile) return;
-    if (file.size > 2 * 1024 * 1024) {
-      setStatus('error');
-      setStatusMessage('Файл слишком большой (макс. 2 МБ).');
-      return;
-    }
-    const ok = /^image\/(jpeg|jpg|png)$/i.test(file.type);
-    if (!ok) {
-      setStatus('error');
-      setStatusMessage('Разрешены только JPEG и PNG.');
-      return;
-    }
-    e.target.value = '';
-    try {
-      setAvatarUploading(true);
-      setStatusMessage(null);
-      const formData = new FormData();
-      formData.append('avatar', file);
-      const res = await fetch(`${API_PREFIX}/users/${profile.id}/avatar`, {
-        method: 'POST',
-        body: formData,
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error((err as { message?: string })?.message || 'Ошибка загрузки');
-      }
-      const profileRes = await fetch(`${API_PREFIX}/users/${profile.id}`);
-      if (profileRes.ok) {
-        const json = await profileRes.json();
-        const raw: any = Array.isArray(json) ? json[0] : (json?.data ?? json);
-        const newUrl = raw?.avatar_url ?? raw?.avatar ?? raw?.avatarUrl ?? profile.avatar_url;
-        setProfile((p) => (p ? { ...p, avatar_url: newUrl } : p));
-        setInitialProfile((p) => (p ? { ...p, avatar_url: newUrl } : p));
-        onAvatarChange?.(newUrl ?? null);
-      }
-      setStatus('success');
-      setStatusMessage('Аватар обновлён.');
-    } catch (err) {
-      setStatus('error');
-      setStatusMessage(err instanceof Error ? err.message : 'Не удалось загрузить аватар.');
-    } finally {
-      setAvatarUploading(false);
-    }
-  };
-
-  const initials = profile
-    ? [profile.last_name, profile.first_name]
-        .filter(Boolean)
-        .map((s) => s.trim()[0]?.toUpperCase())
-        .join('')
-    : '';
+  const sectionCardClass =
+    'rounded-3xl bg-white/95 p-4 shadow-sm ring-1 ring-slate-200/80 dark:bg-zinc-900/65 dark:ring-white/10';
+  const fieldLabelClass =
+    'text-[11px] font-semibold tracking-wide text-slate-500 dark:text-[#94a3b8]';
+  const filledInputClass =
+    'rounded-2xl border-slate-200/80 bg-slate-50/90 text-base text-slate-900 dark:border-white/10 dark:bg-zinc-950/70 dark:text-slate-50';
+  const hasUnsavedChanges =
+    !!profile &&
+    !!initialProfile &&
+    (
+      profile.email !== initialProfile.email ||
+      profile.phone !== initialProfile.phone ||
+      profile.last_name !== initialProfile.last_name ||
+      profile.first_name !== initialProfile.first_name ||
+      profile.middle_name !== initialProfile.middle_name ||
+      profile.city !== initialProfile.city ||
+      profile.street !== initialProfile.street ||
+      profile.house !== initialProfile.house ||
+      profile.apartment !== initialProfile.apartment
+    );
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-3 rounded-2xl bg-gradient-to-r from-sky-500/10 via-sky-500/5 to-transparent px-3 py-2.5">
-        <label className="relative cursor-pointer group/avatar">
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/jpeg,image/jpg,image/png"
-            className="sr-only"
-            onChange={handleAvatarChange}
-            disabled={avatarUploading || !profile}
-          />
-          <Avatar className="h-11 w-11 shadow-md shadow-sky-500/40 ring-2 ring-white/50 dark:ring-slate-700">
-            {profile?.avatar_url && <AvatarImage src={resolveAvatarUrl(profile.avatar_url) ?? ''} alt="" className="object-cover" />}
-            <AvatarFallback className="bg-gradient-to-br from-sky-500 to-blue-600 text-sm font-semibold text-white">
-              {initials || '👤'}
-            </AvatarFallback>
-          </Avatar>
-          <span className="absolute inset-0 flex items-center justify-center rounded-full bg-black/40 opacity-0 group-hover/avatar:opacity-100 transition-opacity">
-            <Camera className="h-5 w-5 text-white" />
-          </span>
-          {avatarUploading && (
-            <span className="absolute inset-0 flex items-center justify-center rounded-full bg-black/50">
-              <span className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-            </span>
-          )}
-        </label>
-        <div className="min-w-0 flex-1">
-          <h2 className="text-sm font-semibold text-slate-900 dark:text-white tracking-tight">
+      
+
+      <p className="px-1 text-xs text-slate-600 dark:text-[#94a3b8]">
+        Личные данные и контакты аккаунта
+      </p>
+
+
+
+      <div className="rounded-2xl bg-slate-100 p-1 dark:bg-white/5">
+        <div className="grid grid-cols-2 gap-1 text-xs font-medium">
+          <button
+            type="button"
+            onClick={() => setActiveProfileTab('profile')}
+            className={cn(
+              'rounded-xl px-3 py-2 transition-colors',
+              activeProfileTab === 'profile'
+                ? 'bg-white text-slate-900 shadow-sm dark:bg-zinc-900/80 dark:text-white'
+                : 'text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white'
+            )}
+          >
             Профиль
-          </h2>
-          <p className="truncate text-xs text-slate-600 dark:text-[#cbd5f5]/80">
-            {profile?.email || 'Настройка контактных данных'}
-          </p>
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveProfileTab('password')}
+            className={cn(
+              'rounded-xl px-3 py-2 transition-colors',
+              activeProfileTab === 'password'
+                ? 'bg-white text-slate-900 shadow-sm dark:bg-zinc-900/80 dark:text-white'
+                : 'text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white'
+            )}
+          >
+            Смена пароля
+          </button>
         </div>
       </div>
 
-      <p className="text-sm text-slate-700 dark:text-[#cbd5f5]">
-        Здесь вы можете изменить данные своего профиля.
-      </p>
-
       {isLoading && (
-        <div className="mt-1 rounded-2xl border border-slate-200 bg-slate-50/80 dark:border-white/10 dark:bg-[#020617] p-4 text-sm text-slate-700 dark:text-[#94a3b8]">
+        <div className="rounded-3xl bg-white/95 p-4 text-sm text-slate-700 shadow-sm ring-1 ring-slate-200/80 dark:bg-zinc-900/65 dark:text-[#94a3b8] dark:ring-white/10">
           Загрузка данных профиля…
         </div>
       )}
 
       {!isLoading && !profile && (
-        <div className="mt-1 rounded-2xl border border-red-500/40 bg-red-50 p-4 text-sm text-red-700 dark:bg-red-500/5 dark:text-red-200">
+        <div className="rounded-3xl border border-red-500/40 bg-red-50 p-4 text-sm text-red-700 dark:bg-red-500/5 dark:text-red-200">
           Не удалось загрузить профиль пользователя.
         </div>
       )}
 
-      {!isLoading && profile && (
+      {!isLoading && profile && activeProfileTab === 'profile' && (
         <form
           onSubmit={handleSubmit}
-          className="mt-1 rounded-2xl border border-slate-200/90 bg-white shadow-sm shadow-slate-200/70 dark:border-white/10 dark:bg-[#020617] p-4 space-y-4"
+          className="space-y-4"
         >
-        <div className="rounded-2xl border border-slate-200/70 bg-slate-50/70 p-3 dark:border-white/10 dark:bg-black/20">
+          <div className={sectionCardClass}>
+          <div className="mb-3 flex items-center gap-1.5 text-xs font-semibold text-slate-700 dark:text-white">
+            <Mail className="h-3.5 w-3.5 text-sky-500 dark:text-sky-400" />
+            Контактные данные
+          </div>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="space-y-1">
-              <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
+              <p className={fieldLabelClass}>
                 Логин
               </p>
               <Input
                 value={profile.login}
                 disabled
-                className="bg-white/90 dark:bg-black/40 border-slate-200 dark:border-white/10 text-base text-slate-900 dark:text-slate-50"
+                className={filledInputClass}
               />
               <p className="text-[11px] text-slate-500 dark:text-[#94a3b8]">
                 Логин изменить нельзя.
@@ -443,16 +423,17 @@ const ProfileTab: FC<ProfileTabProps> = ({ userId, onAvatarChange }) => {
             </div>
 
             <div className="space-y-1">
-              <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
+              <p className={fieldLabelClass}>
                 Почта
               </p>
               <Input
                 type="email"
+                autoComplete="email"
                 value={profile.email}
                 onChange={(e) =>
                   setProfile((p) => (p ? { ...p, email: e.target.value } : null))
                 }
-                className="bg-white/90 dark:bg-black/30 border-slate-200 dark:border-white/10 text-base text-slate-900 dark:text-slate-50"
+                className={filledInputClass}
                 placeholder="you@example.com"
                 required
               />
@@ -465,227 +446,146 @@ const ProfileTab: FC<ProfileTabProps> = ({ userId, onAvatarChange }) => {
           </div>
         </div>
 
-        <div className="rounded-2xl border border-slate-200/70 bg-slate-50/70 p-3 dark:border-white/10 dark:bg-black/20 space-y-3">
-          <p className="text-xs font-semibold text-slate-700 dark:text-white">
+        <div className={cn(sectionCardClass, 'space-y-3')}>
+          <p className="flex items-center gap-1.5 text-xs font-semibold text-slate-700 dark:text-white">
+            <User className="h-3.5 w-3.5 text-sky-500 dark:text-sky-400" />
             Личные данные
           </p>
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
             <div className="space-y-1">
-            <p className="text-[11px] font-medium text-slate-500 dark:text-[#94a3b8]">
+            <p className={fieldLabelClass}>
               Фамилия
             </p>
             <Input
               type="text"
+              autoComplete="family-name"
               value={profile.last_name}
               onChange={(e) =>
                 setProfile((p) => (p ? { ...p, last_name: e.target.value } : p))
               }
-              className="bg-slate-50 dark:bg-black/30 border-slate-200 dark:border-white/10 text-base text-slate-900 dark:text-slate-50"
+              className={filledInputClass}
               placeholder="Фамилия"
             />
             </div>
             <div className="space-y-1">
-            <p className="text-[11px] font-medium text-slate-500 dark:text-[#94a3b8]">
+            <p className={fieldLabelClass}>
               Имя
             </p>
             <Input
               type="text"
+              autoComplete="given-name"
               value={profile.first_name}
               onChange={(e) =>
                 setProfile((p) => (p ? { ...p, first_name: e.target.value } : p))
               }
-              className="bg-slate-50 dark:bg-black/30 border-slate-200 dark:border-white/10 text-base text-slate-900 dark:text-slate-50"
+              className={filledInputClass}
               placeholder="Имя"
             />
             </div>
             <div className="space-y-1">
-            <p className="text-[11px] font-medium text-slate-500 dark:text-[#94a3b8]">
+            <p className={fieldLabelClass}>
               Отчество
             </p>
             <Input
               type="text"
+              autoComplete="additional-name"
               value={profile.middle_name}
               onChange={(e) =>
                 setProfile((p) => (p ? { ...p, middle_name: e.target.value } : p))
               }
-              className="bg-slate-50 dark:bg-black/30 border-slate-200 dark:border-white/10 text-base text-slate-900 dark:text-slate-50"
+              className={filledInputClass}
               placeholder="Отчество"
             />
             </div>
           </div>
 
         <div className="space-y-1">
-          <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
+          <p className={cn(fieldLabelClass, 'flex items-center gap-1')}>
+            <Phone className="h-3 w-3" />
             Номер телефона
           </p>
           <Input
             type="tel"
+            autoComplete="tel"
             value={profile.phone}
             onChange={(e) =>
               setProfile((p) =>
                 p ? { ...p, phone: formatPhone(e.target.value) } : p,
               )
             }
-            className="bg-slate-50 dark:bg-black/30 border-slate-200 dark:border-white/10 text-base text-slate-900 dark:text-slate-50"
+            className={filledInputClass}
             placeholder="+79991234567"
           />
         </div>
         </div>
 
-        <div className="rounded-2xl border border-slate-200/70 bg-slate-50/70 p-3 dark:border-white/10 dark:bg-black/20 space-y-3">
-          <p className="text-xs font-semibold text-slate-700 dark:text-white">
+        <div className={cn(sectionCardClass, 'space-y-3')}>
+          <p className="flex items-center gap-1.5 text-xs font-semibold text-slate-700 dark:text-white">
+            <House className="h-3.5 w-3.5 text-sky-500 dark:text-sky-400" />
             Адрес
           </p>
           <div className="space-y-1">
-            <p className="text-[11px] font-medium text-slate-500 dark:text-[#94a3b8]">
+            <p className={fieldLabelClass}>
               Город
             </p>
             <Input
               type="text"
+              autoComplete="address-level2"
               value={profile.city}
               onChange={(e) =>
                 setProfile((p) => (p ? { ...p, city: e.target.value } : p))
               }
-              className="bg-slate-50 dark:bg-black/30 border-slate-200 dark:border-white/10 text-base text-slate-900 dark:text-slate-50"
+              className={filledInputClass}
               placeholder="Город"
             />
           </div>
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
             <div className="space-y-1">
-              <p className="text-[11px] font-medium text-slate-500 dark:text-[#94a3b8]">
+              <p className={fieldLabelClass}>
                 Улица
               </p>
               <Input
                 type="text"
+                autoComplete="street-address"
                 value={profile.street}
                 onChange={(e) =>
                   setProfile((p) => (p ? { ...p, street: e.target.value } : p))
                 }
-                className="bg-slate-50 dark:bg-black/30 border-slate-200 dark:border-white/10 text-base text-slate-900 dark:text-slate-50"
+                className={filledInputClass}
                 placeholder="Улица"
               />
             </div>
             <div className="space-y-1">
-              <p className="text-[11px] font-medium text-slate-500 dark:text-[#94a3b8]">
+              <p className={fieldLabelClass}>
                 Дом
               </p>
               <Input
                 type="text"
+                autoComplete="address-line2"
                 value={profile.house}
                 onChange={(e) =>
                   setProfile((p) => (p ? { ...p, house: e.target.value } : p))
                 }
-                className="bg-slate-50 dark:bg-black/30 border-slate-200 dark:border-white/10 text-base text-slate-900 dark:text-slate-50"
+                className={filledInputClass}
                 placeholder="Дом"
               />
             </div>
             <div className="space-y-1">
-              <p className="text-[11px] font-medium text-slate-500 dark:text-[#94a3b8]">
+              <p className={fieldLabelClass}>
                 Квартира
               </p>
               <Input
                 type="text"
+                autoComplete="address-line2"
                 value={profile.apartment}
                 onChange={(e) =>
                   setProfile((p) => (p ? { ...p, apartment: e.target.value } : p))
                 }
-                className="bg-slate-50 dark:bg-black/30 border-slate-200 dark:border-white/10 text-base text-slate-900 dark:text-slate-50"
+                className={filledInputClass}
                 placeholder="Кв."
               />
             </div>
           </div>
-        </div>
-
-        <div className="pt-1">
-          <div className="w-full rounded-2xl border border-slate-200 bg-white text-slate-900 dark:bg-[#020617] dark:border-white/10 px-4 py-3">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <p className="text-sm font-medium dark:text-white">Смена пароля</p>
-                <p className="text-xs text-slate-600 dark:text-[#94a3b8]">
-                  Код придёт на вашу почту: {profile.email}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setPasswordPanelOpen((v) => !v);
-                  setPwdMessage(null);
-                }}
-                className="text-xs font-semibold text-sky-600 hover:text-sky-700 dark:text-sky-400 dark:hover:text-sky-300"
-              >
-                {passwordPanelOpen ? 'Скрыть' : 'Открыть'}
-              </button>
-            </div>
-          </div>
-
-          {passwordPanelOpen && (
-            <div className="mt-2 rounded-2xl border border-slate-200 bg-white dark:border-white/10 dark:bg-[#020617] p-4 space-y-3">
-              <div className="flex flex-col gap-2 sm:flex-row">
-                <Button
-                  type="button"
-                  disabled={pwdStatus !== 'idle'}
-                  onClick={handleSendPasswordCode}
-                  className="w-full sm:w-auto sm:flex-1 rounded-xl bg-sky-500 hover:bg-sky-600 text-xs font-semibold text-white shadow-md shadow-sky-500/40"
-                >
-                  {pwdStatus === 'sending' ? 'Отправка…' : 'Отправить код'}
-                </Button>
-              </div>
-
-              <div className="space-y-1">
-                <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
-                  Код из письма
-                </p>
-                <Input
-                  type="text"
-                  value={pwdCode}
-                  onChange={(e) => setPwdCode(e.target.value)}
-                  className="bg-slate-50 dark:bg-black/30 border-slate-200 dark:border-white/10 text-base text-slate-900 dark:text-slate-50"
-                  placeholder="123456"
-                />
-              </div>
-
-              <div className="space-y-1">
-                <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
-                  Новый пароль
-                </p>
-                <Input
-                  type="password"
-                  value={pwdNew}
-                  onChange={(e) => setPwdNew(e.target.value)}
-                  className="bg-slate-50 dark:bg-black/30 border-slate-200 dark:border-white/10 text-base text-slate-900 dark:text-slate-50"
-                  placeholder="Минимум 6 символов"
-                />
-              </div>
-
-              <div className="space-y-1">
-                <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
-                  Повтор пароля
-                </p>
-                <Input
-                  type="password"
-                  value={pwdNew2}
-                  onChange={(e) => setPwdNew2(e.target.value)}
-                  className="bg-slate-50 dark:bg-black/30 border-slate-200 dark:border-white/10 text-base text-slate-900 dark:text-slate-50"
-                  placeholder="Повторите пароль"
-                />
-              </div>
-
-              {pwdMessage && (
-                <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700 dark:border-white/10 dark:bg-black/30 dark:text-[#cbd5f5]">
-                  {pwdMessage}
-                </div>
-              )}
-
-              <Button
-                type="button"
-                disabled={pwdStatus !== 'idle'}
-                onClick={handleChangePassword}
-                className="w-full rounded-xl bg-sky-500 hover:bg-sky-600 text-xs font-semibold text-white shadow-md shadow-sky-500/40"
-              >
-                {pwdStatus === 'saving' ? 'Сохранение…' : 'Сменить пароль'}
-              </Button>
-            </div>
-          )}
         </div>
 
         {statusMessage && (
@@ -700,21 +600,103 @@ const ProfileTab: FC<ProfileTabProps> = ({ userId, onAvatarChange }) => {
           </div>
         )}
 
+        {hasUnsavedChanges && !statusMessage && (
+          <div className="rounded-lg border border-amber-300/60 bg-amber-50/70 px-3 py-2 text-xs text-amber-700 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200">
+            Есть несохранённые изменения.
+          </div>
+        )}
+
         <div className="pt-1 flex justify-end">
           <Button
             type="submit"
-            disabled={isSaving}
-            className="w-full md:w-auto px-5 py-2 rounded-xl bg-sky-500 hover:bg-sky-600 text-xs font-semibold text-white shadow-md shadow-sky-500/40"
+            disabled={isSaving || !hasUnsavedChanges}
+            className="w-full rounded-2xl bg-sky-500 px-5 py-3 text-sm font-semibold text-white hover:bg-sky-600 disabled:bg-slate-300 disabled:text-slate-600 dark:disabled:bg-white/10 dark:disabled:text-slate-400 md:w-auto"
           >
-            {isSaving ? 'Сохранение…' : 'Сохранить изменения'}
+            {isSaving ? 'Сохранение…' : hasUnsavedChanges ? 'Сохранить изменения' : 'Изменений нет'}
           </Button>
         </div>
-      </form>
+        </form>
+      )}
+
+      {!isLoading && profile && activeProfileTab === 'password' && (
+        <div className="space-y-3 rounded-3xl bg-white/95 p-4 shadow-sm ring-1 ring-slate-200/80 dark:bg-zinc-900/65 dark:ring-white/10">
+          <div>
+            <p className="text-sm font-medium text-slate-900 dark:text-white">Смена пароля</p>
+            <p className="text-xs text-slate-600 dark:text-[#94a3b8]">
+              Код придёт на почту: {profile.email}
+            </p>
+          </div>
+
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <Button
+              type="button"
+              disabled={pwdStatus !== 'idle'}
+              onClick={handleSendPasswordCode}
+              className="w-full rounded-2xl bg-sky-500 text-xs font-semibold text-white hover:bg-sky-600 sm:w-auto sm:flex-1"
+            >
+              {pwdStatus === 'sending' ? 'Отправка…' : 'Отправить код'}
+            </Button>
+          </div>
+
+          <div className="space-y-1">
+            <p className="text-[11px] font-semibold tracking-wide text-slate-500 dark:text-[#94a3b8]">
+              Код из письма
+            </p>
+            <Input
+              type="text"
+              value={pwdCode}
+              onChange={(e) => setPwdCode(e.target.value)}
+              className={filledInputClass}
+              placeholder="123456"
+            />
+          </div>
+
+          <div className="space-y-1">
+            <p className="text-[11px] font-semibold tracking-wide text-slate-500 dark:text-[#94a3b8]">
+              Новый пароль
+            </p>
+            <Input
+              type="password"
+              value={pwdNew}
+              onChange={(e) => setPwdNew(e.target.value)}
+              className={filledInputClass}
+              placeholder="Минимум 6 символов"
+            />
+          </div>
+
+          <div className="space-y-1">
+            <p className="text-[11px] font-semibold tracking-wide text-slate-500 dark:text-[#94a3b8]">
+              Повтор пароля
+            </p>
+            <Input
+              type="password"
+              value={pwdNew2}
+              onChange={(e) => setPwdNew2(e.target.value)}
+              className={filledInputClass}
+              placeholder="Повторите пароль"
+            />
+          </div>
+
+          {pwdMessage && (
+            <div className="rounded-xl border border-slate-200/80 bg-slate-50/80 px-3 py-2 text-xs text-slate-700 dark:border-white/10 dark:bg-zinc-950/70 dark:text-[#cbd5f5]">
+              {pwdMessage}
+            </div>
+          )}
+
+          <Button
+            type="button"
+            disabled={pwdStatus !== 'idle'}
+            onClick={handleChangePassword}
+            className="w-full rounded-2xl bg-sky-500 text-xs font-semibold text-white hover:bg-sky-600"
+          >
+            {pwdStatus === 'saving' ? 'Сохранение…' : 'Сменить пароль'}
+          </Button>
+        </div>
       )}
 
       {isConfirmOpen && (
-        <div className="fixed inset-0 z-[950] flex items-center justify-center bg-black/40 dark:bg-black/60 backdrop-blur-sm">
-          <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-2xl dark:border-white/10 dark:bg-[#020617]">
+        <div className="fixed inset-0 z-[950] flex items-center justify-center bg-black/40 dark:bg-black/60">
+          <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-2xl dark:border-white/10 dark:bg-zinc-900">
             <div className="flex items-start gap-3">
               <div className="mt-1 rounded-full bg-amber-100 p-1.5 dark:bg-amber-500/15">
                 <Lock className="h-4 w-4 text-amber-500 dark:text-amber-300" />
@@ -740,7 +722,7 @@ const ProfileTab: FC<ProfileTabProps> = ({ userId, onAvatarChange }) => {
                       setConfirmCode(e.target.value);
                       setConfirmError(null);
                     }}
-                    className="bg-slate-50 border-slate-200 text-sm text-slate-900 dark:bg-black/40 dark:border-white/15 dark:text-slate-50"
+                    className="bg-slate-50 border-slate-200 text-base md:text-sm text-slate-900 dark:bg-black/40 dark:border-white/15 dark:text-slate-50"
                     placeholder="Например, 123456"
                   />
                 </div>

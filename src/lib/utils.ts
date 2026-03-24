@@ -1,5 +1,6 @@
 import { clsx, type ClassValue } from "clsx"
 import { twMerge } from "tailwind-merge"
+import { withApiBase } from "@/lib/api"
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
@@ -9,7 +10,31 @@ export function cn(...inputs: ClassValue[]) {
 export function resolveAvatarUrl(url: string | null | undefined): string | undefined {
   if (!url || typeof url !== "string" || !url.trim()) return undefined;
   const u = url.trim();
-  if (u.startsWith("http://") || u.startsWith("https://")) return u;
+
+  if (u.startsWith('/v1/avatars/')) {
+    return withApiBase(u);
+  }
+
+  if (u.startsWith('v1/avatars/')) {
+    return withApiBase(`/${u}`);
+  }
+
+  if (u.startsWith("http://") || u.startsWith("https://")) {
+    try {
+      const parsed = new URL(u);
+      const isInternalHost = ['localhost', '127.0.0.1', 'minio'].includes(parsed.hostname);
+      const avatarFileName = parsed.pathname.split('/avatars/')[1];
+
+      if (isInternalHost && avatarFileName) {
+        return withApiBase(`/v1/avatars/${avatarFileName.replace(/^\/+/, '')}`);
+      }
+    } catch {
+      return u;
+    }
+
+    return u;
+  }
+
   const filename = u.replace(/^\/+/, "");
-  return filename ? `/v1/avatars/${filename}` : undefined;
+  return filename ? withApiBase(`/v1/avatars/${filename}`) : undefined;
 }

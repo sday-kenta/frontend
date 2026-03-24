@@ -1,46 +1,53 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ComponentType } from 'react';
-import maplibregl, { type MapMouseEvent } from 'maplibre-gl';
+import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
-import {
-  Loader2,
-  Plus,
-  Minus,
-  MapPin,
-  ChevronRight,
-  Copy,
-  Navigation,
-  X,
-  Home,
-  FolderOpen,
-  User,
-  MessageCircle,
-  Settings,
-  Car,
-  ShoppingBag,
-} from 'lucide-react';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import { cn, resolveAvatarUrl } from '@/lib/utils';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { api, withApiBase, type Category, type Incident } from '@/lib/api';
 import ProfileTabComponent from '@/components/ProfileTab';
+import { MapControls } from '@/components/map/MapControls';
+import { SearchInputBar } from '@/components/map/SearchInputBar';
+import { QuickSearchChips } from '@/components/map/QuickSearchChips';
+import { SearchSuggestionsList } from '@/components/map/SearchSuggestionsList';
+import { MapSearchPanel } from '@/components/map/MapSearchPanel';
+import { MapSearchExpandedContent } from '@/components/map/MapSearchExpandedContent';
+import { AuthPanel } from '@/components/map/AuthPanel';
+import { MapProfileFab } from '@/components/map/MapProfileFab';
+import { MapMarkerSheetContent } from '@/components/map/MapMarkerSheetContent';
+import { MapRubricSheetContent } from '@/components/map/MapRubricSheetContent';
+import { MapTabsSheetContent } from '@/components/map/MapTabsSheetContent';
 
 const ProfileTab = ProfileTabComponent as ComponentType<{
   userId: number;
   onAvatarChange?: (url: string | null) => void;
+  onOpenMyReports?: () => void;
+  onOpenSettings?: () => void;
 }>;
 
 interface GeocodingResult {
   lat: number;
   lng: number;
   display_name: string;
-  full_address?: string;
+  place_id?: number;
 }
 
-const API_PREFIX = '/v1';
+type IncidentPreview = {
+  id: number;
+  title: string;
+  category: string;
+  status: string;
+  lat: number;
+  lng: number;
+  description?: string;
+  address?: string;
+  photoUrls?: string[];
+  tags?: string[];
+  createdAt?: string;
+};
+
 const DEBOUNCE_MS = 400;
-const INCIDENTS_SOURCE_ID = 'incidents';
-const INCIDENTS_LAYER_ID = 'incidents-layer';
 
 const OSM_STYLE_LIGHT: maplibregl.StyleSpecification = {
   version: 8,
@@ -55,52 +62,222 @@ const OSM_STYLE_LIGHT: maplibregl.StyleSpecification = {
   layers: [{ id: 'osm', type: 'raster', source: 'osm' }],
 };
 
+const QUICK_SEARCH_CHIPS_FALLBACK = ['Нарушение правил парковки', 'Продажа просроченных товаров'];
+
+function getStatusLabel(status: string) {
+  const normalized = status.toLowerCase();
+  if (normalized === 'published') return 'Опубликовано';
+  if (normalized === 'draft') return 'Черновик';
+  return status;
+}
+
+function getCategoryColorClass(title: string) {
+  const normalized = title.toLowerCase();
+  if (normalized.includes('парков')) return 'from-blue-500 to-blue-600';
+  if (normalized.includes('торгов') || normalized.includes('просроч')) return 'from-purple-500 to-pink-500';
+  if (normalized.includes('дорог') || normalized.includes('яма')) return 'from-amber-500 to-orange-500';
+  if (normalized.includes('жкх') || normalized.includes('благо') || normalized.includes('мусор')) return 'from-emerald-500 to-teal-500';
+  if (normalized.includes('эко')) return 'from-lime-500 to-green-600';
+  return 'from-sky-500 to-indigo-600';
+}
+
+function getCategoryEmoji(title: string) {
+  const normalized = title.toLowerCase();
+  if (normalized.includes('парков')) return '🚗';
+  if (normalized.includes('торгов') || normalized.includes('просроч')) return '🛒';
+  if (normalized.includes('дорог') || normalized.includes('яма') || normalized.includes('тротуар')) return '🛣️';
+  if (normalized.includes('жкх') || normalized.includes('благо') || normalized.includes('мусор')) return '🏠';
+  if (normalized.includes('эко')) return '🌿';
+  return '📍';
+}
+
+function buildIncidentTags(incident: import('@/lib/api').Incident) {
+  const tags = new Set<string>();
+  if (incident.category_title) tags.add(incident.category_title);
+  if (incident.city) tags.add(incident.city);
+  if (incident.street) tags.add(incident.street);
+  if (incident.house) tags.add(`дом ${incident.house}`);
+  if (incident.description) {
+    incident.description
+      .split(/[^\p{L}\p{N}]+/u)
+      .filter((part) => part.length >= 5)
+      .slice(0, 4)
+      .forEach((part) => tags.add(part.toLowerCase()));
+  }
+  return Array.from(tags).slice(0, 6);
+}
+
+function mapIncidentToPreview(incident: import('@/lib/api').Incident): IncidentPreview | null {
+  if (typeof incident.latitude !== 'number' || typeof incident.longitude !== 'number') return null;
+
+  return {
+    id: incident.id,
+    title: incident.title,
+    category: incident.category_title || `Категория #${incident.category_id}`,
+    status: getStatusLabel(incident.status),
+    lat: incident.latitude,
+    lng: incident.longitude,
+    description: incident.description,
+    address: incident.address_text || [incident.city, incident.street, incident.house].filter(Boolean).join(', '),
+    photoUrls: (incident.photos || []).map((photo) =>
+      photo.file_url.startsWith('http') ? photo.file_url : withApiBase(photo.file_url)
+    ),
+    tags: buildIncidentTags(incident),
+    createdAt: incident.created_at,
+  };
+}
+
+type IncidentDetails = {
+  description: string;
+  tags: string[];
+  photoUrls: string[];
+};
+
+const INCIDENT_DETAILS: Record<number, IncidentDetails> = {
+  1: {
+    description: 'Автомобиль регулярно оставляют на тротуаре, пешеходам и коляскам приходится обходить по проезжей части.',
+    tags: ['парковка', 'тротуар', 'безопасность'],
+    photoUrls: [
+      'https://picsum.photos/seed/incident-1/960/540',
+      'https://picsum.photos/seed/incident-1b/960/540',
+    ],
+  },
+  2: {
+    description: 'В торговом зале обнаружены продукты с истекшим сроком годности. Нужна проверка магазина.',
+    tags: ['торговля', 'просрочка', 'правапотребителей'],
+    photoUrls: [
+      'https://picsum.photos/seed/incident-2/960/540',
+      'https://picsum.photos/seed/incident-2b/960/540',
+    ],
+  },
+  3: {
+    description: 'Контейнерная площадка переполнена, мусор разлетается по двору и создает антисанитарию.',
+    tags: ['жкх', 'мусор', 'двор'],
+    photoUrls: [
+      'https://picsum.photos/seed/incident-3/960/540',
+      'https://picsum.photos/seed/incident-3b/960/540',
+    ],
+  },
+};
+
+function calculateDistanceKm(from: { lat: number; lng: number }, to: { lat: number; lng: number }) {
+  const toRad = (value: number) => (value * Math.PI) / 180;
+  const earthRadiusKm = 6371;
+  const dLat = toRad(to.lat - from.lat);
+  const dLng = toRad(to.lng - from.lng);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(from.lat)) * Math.cos(toRad(to.lat)) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return earthRadiusKm * c;
+}
+
+function getProfileIncidentCategoryTagClass(category: string) {
+  const normalized = category.toLowerCase();
+
+  if (normalized.includes('дорог')) {
+    return 'border-amber-300/60 bg-amber-100/70 text-amber-700 dark:border-amber-400/40 dark:bg-amber-500/20 dark:text-amber-200';
+  }
+  if (normalized.includes('парков')) {
+    return 'border-sky-300/60 bg-sky-100/70 text-sky-700 dark:border-sky-400/40 dark:bg-sky-500/20 dark:text-sky-200';
+  }
+  if (normalized.includes('жкх') || normalized.includes('благо')) {
+    return 'border-emerald-300/60 bg-emerald-100/70 text-emerald-700 dark:border-emerald-400/40 dark:bg-emerald-500/20 dark:text-emerald-200';
+  }
+  if (normalized.includes('торгов')) {
+    return 'border-orange-300/60 bg-orange-100/70 text-orange-700 dark:border-orange-400/40 dark:bg-orange-500/20 dark:text-orange-200';
+  }
+
+  return 'border-violet-300/60 bg-violet-100/70 text-violet-700 dark:border-violet-400/40 dark:bg-violet-500/20 dark:text-violet-200';
+}
+
+function getProfileIncidentStatusTagClass(status: string) {
+  const normalized = status.toLowerCase();
+
+  if (normalized.includes('нов') || normalized.includes('опублик')) {
+    return 'border-sky-300/60 bg-sky-100/70 text-sky-700 dark:border-sky-400/40 dark:bg-sky-500/20 dark:text-sky-200';
+  }
+  if (normalized.includes('работ') || normalized.includes('чернов')) {
+    return 'border-orange-300/60 bg-orange-100/70 text-orange-700 dark:border-orange-400/40 dark:bg-orange-500/20 dark:text-orange-200';
+  }
+
+  return 'border-violet-300/60 bg-violet-100/70 text-violet-700 dark:border-violet-400/40 dark:bg-violet-500/20 dark:text-violet-200';
+}
+
+function getTagIcon(tag: string) {
+  const normalized = tag.toLowerCase().replace(/^#/, '');
+
+  if (normalized.includes('жкх') || normalized.includes('благо') || normalized.includes('двор')) return '🏠';
+  if (normalized.includes('дорог') || normalized.includes('яма') || normalized.includes('тротуар')) return '🛣️';
+  if (normalized.includes('парков') || normalized.includes('авто')) return '🚗';
+  if (normalized.includes('торгов') || normalized.includes('магаз') || normalized.includes('просроч')) return '🛒';
+  if (normalized.includes('эко') || normalized.includes('мусор') || normalized.includes('свалк')) return '🌿';
+
+  return '📍';
+}
+
+function normalizeFilterToken(value: string) {
+  return value.toLowerCase().replace(/^#/, '').trim();
+}
+
+function matchesIncidentByTagFilter(incident: IncidentPreview, normalizedFilter: string) {
+  if (!normalizedFilter) return true;
+
+  const details = INCIDENT_DETAILS[incident.id];
+  const searchableParts = [incident.title, incident.category, ...(details?.tags ?? [])].map(normalizeFilterToken);
+
+  return searchableParts.some(
+    (part) => part.includes(normalizedFilter) || normalizedFilter.includes(part)
+  );
+}
+
+function getStatusIcon(status: string) {
+  const normalized = status.toLowerCase();
+  if (normalized.includes('нов') || normalized.includes('опублик')) return '🆕';
+  if (normalized.includes('работ') || normalized.includes('чернов')) return '📝';
+  if (normalized.includes('провер')) return '🔎';
+  return 'ℹ️';
+}
+
 async function searchAddress(q: string): Promise<GeocodingResult[]> {
   if (!q.trim() || q.length < 3) return [];
-  const res = await fetch(
-    `${API_PREFIX}/maps/search?q=${encodeURIComponent(q)}`,
-    { headers: { Accept: 'application/json' } },
-  );
-  if (!res.ok) return [];
-  const json = (await res.json()) as { data?: Array<any> };
-  const data = Array.isArray(json.data) ? json.data : [];
-  return data.map((a) => {
-    const lat = typeof a.lat === 'number' ? a.lat : parseFloat(String(a.lat));
-    const lng = typeof a.lon === 'number' ? a.lon : parseFloat(String(a.lon));
-    const fullAddress = typeof a.full_address === 'string' ? a.full_address : undefined;
-    const displayName =
-      fullAddress || [a.city, a.road, a.house_number].filter(Boolean).join(', ') || `${lat}, ${lng}`;
 
-    return {
-      lat,
-      lng,
-      display_name: displayName,
-      full_address: fullAddress,
-    };
-  });
+  const response = await api.searchAddresses(q.trim());
+  return (response || [])
+    .filter((item) => typeof (item.latitude ?? item.lat) === 'number' && typeof (item.longitude ?? item.lon) === 'number')
+    .map((item, index) => ({
+      lat: Number(item.latitude ?? item.lat),
+      lng: Number(item.longitude ?? item.lon),
+      display_name:
+        item.display_name ||
+        item.full_address ||
+        item.address_text ||
+        [item.city, item.street || item.road, item.house || item.house_number].filter(Boolean).join(', '),
+      place_id: index,
+    }));
 }
 
 type Tab = 'home' | 'my' | 'all' | 'profile' | 'settings' | 'auth';
 type SheetMode = 'tabs' | 'marker' | 'rubric' | null;
+type SearchPanelSnap = 'collapsed' | 'half' | 'full';
+type Rubric = {
+  id: number;
+  title: string;
+  icon: React.ReactNode;
+  color: string;
+  description: string;
+  path: string;
+};
 
 export default function MapScreen() {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<maplibregl.Map | null>(null);
   const markerInstanceRef = useRef<maplibregl.Marker | null>(null);
   const userLocationMarkerRef = useRef<maplibregl.Marker | null>(null);
-
-  type Incident = {
-    id: number;
-    category_title: string;
-    title: string;
-    description: string;
-    address_text: string;
-    latitude: number;
-    longitude: number;
-    photos?: Array<{ id: number; file_url: string }>;
-  };
+  const incidentMarkersRef = useRef<maplibregl.Marker[]>([]);
 
   const [center, setCenter] = useState({ lat: 53.2, lng: 50.15 });
+  const centerRef = useRef(center);
   const [zoom] = useState(13);
   const [marker, setMarker] = useState<{
     lat: number;
@@ -115,8 +292,21 @@ export default function MapScreen() {
   const [locating, setLocating] = useState(false);
   const [activeTab, setActiveTab] = useState<Tab>('home');
   const [sheetMode, setSheetMode] = useState<SheetMode>(null);
-  const [settingsView, setSettingsView] = useState<'main' | 'about' | 'feedback'>('main');
-  const [themeMode, setThemeMode] = useState<'light' | 'dark'>('dark');
+  const [settingsView, setSettingsView] = useState<'main' | 'about' | 'feedback' | 'profile'>('main');
+  const [pushNotificationsEnabled, setPushNotificationsEnabled] = useState(() => {
+    if (typeof window === 'undefined') return true;
+    return window.localStorage.getItem('notifications-push') !== 'false';
+  });
+  const [emailNotificationsEnabled, setEmailNotificationsEnabled] = useState(() => {
+    if (typeof window === 'undefined') return true;
+    return window.localStorage.getItem('notifications-email') !== 'false';
+  });
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [publishedIncidents, setPublishedIncidents] = useState<Incident[]>([]);
+  const [myIncidents, setMyIncidents] = useState<Incident[]>([]);
+  const [dataError, setDataError] = useState<string | null>(null);
+  const [reportSubmitting, setReportSubmitting] = useState(false);
+  const [reportFeedback, setReportFeedback] = useState<string | null>(null);
   const [selectedRubric, setSelectedRubric] = useState<Rubric | null>(null);
   const [rubricStep, setRubricStep] = useState<'select' | 'create' | 'preview'>('select');
   const [reportTitle, setReportTitle] = useState('');
@@ -127,84 +317,57 @@ export default function MapScreen() {
     id?: number;
     first_name?: string;
     last_name?: string;
+    email?: string;
     avatar_url?: string | null;
-    role?: string;
   } | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
     if (typeof window === 'undefined') return false;
     return !!window.localStorage.getItem('userId');
   });
-
-  const [incidentId, setIncidentId] = useState<number | null>(null);
-  const [incidentStatus, setIncidentStatus] = useState<'draft' | 'published' | null>(null);
-  const [incidentPhotosUploaded, setIncidentPhotosUploaded] = useState(false);
-  const [incidentBusy, setIncidentBusy] = useState(false);
-  const [incidentActionError, setIncidentActionError] = useState<string | null>(null);
-
-  const [incidents, setIncidents] = useState<Incident[]>([]);
-  const [incidentsError, setIncidentsError] = useState<string | null>(null);
-
-  const loadIncidents = useCallback(async () => {
-    setIncidentsError(null);
-    try {
-      const res = await fetch(`${API_PREFIX}/incidents`, { headers: { Accept: 'application/json' } });
-      if (!res.ok) {
-        const msg = await res.text().catch(() => res.statusText);
-        throw new Error(msg || 'Failed to load incidents');
-      }
-      const data = (await res.json()) as unknown;
-      if (!Array.isArray(data)) {
-        throw new Error('Unexpected incidents response');
-      }
-      setIncidents(data as Incident[]);
-    } catch (e) {
-      setIncidentsError(e instanceof Error ? e.message : 'Failed to load incidents');
-      setIncidents([]);
-    } finally {
-    }
-  }, []);
-
-  const incidentsPopupRef = useRef<maplibregl.Popup | null>(null);
+  const [isAvatarUploading, setIsAvatarUploading] = useState(false);
+  const [localAvatarPreviewUrl, setLocalAvatarPreviewUrl] = useState<string | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const profileAvatarInputRef = useRef<HTMLInputElement | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const suggestionsRef = useRef<HTMLDivElement>(null);
-  const longPressRef = useRef<{
-    timer: ReturnType<typeof setTimeout> | null;
-    coords: { lat: number; lng: number } | null;
-  }>({ timer: null, coords: null });
   const closeSheetTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sheetDragStartYRef = useRef<number | null>(null);
   const [sheetDragY, setSheetDragY] = useState(0);
   const [isSheetDragging, setIsSheetDragging] = useState(false);
+  const [isSheetClosing, setIsSheetClosing] = useState(false);
+  const [searchPanelSnap, setSearchPanelSnap] = useState<SearchPanelSnap>('collapsed');
+  const [searchPanelDragHeight, setSearchPanelDragHeight] = useState<number | null>(null);
+  const [isSearchPanelDragging, setIsSearchPanelDragging] = useState(false);
+  const [selectedMapTagFilter, setSelectedMapTagFilter] = useState<string | null>(null);
+  const [selectedMapIncidentId, setSelectedMapIncidentId] = useState<number | null>(null);
+  const [selectedProfileStatusFilter, setSelectedProfileStatusFilter] = useState<string>('Все');
+  const [selectedProfileCategoryFilter, setSelectedProfileCategoryFilter] = useState<string>('Все');
+  const [renderExpandedSearchContent, setRenderExpandedSearchContent] = useState(false);
+  const profileScrollRef = useRef<HTMLDivElement | null>(null);
+  const profileTouchStartYRef = useRef<number | null>(null);
+  const searchPanelTouchStartYRef = useRef<number | null>(null);
+  const searchPanelStartSnapRef = useRef<SearchPanelSnap>('collapsed');
+  const searchPanelTouchTargetRef = useRef<HTMLElement | null>(null);
+  const searchPanelCanDragRef = useRef(false);
+  const searchPanelSettleTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const searchPanelContentShowTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const searchPanelContentHideTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const searchPanelDragRafRef = useRef<number | null>(null);
+  const searchPanelPendingHeightRef = useRef<number | null>(null);
+  const expandedSearchContentRef = useRef<HTMLDivElement | null>(null);
 
-  type Rubric = {
-    id: number;
-    title: string;
-    icon: React.ReactNode;
-    color: string;
-    description: string;
-    path: string;
-  };
+  useEffect(() => {
+    centerRef.current = center;
+  }, [center]);
 
-  const rubrics: Rubric[] = [
-    {
-      id: 1,
-      title: 'Нарушение правил парковки',
-      icon: <Car className="h-8 w-8" />,
-      color: 'from-blue-500 to-blue-600',
-      description:
-        'Неправильная парковка, место для инвалидов и другие нарушения',
-      path: '/create/parking',
-    },
-    {
-      id: 2,
-      title: 'Просроченные товары',
-      icon: <ShoppingBag className="h-8 w-8" />,
-      color: 'from-purple-500 to-pink-500',
-      description: 'Продажа просроченных продуктов в магазинах',
-      path: '/create/products',
-    },
-  ];
+  const rubrics: Rubric[] = categories.map((category) => ({
+    id: category.id,
+    title: category.title,
+    icon: <span className="text-xl" aria-hidden>{getCategoryEmoji(category.title)}</span>,
+    color: getCategoryColorClass(category.title),
+    description: `Сообщить о проблеме по категории «${category.title}».`,
+    path: `/create/category/${category.id}`,
+  }));
 
   const fetchSuggestions = useCallback(
     (q: string) => {
@@ -218,11 +381,12 @@ export default function MapScreen() {
         .then((data) => {
           // сортируем варианты по близости к текущему центру, но показываем все
           type WithDist = GeocodingResult & { _dist: number };
+          const currentCenter = centerRef.current;
           const withDistance: WithDist[] = data.map((s) => ({
             ...s,
             _dist:
-              Math.pow(s.lat - center.lat, 2) +
-              Math.pow(s.lng - center.lng, 2),
+              Math.pow(s.lat - currentCenter.lat, 2) +
+              Math.pow(s.lng - currentCenter.lng, 2),
           }));
           withDistance.sort((a, b) => a._dist - b._dist);
           const sorted: GeocodingResult[] = withDistance.map(
@@ -233,7 +397,7 @@ export default function MapScreen() {
         })
         .finally(() => setLoading(false));
     },
-    [center]
+      []
   );
 
   useEffect(() => {
@@ -244,43 +408,68 @@ export default function MapScreen() {
     };
   }, [query, fetchSuggestions]);
 
-  // Подгружаем опубликованные инциденты для отображения на карте.
   useEffect(() => {
-    void loadIncidents();
-  }, [loadIncidents]);
+    let cancelled = false;
 
-  // Держим инциденты "постоянно" актуальными без кнопок.
-  useEffect(() => {
-    const interval = window.setInterval(() => {
-      void loadIncidents();
-    }, 15000);
-    return () => window.clearInterval(interval);
-  }, [loadIncidents]);
+    const loadInitialData = async () => {
+      try {
+        const [loadedCategories, loadedIncidents] = await Promise.all([
+          api.listCategories(),
+          api.listIncidents(),
+        ]);
 
-  // Подтягиваем профиль текущего пользователя по сохранённому userId.
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const userId = window.localStorage.getItem('userId');
-    if (!userId) return;
+        if (cancelled) return;
 
-    fetch(`/v1/users/${userId}`)
-      .then(async (res) => (res.ok ? res.json() : null))
-      .then((json: unknown) => {
-        if (!json) return;
-        const raw =
-          Array.isArray(json) ? json[0] : (json as { data?: unknown }).data ?? json;
-        if (raw && typeof raw === 'object')
-          setUserProfile(
-            raw as {
-              id?: number;
-              first_name?: string;
-              last_name?: string;
-              avatar_url?: string | null;
-              role?: string;
-            },
-          );
-      })
-      .catch(() => {});
+        setCategories(loadedCategories);
+        setPublishedIncidents(loadedIncidents);
+        setDataError(null);
+      } catch (error) {
+        if (cancelled) return;
+        setDataError(error instanceof Error ? error.message : 'Не удалось загрузить данные карты.');
+        setCategories([]);
+        setPublishedIncidents([]);
+      }
+
+      if (typeof window === 'undefined') return;
+      const userId = window.localStorage.getItem('userId');
+      if (!userId) return;
+
+      try {
+        const rawUser = window.localStorage.getItem('auth:user');
+        if (rawUser) {
+          const parsedUser = JSON.parse(rawUser) as {
+            id?: number;
+            first_name?: string;
+            last_name?: string;
+            email?: string;
+            avatar_url?: string | null;
+          };
+          if (!cancelled) {
+            setUserProfile({
+              id: parsedUser.id,
+              first_name: parsedUser.first_name,
+              last_name: parsedUser.last_name,
+              email: parsedUser.email,
+              avatar_url: parsedUser.avatar_url ?? null,
+            });
+          }
+        }
+
+        const mine = await api.listMyIncidents({ status: 'all' });
+        if (cancelled) return;
+        setMyIncidents(mine);
+      } catch {
+        if (!cancelled) {
+          setMyIncidents([]);
+        }
+      }
+    };
+
+    void loadInitialData();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -300,73 +489,58 @@ export default function MapScreen() {
     return () => document.removeEventListener('click', handler);
   }, []);
 
-  const handleSelectSuggestion = (s: GeocodingResult) => {
+  const handleSelectSuggestion = useCallback((s: GeocodingResult) => {
     setCenter({ lat: s.lat, lng: s.lng });
     setMarker({ lat: s.lat, lng: s.lng, address: s.display_name });
+    setSelectedMapIncidentId(null);
     setQuery(s.display_name);
     setShowSuggestions(false);
-  };
+  }, []);
 
   const handlePlaceMarker = useCallback((lat: number, lng: number) => {
-    // Ставим координаты сразу, а адрес подтягиваем асинхронно через maps/reverse
-    setMarker({ lat, lng, address: 'Выбранная точка' });
+    setMarker({ lat, lng });
     setCenter({ lat, lng });
+    setSelectedMapIncidentId(null);
     setSheetMode('marker');
-    const params = new URLSearchParams({ lat: String(lat), lon: String(lng) });
-    fetch(`${API_PREFIX}/maps/reverse?${params.toString()}`, {
-      headers: { Accept: 'application/json' },
-    })
-      .then(async (r) => {
-        if (!r.ok) throw new Error('Failed to reverse geocode');
-        return r.json() as Promise<{ data?: any }>;
-      })
-      .then((json) => {
-        const addr = json?.data;
-        const fullAddress =
-          typeof addr?.full_address === 'string' ? addr.full_address : undefined;
-        const city = typeof addr?.city === 'string' ? addr.city : undefined;
-        const road = typeof addr?.road === 'string' ? addr.road : undefined;
-        const houseNumber =
-          typeof addr?.house_number === 'string' ? addr.house_number : undefined;
 
-        const derivedAddress =
-          fullAddress ||
-          [road, houseNumber].filter(Boolean).join(', ') ||
-          `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
-
+    api.reverseGeocode(lat, lng)
+      .then((data) => {
+        const district = data.street || data.road || data.city;
         setMarker((prev) =>
           prev
             ? {
                 ...prev,
-                address: derivedAddress,
-                district: city || undefined,
+                address:
+                  data.display_name ||
+                  data.full_address ||
+                  data.address_text ||
+                  [data.city, data.street || data.road, data.house || data.house_number].filter(Boolean).join(', ') ||
+                  'Выбранная точка',
+                district: district || undefined,
               }
             : prev
         );
       })
-      .catch(() => {
+      .catch((error) => {
+        const isOutOfZone = error instanceof Error && /area yet|вне зоны|not work in this area/i.test(error.message);
         setMarker((prev) =>
           prev
             ? {
                 ...prev,
-                address: `${lat.toFixed(6)}, ${lng.toFixed(6)}`,
+                address: prev.address || (isOutOfZone ? 'Точка вне зоны работы сервиса' : 'Выбранная точка'),
               }
             : prev
         );
       });
   }, []);
 
-  const clearMarker = () => {
+  const clearMarker = useCallback(() => {
     setMarker(null);
-    setIncidentId(null);
-    setIncidentStatus(null);
-    setIncidentPhotosUploaded(false);
-    setIncidentBusy(false);
-    setIncidentActionError(null);
+    setSelectedMapIncidentId(null);
     if (sheetMode === 'marker') {
       setSheetMode(null);
     }
-  };
+  }, [sheetMode]);
 
   const handleSheetTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
     if (!isSheetOpen) return;
@@ -405,7 +579,10 @@ export default function MapScreen() {
 
     const threshold = 80;
     if (sheetDragY > threshold) {
-      closeSheet();
+      softCloseSheet();
+      setIsSheetDragging(false);
+      sheetDragStartYRef.current = null;
+      return;
     }
 
     setSheetDragY(0);
@@ -413,7 +590,7 @@ export default function MapScreen() {
     sheetDragStartYRef.current = null;
   };
 
-  const handleLocateMe = () => {
+  const handleLocateMe = useCallback(() => {
     if (!navigator.geolocation || !mapInstanceRef.current) return;
     setLocating(true);
     navigator.geolocation.getCurrentPosition(
@@ -456,26 +633,324 @@ export default function MapScreen() {
         maximumAge: 60000,
       }
     );
-  };
+  }, []);
 
-  const handleCreateReport = () => {
+  const handleCreateReport = useCallback(() => {
     if (!marker) return;
-    setIncidentId(null);
-    setIncidentStatus(null);
-    setIncidentPhotosUploaded(false);
-    setIncidentBusy(false);
-    setIncidentActionError(null);
     setSelectedRubric(null);
     setRubricStep('select');
     setSheetMode('rubric');
-  };
+  }, [marker]);
 
-  const copyCoords = () => {
+  const incidentPreviews = useMemo(
+    () => publishedIncidents.map(mapIncidentToPreview).filter((item): item is IncidentPreview => Boolean(item)),
+    [publishedIncidents]
+  );
+
+  const nearbyIncidents = useMemo(
+    () =>
+      incidentPreviews
+        .map((incident) => {
+          const distanceKm = calculateDistanceKm(center, {
+            lat: incident.lat,
+            lng: incident.lng,
+          });
+
+          return {
+            ...incident,
+            distanceKm,
+            distanceLabel: distanceKm < 1 ? `${Math.round(distanceKm * 1000)} м` : `${distanceKm.toFixed(1)} км`,
+          };
+        })
+        .sort((a, b) => a.distanceKm - b.distanceKm),
+    [center, incidentPreviews]
+  );
+
+  const nearbyIncidentsById = useMemo(
+    () => new Map(nearbyIncidents.map((incident) => [incident.id, incident])),
+    [nearbyIncidents]
+  );
+
+  const normalizedSelectedMapTagFilter = useMemo(
+    () => (selectedMapTagFilter ? normalizeFilterToken(selectedMapTagFilter) : ''),
+    [selectedMapTagFilter]
+  );
+
+  const filteredNearbyIncidents = useMemo(
+    () =>
+      nearbyIncidents.filter((incident) => matchesIncidentByTagFilter(incident, normalizedSelectedMapTagFilter)),
+    [nearbyIncidents, normalizedSelectedMapTagFilter]
+  );
+
+  const selectedMapIncident = useMemo(() => {
+    if (selectedMapIncidentId == null) return null;
+
+    const incidentWithDistance = nearbyIncidentsById.get(selectedMapIncidentId);
+    if (incidentWithDistance) return incidentWithDistance;
+
+    return incidentPreviews.find((incident) => incident.id === selectedMapIncidentId) ?? null;
+  }, [incidentPreviews, nearbyIncidentsById, selectedMapIncidentId]);
+
+  const selectedMapIncidentDistanceLabel = useMemo(() => {
+    if (selectedMapIncidentId == null) return null;
+    return nearbyIncidentsById.get(selectedMapIncidentId)?.distanceLabel ?? null;
+  }, [nearbyIncidentsById, selectedMapIncidentId]);
+
+  const selectedMapIncidentDetails = useMemo(() => {
+    if (!selectedMapIncident) return null;
+
+    const details = INCIDENT_DETAILS[selectedMapIncident.id];
+    if (details) return details;
+
+    return {
+      description:
+        selectedMapIncident.description ||
+        `Заявка по категории «${selectedMapIncident.category}». Статус: ${selectedMapIncident.status}. Требуется проверка ответственной службы и контроль выполнения.`,
+      tags: selectedMapIncident.tags?.length
+        ? selectedMapIncident.tags
+        : [selectedMapIncident.category.toLowerCase().replace(/\s+/g, ''), 'обращение', 'контроль'],
+      photoUrls: selectedMapIncident.photoUrls || [],
+    };
+  }, [selectedMapIncident]);
+
+  const mapVisibleIncidents = useMemo(
+    () =>
+      incidentPreviews.filter((incident) => matchesIncidentByTagFilter(incident, normalizedSelectedMapTagFilter)),
+    [incidentPreviews, normalizedSelectedMapTagFilter]
+  );
+
+  const userActiveIncidents = useMemo(
+    () => myIncidents.map(mapIncidentToPreview).filter((item): item is IncidentPreview => Boolean(item)).slice(0, 20),
+    [myIncidents]
+  );
+
+  const userTrustProgress = useMemo(() => {
+    const confirmed = userActiveIncidents.filter((incident) => {
+      const lowStatus = incident.status.toLowerCase();
+      return lowStatus.includes('опублик') || lowStatus.includes('работ') || lowStatus.includes('провер');
+    }).length;
+
+    const useful = userActiveIncidents.filter((incident) => incident.status.toLowerCase().includes('опублик')).length;
+    const reputationScore = Math.min(100, 25 + useful * 12 + confirmed * 5);
+
+    const level =
+      reputationScore >= 85
+        ? 'Эксперт'
+        : reputationScore >= 60
+          ? 'Надёжный'
+          : reputationScore >= 35
+            ? 'Активный'
+            : 'Новичок';
+
+    return { confirmed, useful, reputationScore, level };
+  }, [userActiveIncidents]);
+
+  const profileStatusFilters = useMemo(() => ['Все', 'Черновик', 'Опубликовано'], []);
+
+  const profileCategoryFilters = useMemo(
+    () => ['Все', ...Array.from(new Set(userActiveIncidents.map((incident) => incident.category)))],
+    [userActiveIncidents]
+  );
+
+  const filteredUserActiveIncidents = useMemo(() => {
+    return userActiveIncidents.filter((incident) => {
+      const lowStatus = incident.status.toLowerCase();
+      const statusMatch =
+        selectedProfileStatusFilter === 'Все' ||
+        (selectedProfileStatusFilter === 'Черновик' && lowStatus.includes('чернов')) ||
+        (selectedProfileStatusFilter === 'Опубликовано' && lowStatus.includes('опублик'));
+
+      const categoryMatch =
+        selectedProfileCategoryFilter === 'Все' || incident.category === selectedProfileCategoryFilter;
+
+      return statusMatch && categoryMatch;
+    });
+  }, [selectedProfileCategoryFilter, selectedProfileStatusFilter, userActiveIncidents]);
+
+  const quickSearchChips = useMemo(() => {
+    const fromCategories = categories.slice(0, 5).map((category) => category.title);
+    return fromCategories.length > 0 ? fromCategories : QUICK_SEARCH_CHIPS_FALLBACK;
+  }, [categories]);
+
+  const openCreateReportFromSearch = useCallback(() => {
+    const markerPoint = marker ?? {
+      lat: center.lat,
+      lng: center.lng,
+      address: 'Точка в центре карты',
+    };
+
+    if (!marker) {
+      setMarker(markerPoint);
+    }
+
+    setSelectedRubric(null);
+    setRubricStep('select');
+    setSheetMode('rubric');
+    setShowSuggestions(false);
+    setSearchPanelSnap('collapsed');
+  }, [center.lat, center.lng, marker]);
+
+  const handleQuickSearch = useCallback((value: string) => {
+    setSelectedMapTagFilter((prev) => (prev === value ? null : value));
+    setSearchPanelSnap((prev) => (prev === 'collapsed' ? 'half' : prev));
+    setShowSuggestions(false);
+  }, []);
+
+  type IncidentSelectionTarget = Pick<IncidentPreview, 'id' | 'lat' | 'lng' | 'title'>;
+
+  const focusIncidentOnMap = useCallback((incident: IncidentSelectionTarget) => {
+    setSelectedMapIncidentId(incident.id);
+    setCenter({ lat: incident.lat, lng: incident.lng });
+    setMarker({
+      lat: incident.lat,
+      lng: incident.lng,
+      address: incident.title,
+    });
+    setSearchPanelSnap('full');
+    setShowSuggestions(false);
+  }, []);
+
+  const scheduleSearchPanelHeight = useCallback((nextHeight: number) => {
+    searchPanelPendingHeightRef.current = nextHeight;
+
+    if (searchPanelDragRafRef.current !== null) {
+      return;
+    }
+
+    searchPanelDragRafRef.current = requestAnimationFrame(() => {
+      const pendingHeight = searchPanelPendingHeightRef.current;
+      searchPanelPendingHeightRef.current = null;
+      searchPanelDragRafRef.current = null;
+
+      if (pendingHeight == null) return;
+
+      setSearchPanelDragHeight((prev) => {
+        if (prev !== null && Math.abs(prev - pendingHeight) < 0.5) {
+          return prev;
+        }
+        return pendingHeight;
+      });
+    });
+  }, []);
+
+  const copyCoords = useCallback(() => {
     if (!marker) return;
     navigator.clipboard.writeText(
       `${marker.lat.toFixed(6)}, ${marker.lng.toFixed(6)}`
     );
+  }, [marker]);
+
+  const normalizeAvatarValue = (raw: unknown): string | null => {
+    if (typeof raw !== 'string' || !raw.trim()) return null;
+    const value = raw.trim();
+    if (value.startsWith('/v1/avatars/')) {
+      return value.replace('/v1/avatars/', '');
+    }
+    return value;
   };
+
+  const handleProfileAvatarFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file || !userProfile?.id) return;
+
+    const previewUrl = URL.createObjectURL(file);
+    setLocalAvatarPreviewUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return previewUrl;
+    });
+
+    setIsAvatarUploading(true);
+
+    const uploadCandidates = [
+      withApiBase(`/v1/users/${userProfile.id}/avatar`),
+      withApiBase('/v1/avatars/upload'),
+      withApiBase('/v1/avatars'),
+    ];
+
+    let resolvedAvatar: string | null = null;
+    let uploadedOnServer = false;
+
+    for (const endpoint of uploadCandidates) {
+      try {
+        const formData = new FormData();
+        formData.append('avatar', file);
+        formData.append('file', file);
+        formData.append('image', file);
+
+        const res = await fetch(endpoint, {
+          method: 'POST',
+          body: formData,
+        });
+
+        if (!res.ok) continue;
+        uploadedOnServer = true;
+
+        const json = await res.json().catch(() => null);
+        const payload = (json as { data?: Record<string, unknown> } | null)?.data ?? (json as Record<string, unknown> | null) ?? {};
+
+        resolvedAvatar =
+          normalizeAvatarValue(payload.avatar_url) ||
+          normalizeAvatarValue(payload.avatar) ||
+          normalizeAvatarValue(payload.filename) ||
+          normalizeAvatarValue(payload.file) ||
+          null;
+
+        if (resolvedAvatar || uploadedOnServer) break;
+      } catch {
+        continue;
+      }
+    }
+
+    if (uploadedOnServer && resolvedAvatar) {
+      try {
+        await fetch(withApiBase(`/v1/users/${userProfile.id}`), {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ avatar_url: resolvedAvatar }),
+        });
+      } catch {
+      }
+    }
+
+    if (uploadedOnServer) {
+      try {
+        const profileRes = await fetch(withApiBase(`/v1/users/${userProfile.id}`));
+        if (profileRes.ok) {
+          const json = await profileRes.json();
+          const raw =
+            Array.isArray(json) ? json[0] : (json as { data?: unknown }).data ?? json;
+
+          if (raw && typeof raw === 'object') {
+            setUserProfile(
+              raw as {
+                id?: number;
+                first_name?: string;
+                last_name?: string;
+                email?: string;
+                avatar_url?: string | null;
+              },
+            );
+          }
+        }
+      } catch {
+      }
+    }
+
+    setIsAvatarUploading(false);
+    setLocalAvatarPreviewUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return null;
+    });
+    event.target.value = '';
+  };
+
+  useEffect(() => {
+    return () => {
+      if (localAvatarPreviewUrl) {
+        URL.revokeObjectURL(localAvatarPreviewUrl);
+      }
+    };
+  }, [localAvatarPreviewUrl]);
 
   const handleReportPhotosChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files) return;
@@ -496,157 +971,79 @@ export default function MapScreen() {
     };
   }, [reportPhotos]);
 
-  const getRequesterHeaders = (): Record<string, string> | null => {
-    if (typeof window === 'undefined') return null;
-    const userId = window.localStorage.getItem('userId');
-    if (!userId) return null;
-    return {
-      'X-User-ID': userId,
-      'X-User-Role': userProfile?.role ?? 'user',
-    };
-  };
+  const refreshIncidents = useCallback(async () => {
+    const [allIncidents, mine] = await Promise.all([
+      api.listIncidents(),
+      isAuthenticated ? api.listMyIncidents({ status: 'all' }) : Promise.resolve([] as Incident[]),
+    ]);
 
-  const readAPIErrorMessage = async (res: Response): Promise<string> => {
-    const fallback = res.statusText || 'Request failed';
-    const text = await res.text().catch(() => '');
-    if (!text) return fallback;
-    try {
-      const json = JSON.parse(text) as { error?: string; message?: string; detail?: string };
-      return json.error || json.message || json.detail || fallback;
-    } catch {
-      return text || fallback;
-    }
-  };
+    setPublishedIncidents(allIncidents);
+    setMyIncidents(mine);
+  }, [isAuthenticated]);
 
-  const uploadIncidentPhotos = async (id: number): Promise<void> => {
-    if (incidentPhotosUploaded) return;
-    const headers = getRequesterHeaders();
-    if (!headers) throw new Error('Необходима авторизация');
-
-    if (reportPhotos.length === 0) {
-      setIncidentPhotosUploaded(true);
+  useEffect(() => {
+    if (!isAuthenticated) {
+      setMyIncidents([]);
       return;
     }
 
-    const formData = new FormData();
-    reportPhotos.forEach((file) => {
-      formData.append('photos', file, file.name);
-    });
+    const userId = typeof window !== 'undefined' ? window.localStorage.getItem('userId') : null;
+    if (!userId) return;
 
-    const res = await fetch(`${API_PREFIX}/incidents/${id}/photos`, {
-      method: 'POST',
-      headers,
-      body: formData,
-    });
-    if (!res.ok) {
-      throw new Error(await readAPIErrorMessage(res));
+    void Promise.all([
+      api.getUser(Number(userId)).then(setUserProfile),
+      api.listMyIncidents({ status: 'all' }).then(setMyIncidents),
+    ]).catch(() => undefined);
+  }, [isAuthenticated]);
+
+  const submitReport = useCallback(async (status: 'draft' | 'published') => {
+    if (!selectedRubric || !marker || !reportTitle.trim() || !reportText.trim()) {
+      setReportFeedback('Заполните тему, описание и выберите рубрику.');
+      return;
     }
 
-    setIncidentPhotosUploaded(true);
-  };
+    setReportSubmitting(true);
+    setReportFeedback(null);
 
-  const ensureIncidentWithStatus = async (
-    targetStatus: 'draft' | 'published',
-  ): Promise<number> => {
-    const headers = getRequesterHeaders();
-    if (!headers) throw new Error('Необходима авторизация');
-    if (!marker) throw new Error('Выберите точку на карте');
-    if (!selectedRubric) throw new Error('Выберите рубрику');
-
-    const addressText = (marker.address ?? '').trim();
-    if (!addressText) throw new Error('Адрес не найден');
-    if (!reportTitle.trim()) throw new Error('Тема обязательна');
-    if (!reportText.trim()) throw new Error('Описание обязательно');
-
-    setIncidentActionError(null);
-    setIncidentBusy(true);
     try {
-      let id = incidentId;
+      const addressParts = (marker.address || '').split(',').map((part) => part.trim()).filter(Boolean);
+      const createdIncident = await api.createIncident({
+        category_id: selectedRubric.id,
+        title: reportTitle.trim(),
+        description: reportText.trim(),
+        status,
+        address_text: marker.address,
+        city: addressParts[0],
+        street: addressParts[1],
+        house: addressParts[2],
+        latitude: marker.lat,
+        longitude: marker.lng,
+      });
 
-      if (id == null) {
-        const res = await fetch(`${API_PREFIX}/incidents`, {
-          method: 'POST',
-          headers: { ...headers, 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            category_id: selectedRubric.id,
-            title: reportTitle.trim(),
-            description: reportText.trim(),
-            status: targetStatus,
-            address_text: addressText,
-            latitude: marker.lat,
-            longitude: marker.lng,
-          }),
-        });
-        if (!res.ok) {
-          throw new Error(await readAPIErrorMessage(res));
-        }
-
-        const created = (await res.json()) as { id?: unknown; status?: string };
-        if (typeof created.id !== 'number') {
-          throw new Error('Server did not return incident id');
-        }
-        id = created.id;
-
-        setIncidentId(id);
-        setIncidentStatus((created.status as 'draft' | 'published' | undefined) ?? targetStatus);
-        // На новой сущности заново загружаем фото (если они были выбраны)
-        setIncidentPhotosUploaded(false);
-      } else if (incidentStatus !== targetStatus) {
-        const res = await fetch(`${API_PREFIX}/incidents/${id}`, {
-          method: 'PATCH',
-          headers: { ...headers, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ status: targetStatus }),
-        });
-        if (!res.ok) {
-          throw new Error(await readAPIErrorMessage(res));
-        }
-
-        const updated = (await res.json()) as { status?: string };
-        setIncidentStatus((updated.status as 'draft' | 'published' | undefined) ?? targetStatus);
+      if (reportPhotos.length > 0) {
+        await api.uploadIncidentPhotos(createdIncident.id, reportPhotos);
       }
 
-      await uploadIncidentPhotos(id);
-      return id;
-    } finally {
-      setIncidentBusy(false);
-    }
-  };
-
-  const ensureIncidentCreated = async (): Promise<number> => {
-    if (incidentId != null) {
-      if (!incidentPhotosUploaded) {
-        setIncidentBusy(true);
-        try {
-          await uploadIncidentPhotos(incidentId);
-          return incidentId;
-        } finally {
-          setIncidentBusy(false);
-        }
-      }
-      return incidentId;
-    }
-
-    // Если инцидент ещё не создан — создаём черновик, чтобы потом печатать/отправлять документы.
-    return ensureIncidentWithStatus('draft');
-  };
-
-  const handlePublishReport = async () => {
-    try {
-      await ensureIncidentWithStatus('published');
-      setIncidentId(null);
-      setIncidentStatus(null);
-      setIncidentPhotosUploaded(false);
-      setIncidentActionError(null);
-
+      await refreshIncidents();
+      setReportFeedback(status === 'published' ? 'Обращение опубликовано.' : 'Черновик сохранён.');
       setReportTitle('');
       setReportText('');
       setReportPhotos([]);
       setSelectedRubric(null);
       setRubricStep('select');
-      closeSheet();
-    } catch (e) {
-      setIncidentActionError(e instanceof Error ? e.message : 'Не удалось опубликовать обращение');
+      setSelectedMapIncidentId(createdIncident.id);
+      setSheetMode(null);
+      setMarker(null);
+      setActiveTab('home');
+    } catch (error) {
+      setReportFeedback(error instanceof Error ? error.message : 'Не удалось сохранить обращение.');
+    } finally {
+      setReportSubmitting(false);
     }
+  }, [marker, refreshIncidents, reportPhotos, reportText, reportTitle, selectedRubric]);
+
+  const handlePublishReport = () => {
+    void submitReport('published');
   };
 
   const getCurrentReportPayload = () => ({
@@ -688,49 +1085,12 @@ export default function MapScreen() {
       .join('\n');
   };
 
-  const handleSaveDraft = async () => {
-    try {
-      await ensureIncidentWithStatus('draft');
-      setIncidentActionError(null);
-    } catch (e) {
-      setIncidentActionError(e instanceof Error ? e.message : 'Не удалось сохранить черновик');
-    }
+  const handleSaveDraft = () => {
+    void submitReport('draft');
   };
 
   const handleSaveToFiles = async () => {
     try {
-      // Сначала пробуем скачать документ, сгенерированный бекендом.
-      // Если что-то пошло не так — используем локальный PDF fallback.
-      try {
-        const id = await ensureIncidentCreated();
-        const headers = getRequesterHeaders();
-        if (!headers) throw new Error('Необходима авторизация');
-
-        const res = await fetch(`${API_PREFIX}/incidents/${id}/document/download`, {
-          method: 'GET',
-          headers,
-        });
-        if (res.ok) {
-          const html = await res.text();
-          const disposition = res.headers.get('Content-Disposition') ?? '';
-          const filenameMatch = disposition.match(/filename="?([^"]+)"?/i);
-          const filename = filenameMatch?.[1] ?? `incident-${id}.html`;
-
-          const blob = new Blob([html], { type: 'text/html; charset=utf-8' });
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = filename;
-          document.body.appendChild(a);
-          a.click();
-          a.remove();
-          URL.revokeObjectURL(url);
-          return;
-        }
-      } catch (backendErr) {
-        console.error('Backend download failed, fallback to local PDF', backendErr);
-      }
-
       const html = buildReportHtml();
       const safeTitle = reportTitle.trim() || 'obrashenie';
       const timestamp = new Date()
@@ -820,81 +1180,13 @@ export default function MapScreen() {
     }
   };
 
-  const handleSendEmail = async () => {
-    try {
-      const id = await ensureIncidentCreated();
-      const headers = getRequesterHeaders();
-      if (!headers) throw new Error('Необходима авторизация');
-
-      const res = await fetch(`${API_PREFIX}/incidents/${id}/document/email`, {
-        method: 'POST',
-        headers: { ...headers, 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
-      });
-
-      if (!res.ok) throw new Error(await readAPIErrorMessage(res));
-
-      setIncidentActionError(null);
-      console.log('Документ отправлен на email');
-    } catch (e) {
-      setIncidentActionError(e instanceof Error ? e.message : 'Не удалось отправить документ на email');
-      console.error('handleSendEmail error', e);
-    }
+  const handleSendEmail = () => {
+    // Заглушка: отправка документа на email пользователя
+    console.log('Отправить обращение на email пользователя', getCurrentReportPayload());
   };
 
-  const handlePrint = async () => {
+  const handlePrint = () => {
     try {
-      // Сначала пытаемся напечатать документ, сгенерированный бекендом
-      try {
-        const id = await ensureIncidentCreated();
-        const headers = getRequesterHeaders();
-        if (!headers) throw new Error('Необходима авторизация');
-
-        const res = await fetch(`${API_PREFIX}/incidents/${id}/document/print`, {
-          method: 'GET',
-          headers,
-        });
-        if (!res.ok) throw new Error(await readAPIErrorMessage(res));
-
-        const html = await res.text();
-
-        const iframe = document.createElement('iframe');
-        iframe.style.position = 'fixed';
-        iframe.style.right = '0';
-        iframe.style.bottom = '0';
-        iframe.style.width = '0';
-        iframe.style.height = '0';
-        iframe.style.border = '0';
-        document.body.appendChild(iframe);
-
-        const frameWindow = iframe.contentWindow;
-        if (!frameWindow) {
-          document.body.removeChild(iframe);
-          throw new Error('Не удалось инициализировать окно печати');
-        }
-
-        frameWindow.document.open();
-        frameWindow.document.write(html);
-        frameWindow.document.close();
-
-        setTimeout(() => {
-          try {
-            frameWindow.focus();
-            frameWindow.print();
-          } finally {
-            setTimeout(() => {
-              if (document.body.contains(iframe)) {
-                document.body.removeChild(iframe);
-              }
-            }, 1000);
-          }
-        }, 0);
-
-        return;
-      } catch (backendErr) {
-        console.error('Backend print failed, fallback to local render', backendErr);
-      }
-
       const baseHtml = buildReportHtml();
       const firstPhoto = reportPhotoPreviews[0];
       const photoHtml = firstPhoto
@@ -966,47 +1258,114 @@ export default function MapScreen() {
     }
   };
 
-  const zoomIn = () => {
+  const zoomIn = useCallback(() => {
     mapInstanceRef.current?.zoomIn();
-  };
-  const zoomOut = () => {
-    mapInstanceRef.current?.zoomOut();
-  };
+  }, []);
 
-  const openTab = (tab: Tab) => {
+  const zoomOut = useCallback(() => {
+    mapInstanceRef.current?.zoomOut();
+  }, []);
+
+  const closeSheet = useCallback(() => {
+    if (isSheetClosing || sheetMode === null) return;
+
+    if (closeSheetTimeoutRef.current) {
+      clearTimeout(closeSheetTimeoutRef.current);
+      closeSheetTimeoutRef.current = null;
+    }
+
+    setIsSheetClosing(true);
+    setIsSheetDragging(false);
+    sheetDragStartYRef.current = null;
+
+    closeSheetTimeoutRef.current = setTimeout(() => {
+      setSheetMode((prev) => {
+        if (prev === 'marker' || prev === 'rubric') {
+          setMarker(null);
+        }
+        return null;
+      });
+      setActiveTab('home');
+      setSheetDragY(0);
+      setIsSheetClosing(false);
+      closeSheetTimeoutRef.current = null;
+    }, 420);
+  }, [isSheetClosing, sheetMode]);
+
+  const openTab = useCallback((tab: Tab) => {
     if (tab === 'home') {
-      // Нажатие на «Главная» просто скрывает вкладки
-      setSheetMode(null);
+      // Нажатие на «Главная» закрывает простыню плавно
+      closeSheet();
       return;
     }
+    if (closeSheetTimeoutRef.current) {
+      clearTimeout(closeSheetTimeoutRef.current);
+      closeSheetTimeoutRef.current = null;
+    }
+    setIsSheetClosing(false);
+    setSheetDragY(0);
     setActiveTab(tab);
     if (tab === 'settings') {
       setSettingsView('main');
     }
     setSheetMode('tabs');
-  };
+  }, [closeSheet]);
 
-  const closeSheet = () => {
-    setSheetMode((prev) => {
-      if (prev === 'marker' || prev === 'rubric') {
-        setMarker(null);
-        setIncidentId(null);
-        setIncidentStatus(null);
-        setIncidentPhotosUploaded(false);
-        setIncidentBusy(false);
-        setIncidentActionError(null);
-      }
-      return null;
-    });
+  const isSheetOpen = sheetMode !== null;
+  const isSheetVisible = isSheetOpen || isSheetClosing;
+
+  // Мягкое закрытие: даём анимации контейнера плавно
+  // уехать вниз так же, как при нажатии на фон / крестик.
+  const softCloseSheet = useCallback(() => {
+    if (sheetMode === null) return;
     if (closeSheetTimeoutRef.current) {
       clearTimeout(closeSheetTimeoutRef.current);
       closeSheetTimeoutRef.current = null;
     }
-    // Мгновенно возвращаем подсветку на «Главная» как базовую вкладку
-    setActiveTab('home');
-  };
+    closeSheet();
+  }, [closeSheet, sheetMode]);
 
-  const isSheetOpen = sheetMode !== null;
+  // Блокируем зум страницы (pinch, ctrl+wheel) вне области карты,
+  // чтобы зум оставался только на самой карте.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const mapElement = mapRef.current;
+
+    const isInsideMap = (target: EventTarget | null) => {
+      if (!mapElement || !(target instanceof Node)) return false;
+      return mapElement.contains(target);
+    };
+
+    const handleWheel = (event: WheelEvent) => {
+      if (!event.ctrlKey) return;
+      if (isInsideMap(event.target)) return;
+      event.preventDefault();
+    };
+
+    const handleGesture = (event: Event) => {
+      if (isInsideMap(event.target)) return;
+      event.preventDefault();
+    };
+
+    window.addEventListener('wheel', handleWheel, { passive: false });
+    window.addEventListener('gesturestart', handleGesture as EventListener, {
+      passive: false,
+    });
+    window.addEventListener('gesturechange', handleGesture as EventListener, {
+      passive: false,
+    });
+    window.addEventListener('gestureend', handleGesture as EventListener, {
+      passive: false,
+    });
+
+    return () => {
+      window.removeEventListener('wheel', handleWheel);
+      window.removeEventListener('gesturestart', handleGesture as EventListener);
+      window.removeEventListener('gesturechange', handleGesture as EventListener);
+      window.removeEventListener('gestureend', handleGesture as EventListener);
+    };
+  }, []);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -1023,7 +1382,6 @@ export default function MapScreen() {
           ? 'dark'
           : 'light';
 
-    setThemeMode(initial);
     window.localStorage.setItem('theme-mode', initial);
 
     if (initial === 'dark') {
@@ -1033,22 +1391,11 @@ export default function MapScreen() {
     }
   }, []);
 
-  const applyTheme = (mode: 'light' | 'dark') => {
-    const root = document.documentElement;
-    if (mode === 'dark') {
-      root.classList.add('dark');
-    } else {
-      root.classList.remove('dark');
-    }
-    window.localStorage.setItem('theme-mode', mode);
-    window.localStorage.setItem('theme-simple', mode);
-  };
-
-  const toggleTheme = () => {
-    const next: 'light' | 'dark' = themeMode === 'dark' ? 'light' : 'dark';
-    setThemeMode(next);
-    applyTheme(next);
-  };
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem('notifications-push', String(pushNotificationsEnabled));
+    window.localStorage.setItem('notifications-email', String(emailNotificationsEnabled));
+  }, [emailNotificationsEnabled, pushNotificationsEnabled]);
 
   useEffect(() => {
     const container = mapRef.current;
@@ -1062,97 +1409,9 @@ export default function MapScreen() {
     });
 
     map.addControl(new maplibregl.NavigationControl(), 'top-right');
+    map.doubleClickZoom.disable();
 
-    const ensureIncidentsLayer = () => {
-      if (!map.getSource(INCIDENTS_SOURCE_ID)) {
-        map.addSource(INCIDENTS_SOURCE_ID, {
-          type: 'geojson',
-          data: {
-            type: 'FeatureCollection',
-            features: [],
-          },
-        });
-      }
-      if (!map.getLayer(INCIDENTS_LAYER_ID)) {
-        map.addLayer({
-          id: INCIDENTS_LAYER_ID,
-          type: 'circle',
-          source: INCIDENTS_SOURCE_ID,
-          paint: {
-            'circle-radius': 7,
-            'circle-color': '#0ea5e9',
-            'circle-stroke-color': '#ffffff',
-            'circle-stroke-width': 2,
-            'circle-opacity': 0.9,
-          },
-        });
-      }
-
-      map.on('click', INCIDENTS_LAYER_ID, (e) => {
-        const feature = e.features?.[0];
-        const lngLat = e.lngLat;
-        if (!feature || !lngLat) return;
-
-        const p = feature.properties as Record<string, unknown> | null | undefined;
-        const title = typeof p?.title === 'string' ? p.title : 'Инцидент';
-        const description =
-          typeof p?.description === 'string' ? (p.description as string) : '';
-        const firstPhotoUrl =
-          typeof p?.first_photo_url === 'string' ? (p.first_photo_url as string) : '';
-
-        const safeTitle = escapeHtml(title);
-        const safeDescription = escapeHtml(description);
-        const safePhotoUrl = escapeHtml(firstPhotoUrl);
-
-        // Всегда держим только один popup и даём его закрыть.
-        incidentsPopupRef.current?.remove();
-
-        const htmlParts: string[] = [
-          `<div style="font-weight:700; font-size:13px; line-height:1.3; color:#111827;">${safeTitle}</div>`,
-        ];
-        if (safeDescription) {
-          htmlParts.push(
-            `<div style="margin-top:4px; font-size:12px; color:#4b5563; max-height:4.5em; overflow:hidden; text-overflow:ellipsis;">${safeDescription}</div>`,
-          );
-        }
-        if (safePhotoUrl) {
-          htmlParts.push(
-            `<div style="margin-top:8px;"><img src="${safePhotoUrl}" alt="" style="display:block;width:100%;max-width:220px;max-height:140px;border-radius:10px;object-fit:cover;" /></div>`,
-          );
-        }
-        const html = `<div style="background:#ffffff;border-radius:12px;padding:10px 12px;box-shadow:0 10px 30px rgba(0,0,0,0.18);max-width:260px;">${htmlParts.join(
-          '',
-        )}</div>`;
-
-        const popup = new maplibregl.Popup({
-          closeButton: true,
-          closeOnClick: true,
-          closeOnMove: true,
-          offset: 10,
-        })
-          .setLngLat(lngLat)
-          .setHTML(html)
-          .addTo(map);
-
-        incidentsPopupRef.current = popup;
-      });
-
-      map.on('mouseenter', INCIDENTS_LAYER_ID, () => {
-        map.getCanvas().style.cursor = 'pointer';
-      });
-      map.on('mouseleave', INCIDENTS_LAYER_ID, () => {
-        map.getCanvas().style.cursor = '';
-      });
-    };
-
-    const escapeHtml = (s: string) =>
-      s.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;');
-
-    map.on('load', () => {
-      ensureIncidentsLayer();
-    });
-
-    map.on('click', (e) => {
+    map.on('dblclick', (e) => {
       handlePlaceMarker(e.lngLat.lat, e.lngLat.lng);
     });
 
@@ -1161,42 +1420,11 @@ export default function MapScreen() {
       handlePlaceMarker(e.lngLat.lat, e.lngLat.lng);
     });
 
-    const cancelLongPress = () => {
-      if (longPressRef.current.timer) {
-        clearTimeout(longPressRef.current.timer);
-        longPressRef.current.timer = null;
-      }
-      longPressRef.current.coords = null;
-    };
-
-    const handlePointerDown = (e: MapMouseEvent) => {
-      if (e.originalEvent.button !== 0) return;
-      const lngLat = e.lngLat;
-      longPressRef.current.coords = { lat: lngLat.lat, lng: lngLat.lng };
-      longPressRef.current.timer = setTimeout(() => {
-        longPressRef.current.timer = null;
-        const c = longPressRef.current.coords;
-        if (c) handlePlaceMarker(c.lat, c.lng);
-        longPressRef.current.coords = null;
-      }, 600);
-    };
-
-    map.on('mousedown', handlePointerDown);
-    map.on('mouseup', cancelLongPress);
-    map.on('mouseleave', cancelLongPress);
-    map.on('mousemove', (e) => {
-      if (!longPressRef.current.timer || !longPressRef.current.coords) return;
-      const c = longPressRef.current.coords;
-      const dx = Math.abs(e.lngLat.lng - c.lng);
-      const dy = Math.abs(e.lngLat.lat - c.lat);
-      if (dx > 0.001 || dy > 0.001) cancelLongPress();
-    });
-
     mapInstanceRef.current = map;
 
     return () => {
-      incidentsPopupRef.current?.remove();
-      incidentsPopupRef.current = null;
+      incidentMarkersRef.current.forEach((incidentMarker) => incidentMarker.remove());
+      incidentMarkersRef.current = [];
       map.remove();
       mapInstanceRef.current = null;
       markerInstanceRef.current = null;
@@ -1214,39 +1442,105 @@ export default function MapScreen() {
   useEffect(() => {
     const map = mapInstanceRef.current;
     if (!map) return;
-    map.flyTo({ center: [center.lng, center.lat], zoom });
-  }, [center, zoom]);
 
-  // Обновляем GeoJSON для слоя инцидентов при изменении списка.
+    incidentMarkersRef.current.forEach((incidentMarker) => incidentMarker.remove());
+    incidentMarkersRef.current = [];
+
+    const getIncidentColor = (category: string) => {
+      const normalizedCategory = category.toLowerCase();
+      if (normalizedCategory.includes('жкх') || normalizedCategory.includes('благо')) return '#10b981';
+      if (normalizedCategory.includes('дорог')) return '#f59e0b';
+      if (normalizedCategory.includes('парков')) return '#0ea5e9';
+      if (normalizedCategory.includes('торгов')) return '#f97316';
+      if (normalizedCategory.includes('эколог')) return '#22c55e';
+      return '#ef4444';
+    };
+
+    const getCategoryIcon = (category: string, tags?: string[]) => {
+      const normalizedTags = (tags ?? []).map((tag) => tag.toLowerCase().replace(/^#/, ''));
+
+      if (normalizedTags.some((tag) => tag.includes('жкх') || tag.includes('благо') || tag.includes('двор'))) {
+        return '🏠';
+      }
+      if (normalizedTags.some((tag) => tag.includes('дорог') || tag.includes('яма') || tag.includes('тротуар'))) {
+        return '🛣️';
+      }
+      if (normalizedTags.some((tag) => tag.includes('парков') || tag.includes('авто'))) {
+        return '🚗';
+      }
+      if (normalizedTags.some((tag) => tag.includes('торгов') || tag.includes('магаз') || tag.includes('просроч'))) {
+        return '🛒';
+      }
+      if (normalizedTags.some((tag) => tag.includes('эко') || tag.includes('мусор') || tag.includes('свалк'))) {
+        return '🌿';
+      }
+
+      const normalizedCategory = category.toLowerCase();
+      if (normalizedCategory.includes('жкх') || normalizedCategory.includes('благо')) return '🏠';
+      if (normalizedCategory.includes('дорог')) return '🛣️';
+      if (normalizedCategory.includes('парков')) return '🚗';
+      if (normalizedCategory.includes('торгов')) return '🛒';
+      if (normalizedCategory.includes('эколог')) return '🌿';
+      return '📍';
+    };
+
+    const getStatusText = (status: string) => {
+      const normalizedStatus = status.toLowerCase();
+      if (normalizedStatus.includes('опублик')) return 'Опубликовано';
+      if (normalizedStatus.includes('чернов')) return 'Черновик';
+      if (normalizedStatus.includes('нов')) return 'Новая';
+      if (normalizedStatus.includes('работ')) return 'В работе';
+      if (normalizedStatus.includes('провер')) return 'Проверка';
+      return status;
+    };
+
+    const markers = mapVisibleIncidents.map((incident) => {
+      const pinColor = getIncidentColor(incident.category);
+      const incidentTags = incident.tags;
+      const categoryIcon = getCategoryIcon(incident.category, incidentTags);
+      const statusText = getStatusText(incident.status);
+      const el = document.createElement('button');
+      el.type = 'button';
+      el.setAttribute('aria-label', incident.title);
+      el.setAttribute('title', `${incident.title} • ${incident.category} • ${statusText}`);
+      el.innerHTML = `
+        <div style="position: relative; transform: translateY(-8px); display: inline-flex; flex-direction: column; align-items: center; gap: 3px;">
+          <div style="width: 30px; height: 30px; border-radius: 9999px; border: 3px solid white; background: ${pinColor}; box-shadow: 0 4px 12px rgba(15,23,42,0.38); color: white; font-size: 15px; display: flex; align-items: center; justify-content: center; text-shadow: 0 1px 2px rgba(15,23,42,0.55);">
+            ${categoryIcon}
+          </div>
+          <div style="width: 10px; height: 10px; border-radius: 9999px; background: white; border: 2px solid ${pinColor}; box-shadow: 0 2px 6px rgba(15,23,42,0.25);"></div>
+          </div>
+        </div>
+      `;
+      el.style.background = 'transparent';
+      el.style.border = 'none';
+      el.style.padding = '0';
+      el.style.cursor = 'pointer';
+
+      el.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        focusIncidentOnMap(incident);
+      });
+
+      return new maplibregl.Marker({ element: el, anchor: 'bottom' })
+        .setLngLat([incident.lng, incident.lat])
+        .addTo(map);
+    });
+
+    incidentMarkersRef.current = markers;
+
+    return () => {
+      markers.forEach((incidentMarker) => incidentMarker.remove());
+      incidentMarkersRef.current = [];
+    };
+  }, [mapVisibleIncidents, focusIncidentOnMap]);
+
   useEffect(() => {
     const map = mapInstanceRef.current;
     if (!map) return;
-    const src = map.getSource(INCIDENTS_SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
-    if (!src) return;
-
-    const features = incidents
-      .filter((i) => Number.isFinite(i.latitude) && Number.isFinite(i.longitude))
-      .map((i) => ({
-        type: 'Feature' as const,
-        geometry: {
-          type: 'Point' as const,
-          coordinates: [i.longitude, i.latitude] as [number, number],
-        },
-        properties: {
-          id: i.id,
-          title: i.title,
-          category_title: i.category_title,
-          description: i.description,
-          address_text: i.address_text,
-          first_photo_url: i.photos && i.photos[0]?.file_url ? i.photos[0].file_url : '',
-        },
-      }));
-
-    src.setData({
-      type: 'FeatureCollection',
-      features,
-    });
-  }, [incidents]);
+    map.flyTo({ center: [center.lng, center.lat], zoom });
+  }, [center, zoom]);
 
   useEffect(() => {
     const map = mapInstanceRef.current;
@@ -1260,41 +1554,13 @@ export default function MapScreen() {
     if (marker) {
       const el = document.createElement('div');
       el.className = 'map-marker';
+      const draftPinColor = '#64748b';
       el.innerHTML = `
-        <div style="
-          position: relative;
-          transform: translateY(-8px);
-        ">
-          <div style="
-            width: 32px;
-            height: 32px;
-            background: #f43f5e;
-            border-radius: 50% 50% 50% 0;
-            border: 3px solid white;
-            box-shadow: 0 4px 10px rgba(0,0,0,0.45);
-            transform: rotate(-45deg);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-          ">
-            <div style="
-              width: 8px;
-              height: 8px;
-              background: white;
-              border-radius: 50%;
-            "></div>
+        <div style="position: relative; transform: translateY(-8px); display: inline-flex; flex-direction: column; align-items: center; gap: 3px;">
+          <div style="width: 30px; height: 30px; border-radius: 9999px; border: 3px solid white; background: ${draftPinColor}; box-shadow: 0 4px 12px rgba(15,23,42,0.38); color: white; font-size: 18px; font-weight: 700; display: flex; align-items: center; justify-content: center; text-shadow: 0 1px 2px rgba(15,23,42,0.55); line-height: 1;">
+            ?
           </div>
-          <div style="
-            position: absolute;
-            left: 50%;
-            bottom: -6px;
-            width: 10px;
-            height: 10px;
-            border-radius: 50%;
-            background: white;
-            border: 2px solid #f43f5e;
-            transform: translateX(-50%);
-          "></div>
+          <div style="width: 10px; height: 10px; border-radius: 9999px; background: white; border: 2px solid ${draftPinColor}; box-shadow: 0 2px 6px rgba(15,23,42,0.25);"></div>
         </div>
       `;
       const m = new maplibregl.Marker({ element: el, anchor: 'bottom' })
@@ -1316,8 +1582,327 @@ export default function MapScreen() {
     };
   }, [marker]);
 
+  const handleProfileWheel = useCallback((event: React.WheelEvent<HTMLDivElement>) => {
+    const el = event.currentTarget;
+    if (el.scrollTop <= 0 && event.deltaY < 0) {
+      event.preventDefault();
+      softCloseSheet();
+    }
+  }, [softCloseSheet]);
+
+  const handleProfileTouchStart = useCallback((event: React.TouchEvent<HTMLDivElement>) => {
+    profileTouchStartYRef.current = event.touches[0]?.clientY ?? null;
+    setSheetDragY(0);
+    setIsSheetDragging(false);
+  }, []);
+
+  const handleProfileTouchMove = useCallback((event: React.TouchEvent<HTMLDivElement>) => {
+    const startY = profileTouchStartYRef.current;
+    const el = profileScrollRef.current;
+    if (startY == null || !el) return;
+
+    const currentY = event.touches[0]?.clientY ?? startY;
+    const delta = currentY - startY;
+
+    if (el.scrollTop <= 0 && delta > 0) {
+      event.preventDefault();
+      setIsSheetDragging(true);
+      setSheetDragY(delta);
+    }
+  }, []);
+
+  const getSearchPanelSnapHeightPx = useCallback((snap: SearchPanelSnap) => {
+    if (typeof window === 'undefined') return 160;
+    if (snap === 'full') return window.innerHeight;
+    if (snap === 'half') return window.innerHeight * 0.44;
+    return 160;
+  }, []);
+
+  const getNearestSearchPanelSnap = useCallback((heightPx: number): SearchPanelSnap => {
+    const points = [
+      { snap: 'collapsed' as SearchPanelSnap, height: getSearchPanelSnapHeightPx('collapsed') },
+      { snap: 'half' as SearchPanelSnap, height: getSearchPanelSnapHeightPx('half') },
+      { snap: 'full' as SearchPanelSnap, height: getSearchPanelSnapHeightPx('full') },
+    ];
+
+    return points.reduce((best, point) => {
+      const bestDiff = Math.abs(best.height - heightPx);
+      const currentDiff = Math.abs(point.height - heightPx);
+      return currentDiff < bestDiff ? point : best;
+    }).snap;
+  }, [getSearchPanelSnapHeightPx]);
+
+  const handleSearchPanelTouchStart = useCallback((event: React.TouchEvent<HTMLDivElement>) => {
+    if (searchPanelSettleTimeoutRef.current) {
+      clearTimeout(searchPanelSettleTimeoutRef.current);
+      searchPanelSettleTimeoutRef.current = null;
+    }
+
+    searchPanelTouchStartYRef.current = event.touches[0]?.clientY ?? null;
+    searchPanelStartSnapRef.current = searchPanelSnap;
+    searchPanelTouchTargetRef.current = event.target as HTMLElement | null;
+    searchPanelCanDragRef.current = false;
+  }, [searchPanelSnap]);
+
+  const handleSearchPanelTouchMove = useCallback((event: React.TouchEvent<HTMLDivElement>) => {
+    const startY = searchPanelTouchStartYRef.current;
+    if (startY == null) return;
+
+    const currentY = event.touches[0]?.clientY ?? startY;
+    const delta = currentY - startY;
+    const absDelta = Math.abs(delta);
+
+    const touchTarget = searchPanelTouchTargetRef.current;
+    const isFromHandle = Boolean(touchTarget?.closest('[data-search-drag-handle="true"]'));
+    const scrollableParent = touchTarget?.closest('[data-search-scrollable="true"]') as HTMLElement | null;
+    const canScrollUp = Boolean(scrollableParent && scrollableParent.scrollTop > 0);
+    const canScrollDown = Boolean(
+      scrollableParent &&
+        scrollableParent.scrollTop + scrollableParent.clientHeight < scrollableParent.scrollHeight - 1
+    );
+    const isFullSnap = searchPanelStartSnapRef.current === 'full';
+    const canStartDragFromContent =
+      !scrollableParent ||
+      (isFullSnap
+        ? delta > 0 && !canScrollUp && absDelta > 16
+        : (delta > 0 && !canScrollUp) || (delta < 0 && !canScrollDown));
+
+    if (!isSearchPanelDragging) {
+      const activationThreshold = isFromHandle ? 6 : isFullSnap ? 12 : 6;
+
+      if (absDelta < activationThreshold) return;
+
+      if (isFromHandle || canStartDragFromContent) {
+        searchPanelCanDragRef.current = true;
+        setIsSearchPanelDragging(true);
+        setSearchPanelDragHeight(getSearchPanelSnapHeightPx(searchPanelStartSnapRef.current));
+      } else {
+        searchPanelCanDragRef.current = false;
+        return;
+      }
+    }
+
+    if (!searchPanelCanDragRef.current) return;
+
+    event.preventDefault();
+
+    const isActiveIncidentSwipeDownMode =
+      selectedMapIncidentId !== null && searchPanelStartSnapRef.current === 'full' && delta > 0;
+
+    if (isActiveIncidentSwipeDownMode) {
+      return;
+    }
+
+    const minHeight = getSearchPanelSnapHeightPx('collapsed');
+    const maxHeight = getSearchPanelSnapHeightPx('full');
+    const baseHeight = getSearchPanelSnapHeightPx(searchPanelStartSnapRef.current);
+    let nextHeight = baseHeight - delta;
+
+    if (nextHeight < minHeight) {
+      nextHeight = minHeight - (minHeight - nextHeight) * 0.35;
+    } else if (nextHeight > maxHeight) {
+      nextHeight = maxHeight + (nextHeight - maxHeight) * 0.35;
+    }
+
+    scheduleSearchPanelHeight(nextHeight);
+  }, [getSearchPanelSnapHeightPx, isSearchPanelDragging, scheduleSearchPanelHeight, selectedMapIncidentId]);
+
+  const handleSearchPanelTouchEnd = useCallback((event: React.TouchEvent<HTMLDivElement>) => {
+    const startY = searchPanelTouchStartYRef.current;
+    if (startY == null) return;
+
+    if (!searchPanelCanDragRef.current) {
+      searchPanelTouchStartYRef.current = null;
+      searchPanelTouchTargetRef.current = null;
+      setSearchPanelDragHeight(null);
+      setIsSearchPanelDragging(false);
+      return;
+    }
+
+    const endY = event.changedTouches[0]?.clientY ?? startY;
+    const delta = endY - startY;
+    const minHeight = getSearchPanelSnapHeightPx('collapsed');
+    const maxHeight = getSearchPanelSnapHeightPx('full');
+    const currentHeight =
+      searchPanelPendingHeightRef.current ??
+      searchPanelDragHeight ??
+      getSearchPanelSnapHeightPx(searchPanelStartSnapRef.current);
+    const clampedHeight = Math.min(maxHeight, Math.max(minHeight, currentHeight));
+    const threshold = 24;
+    let targetSnap = searchPanelStartSnapRef.current;
+
+    const isClosingOpenedIncidentBySwipeDown =
+      selectedMapIncidentId !== null &&
+      searchPanelStartSnapRef.current === 'full' &&
+      delta > threshold;
+
+    if (isClosingOpenedIncidentBySwipeDown) {
+      setSelectedMapIncidentId(null);
+      setShowSuggestions(false);
+      targetSnap = 'collapsed';
+    }
+
+    if (!isClosingOpenedIncidentBySwipeDown && Math.abs(delta) < threshold) {
+      targetSnap = searchPanelStartSnapRef.current;
+    } else if (!isClosingOpenedIncidentBySwipeDown) {
+      targetSnap = getNearestSearchPanelSnap(clampedHeight);
+    }
+
+    const targetHeight = getSearchPanelSnapHeightPx(targetSnap);
+    searchPanelPendingHeightRef.current = null;
+    setSearchPanelDragHeight(targetHeight);
+    setSearchPanelSnap(targetSnap);
+
+    searchPanelTouchStartYRef.current = null;
+    searchPanelTouchTargetRef.current = null;
+    searchPanelCanDragRef.current = false;
+    setIsSearchPanelDragging(false);
+
+    if (searchPanelSettleTimeoutRef.current) {
+      clearTimeout(searchPanelSettleTimeoutRef.current);
+      searchPanelSettleTimeoutRef.current = null;
+    }
+
+    searchPanelSettleTimeoutRef.current = setTimeout(() => {
+      setSearchPanelDragHeight(null);
+      searchPanelSettleTimeoutRef.current = null;
+    }, 320);
+  }, [getNearestSearchPanelSnap, getSearchPanelSnapHeightPx, searchPanelDragHeight, selectedMapIncidentId]);
+
+  useEffect(() => {
+    const shouldShowExpandedContent =
+      searchPanelSnap !== 'collapsed' || isSearchPanelDragging || searchPanelDragHeight !== null;
+
+    if (shouldShowExpandedContent) {
+      if (searchPanelContentHideTimeoutRef.current) {
+        clearTimeout(searchPanelContentHideTimeoutRef.current);
+        searchPanelContentHideTimeoutRef.current = null;
+      }
+
+      if (renderExpandedSearchContent) {
+        return;
+      }
+
+      if (searchPanelContentShowTimeoutRef.current) {
+        clearTimeout(searchPanelContentShowTimeoutRef.current);
+        searchPanelContentShowTimeoutRef.current = null;
+      }
+
+      const showDelayMs = isSearchPanelDragging ? 180 : 110;
+      searchPanelContentShowTimeoutRef.current = setTimeout(() => {
+        setRenderExpandedSearchContent(true);
+        searchPanelContentShowTimeoutRef.current = null;
+      }, showDelayMs);
+      return;
+    }
+
+    if (searchPanelContentShowTimeoutRef.current) {
+      clearTimeout(searchPanelContentShowTimeoutRef.current);
+      searchPanelContentShowTimeoutRef.current = null;
+    }
+
+    if (searchPanelContentHideTimeoutRef.current) {
+      clearTimeout(searchPanelContentHideTimeoutRef.current);
+      searchPanelContentHideTimeoutRef.current = null;
+    }
+
+    searchPanelContentHideTimeoutRef.current = setTimeout(() => {
+      setRenderExpandedSearchContent(false);
+      searchPanelContentHideTimeoutRef.current = null;
+    }, 260);
+  }, [searchPanelDragHeight, searchPanelSnap, isSearchPanelDragging, renderExpandedSearchContent]);
+
+  useEffect(() => {
+    return () => {
+      if (searchPanelDragRafRef.current !== null) {
+        cancelAnimationFrame(searchPanelDragRafRef.current);
+        searchPanelDragRafRef.current = null;
+      }
+
+      if (searchPanelContentHideTimeoutRef.current) {
+        clearTimeout(searchPanelContentHideTimeoutRef.current);
+        searchPanelContentHideTimeoutRef.current = null;
+      }
+
+      if (searchPanelContentShowTimeoutRef.current) {
+        clearTimeout(searchPanelContentShowTimeoutRef.current);
+        searchPanelContentShowTimeoutRef.current = null;
+      }
+
+      if (searchPanelSettleTimeoutRef.current) {
+        clearTimeout(searchPanelSettleTimeoutRef.current);
+        searchPanelSettleTimeoutRef.current = null;
+      }
+    };
+  }, []);
+
+  const isAuthFullscreen = sheetMode === 'tabs' && activeTab === 'auth';
+  const collapsedSearchPanelHeight = getSearchPanelSnapHeightPx('collapsed');
+  const currentSearchPanelHeight = searchPanelDragHeight ?? getSearchPanelSnapHeightPx(searchPanelSnap);
+  const mapControlsLiftPx = Math.max(0, currentSearchPanelHeight - collapsedSearchPanelHeight);
+
+  const handleProfileFabClick = useCallback(() => {
+    if (isAuthenticated) {
+      openTab('profile');
+    } else {
+      openTab('auth');
+    }
+  }, [isAuthenticated, openTab]);
+
+  const handleSearchInputFocus = useCallback(() => {
+    setSearchPanelSnap((prev) => (prev === 'collapsed' ? 'half' : prev));
+    if (suggestions.length > 0) {
+      setShowSuggestions(true);
+    }
+  }, [suggestions.length]);
+
+  const handleSearchInputClear = useCallback(() => {
+    setQuery('');
+    setSuggestions([]);
+    setShowSuggestions(false);
+    inputRef.current?.focus();
+  }, []);
+
+  const handleAuthenticated = useCallback((payload: {
+    id?: number;
+    first_name?: string;
+    last_name?: string;
+    email?: string;
+    avatar_url?: string | null;
+  } | null) => {
+    if (!payload) return;
+    setIsAuthenticated(true);
+    setUserProfile(payload);
+    setActiveTab('home');
+    setSheetMode(null);
+  }, []);
+
+  const noopCloseSheet = useCallback(() => {}, []);
+  const topMapMessage = reportFeedback || dataError;
+
+  if (!isAuthenticated) {
+    return (
+      <div className="fixed inset-0 z-[1200] bg-background">
+        <AuthPanel
+          onAuthenticated={handleAuthenticated}
+          closeSheet={noopCloseSheet}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="fixed inset-0 z-0">
+      {topMapMessage && (
+        <div className="pointer-events-none absolute left-1/2 top-4 z-[1300] -translate-x-1/2 rounded-full border border-border/70 bg-background/90 px-4 py-2 text-xs text-foreground shadow-lg backdrop-blur">
+          {topMapMessage}
+        </div>
+      )}
+      {reportSubmitting && (
+        <div className="pointer-events-none absolute left-1/2 top-16 z-[1300] -translate-x-1/2 rounded-full border border-border/70 bg-background/90 px-4 py-2 text-xs text-foreground shadow-lg backdrop-blur">
+          Сохраняем обращение...
+        </div>
+      )}
       <div
         ref={mapRef}
         className="h-full w-full [&_.maplibregl-ctrl-attrib]:!hidden bg-slate-200 dark:bg-[#1a1a1a]"
@@ -1331,1468 +1916,216 @@ export default function MapScreen() {
       {/* Аватар профиля в левом верхнем углу.
           Когда открыта полноэкранная вкладка, он уходит под затемнение
           и становится визуально неактивным, как карта. */}
-      <button
-        type="button"
-        onClick={() => {
-          if (isAuthenticated) {
-            openTab('profile');
-          } else {
-            openTab('auth');
-          }
-        }}
-        aria-label="Аккаунт"
-        className={cn(
-          'absolute top-4 left-4 z-[900] flex h-14 w-14 items-center justify-center rounded-[22px] bg-white/90 text-slate-900 shadow-lg ring-1 ring-slate-200 dark:bg-black/85 dark:text-white dark:ring-white/10 focus:outline-none overflow-hidden transition-opacity duration-200',
-          sheetMode === 'tabs' && isSheetOpen ? 'opacity-50' : 'opacity-100'
-        )}
-      >
-        <span className="inline-flex rounded-full bg-gradient-to-tr from-rose-500 via-fuchsia-500 to-indigo-500 p-[2px]">
-          <Avatar className="h-10 w-10 rounded-full overflow-hidden bg-white dark:bg-slate-800">
-            {userProfile?.avatar_url && (
-              <AvatarImage src={resolveAvatarUrl(userProfile.avatar_url) ?? ''} alt="" className="object-cover" />
-            )}
-            <AvatarFallback className="rounded-full bg-white text-slate-900 dark:bg-slate-800 dark:text-white">
-              <User className="h-5 w-5" />
-            </AvatarFallback>
-          </Avatar>
-        </span>
-      </button>
+      <MapProfileFab
+        isDimmed={sheetMode === 'tabs' && isSheetOpen}
+        avatarSrc={localAvatarPreviewUrl ?? resolveAvatarUrl(userProfile?.avatar_url) ?? null}
+        onClick={handleProfileFabClick}
+      />
 
       {/* Справа: zoom + фильтр доносов + геолокация */}
-      <div className="absolute top-32 right-3 z-[950] flex flex-col gap-2">
-        {incidentsError && (
-          <div className="max-w-[220px] rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-[11px] text-red-700 shadow-lg dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-200">
-            {incidentsError}
-          </div>
-        )}
-        <button
-          type="button"
-          onClick={zoomIn}
-          className="flex items-center justify-center w-10 h-10 rounded-full bg-white/95 text-slate-900 shadow-lg border border-slate-200 dark:bg-[#1a1a1a]/95 dark:text-white dark:border-white/10"
-        >
-          <Plus className="h-4 w-4" />
-        </button>
-        <button
-          type="button"
-          onClick={zoomOut}
-          className="flex items-center justify-center w-10 h-10 rounded-full bg-white/95 text-slate-900 shadow-lg border border-slate-200 dark:bg-[#1a1a1a]/95 dark:text-white dark:border-white/10"
-        >
-          <Minus className="h-4 w-4" />
-        </button>
-        {/* кнопка слоёв/фильтра удалена */}
-        <button
-          type="button"
-          onClick={handleLocateMe}
-          className="flex items-center justify-center w-10 h-10 rounded-full bg-white/95 text-slate-900 shadow-lg border border-slate-200 dark:bg-[#1a1a1a]/95 dark:text-white dark:border-white/10"
-        >
-          {locating ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <Navigation className="h-4 w-4" />
-          )}
-        </button>
-      </div>
+      <MapControls
+        isHidden={searchPanelSnap === 'full'}
+        mapControlsLiftPx={mapControlsLiftPx}
+        isSearchPanelDragging={isSearchPanelDragging}
+        onZoomIn={zoomIn}
+        onZoomOut={zoomOut}
+        onLocateMe={handleLocateMe}
+        locating={locating}
+      />
 
-      {/* Нижняя панель: навигация + поиск */}
-      <div className="absolute inset-x-0 bottom-0 z-[900]">
-        <div className="glass-dock w-full rounded-t-[28px] rounded-b-none px-4 pt-3 pb-2">
+      {/* Нижняя панель: только поиск */}
+      <MapSearchPanel
+        searchPanelDragHeight={searchPanelDragHeight}
+        searchPanelSnap={searchPanelSnap}
+        isSearchPanelDragging={isSearchPanelDragging}
+        onTouchStart={handleSearchPanelTouchStart}
+        onTouchMove={handleSearchPanelTouchMove}
+        onTouchEnd={handleSearchPanelTouchEnd}
+      >
+
           {/* Поиск */}
-          <div className="flex items-center gap-2 bg-white/95 dark:bg-[#111827] rounded-full px-3 py-2 border border-slate-200 dark:border-white/10">
-            <input
-              ref={inputRef}
-              type="text"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              onFocus={() => suggestions.length > 0 && setShowSuggestions(true)}
-              placeholder="Поиск и выбор мест"
-              className="flex-1 bg-transparent text-sm text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-[#6b7280] outline-none"
-            />
-            {query && (
-              <button
-                type="button"
-                onClick={() => {
-                  setQuery('');
-                  setSuggestions([]);
-                  setShowSuggestions(false);
-                  inputRef.current?.focus();
-                }}
-                className="text-[#6b7280] hover:text-slate-900 dark:text-[#9ca3af] dark:hover:text-white"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            )}
-            {loading && <Loader2 className="h-4 w-4 animate-spin text-sky-400" />}
-          </div>
+          <SearchInputBar
+            inputRef={inputRef}
+            query={query}
+            loading={loading}
+            onQueryChange={setQuery}
+            onFocus={handleSearchInputFocus}
+            onClear={handleSearchInputClear}
+          />
 
-          {showSuggestions && suggestions.length > 0 && (
-            <div
-              ref={suggestionsRef}
-              className="mt-2 bg-white rounded-2xl shadow-2xl border border-slate-200 dark:bg-[#020617] dark:border-white/10 overflow-hidden max-h-60 overflow-y-auto"
-            >
-              {suggestions.map((s, idx) => (
-                <button
-                  key={s.full_address ?? s.display_name ?? idx}
-                  type="button"
-                  onClick={() => handleSelectSuggestion(s)}
-                  className="w-full px-4 py-3 text-left text-sm text-slate-900 dark:text-white hover:bg-slate-50 dark:hover:bg-white/5 flex items-start gap-3"
-                >
-                  <MapPin className="h-4 w-4 mt-0.5 shrink-0 text-sky-400" />
-                  <span className="line-clamp-2">{s.display_name}</span>
-                  <ChevronRight className="h-4 w-4 shrink-0 text-[#64748b]" />
-                </button>
-              ))}
+          {!selectedMapIncident && (
+            <div className="mt-1.5 flex items-center justify-between px-1 text-[11px] text-muted-foreground">
+              <span className="line-clamp-1">Поиск по адресам, рубрикам и точкам рядом</span>
+              <span className="shrink-0">{nearbyIncidents.length} рядом</span>
             </div>
           )}
-          {/* Навигация */}
-          <div className="mt-2 flex items-center justify-between text-xs font-medium text-[#94a3b8]">
-            <button
-              type="button"
-              onClick={() => openTab('home')}
-              className={cn(
-                'flex flex-col items-center flex-1 text-center',
-                activeTab === 'home' ? 'text-sky-400' : 'text-[#94a3b8] hover:text-white'
-              )}
-            >
-              <Home className="h-4 w-4 mb-0.5" />
-              <span>Главная</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => openTab('my')}
-              className={cn(
-                'flex flex-col items-center flex-1 text-center',
-                activeTab === 'my' ? 'text-sky-400' : 'text-[#94a3b8] hover:text-white'
-              )}
-            >
-              <FolderOpen className="h-4 w-4 mb-0.5" />
-              <span>Мои обращения</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => openTab('all')}
-              className={cn(
-                'flex flex-col items-center flex-1 text-center',
-                activeTab === 'all' ? 'text-sky-400' : 'text-[#94a3b8] hover:text-white'
-              )}
-            >
-              <MessageCircle className="h-4 w-4 mb-0.5" />
-              <span>Все обращения</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => openTab('settings')}
-              className={cn(
-                'flex flex-col items-center flex-1 text-center',
-                activeTab === 'settings' ? 'text-sky-400' : 'text-[#94a3b8] hover:text-white'
-              )}
-            >
-              <Settings className="h-4 w-4 mb-0.5" />
-              <span>Настройки</span>
-            </button>
-          </div>
-        </div>
-      </div>
+
+          {!selectedMapIncident && (
+            <QuickSearchChips
+              chips={quickSearchChips}
+              selectedChip={selectedMapTagFilter}
+              onSelectChip={handleQuickSearch}
+              getTagIcon={getTagIcon}
+            />
+          )}
+
+          {!selectedMapIncident && showSuggestions && suggestions.length > 0 && (
+            <SearchSuggestionsList
+              suggestionsRef={suggestionsRef}
+              suggestions={suggestions}
+              maxHeightClassName={
+                searchPanelSnap === 'full'
+                  ? 'max-h-96'
+                  : searchPanelSnap === 'half'
+                    ? 'max-h-72'
+                    : 'max-h-60'
+              }
+              onSelectSuggestion={handleSelectSuggestion}
+            />
+          )}
+
+          <MapSearchExpandedContent
+            renderExpandedSearchContent={renderExpandedSearchContent}
+            expandedSearchContentRef={expandedSearchContentRef}
+            searchPanelSnap={searchPanelSnap}
+            isSearchPanelDragging={isSearchPanelDragging}
+            selectedMapIncident={selectedMapIncident}
+            selectedMapIncidentDetails={selectedMapIncidentDetails}
+            selectedMapIncidentDistanceLabel={selectedMapIncidentDistanceLabel}
+            getTagIcon={getTagIcon}
+            openCreateReportFromSearch={openCreateReportFromSearch}
+            filteredNearbyIncidents={filteredNearbyIncidents}
+            focusIncidentOnMap={focusIncidentOnMap}
+          />
+      </MapSearchPanel>
 
       {/* Большая панель как в Яндекс.Картах */}
       <div
         className={cn(
           'absolute inset-0 z-[950] flex flex-col items-center justify-end pointer-events-none',
-          isSheetOpen ? 'opacity-100' : 'opacity-0 transition-opacity duration-200'
+          isSheetVisible ? 'opacity-100' : 'opacity-0 transition-opacity duration-300'
         )}
       >
         {/* затемнение карты */}
         <div
           className={cn(
-            'absolute inset-0 bg-black/40 transition-opacity duration-250',
-            isSheetOpen ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
+            'absolute inset-0 bg-black/40 transition-opacity duration-300',
+            isSheetVisible ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
           )}
           onClick={closeSheet}
         />
 
         {/* сама «простыня» */}
         <div
-          className="relative w-full max-w-xl pointer-events-auto transform transition-transform duration-350 ease-[cubic-bezier(0.22,0.61,0.36,1)]"
+          className={cn(
+            'relative w-full pointer-events-auto transform transition-transform duration-350 ease-[cubic-bezier(0.22,0.61,0.36,1)]',
+            isSheetClosing && 'pointer-events-none',
+            isAuthFullscreen ? 'max-w-none' : 'max-w-xl'
+          )}
           style={{
-            transform: isSheetOpen
+            transform: isSheetOpen && !isSheetClosing
               ? `translateY(${sheetDragY}px)`
               : 'translateY(calc(100% + 32px))',
             transition: isSheetDragging ? 'none' : undefined,
             touchAction: 'pan-y',
           }}
-          onTouchStart={handleSheetTouchStart}
-          onTouchMove={handleSheetTouchMove}
-          onTouchEnd={handleSheetTouchEnd}
+          onTouchStart={isAuthFullscreen ? undefined : handleSheetTouchStart}
+          onTouchMove={isAuthFullscreen ? undefined : handleSheetTouchMove}
+          onTouchEnd={isAuthFullscreen ? undefined : handleSheetTouchEnd}
         >
           <div
             className={cn(
-              'glass-dock rounded-t-[32px] rounded-b-none px-4 pt-3 pb-6 flex flex-col',
+              isAuthFullscreen
+                ? 'rounded-t-[28px] rounded-b-none h-screen px-0 pt-0 pb-[max(env(safe-area-inset-bottom),12px)] flex flex-col bg-transparent'
+                : 'glass-dock rounded-t-[32px] rounded-b-none px-4 pt-3 pb-6 flex flex-col',
               sheetMode === 'marker'
                 ? 'max-h-[65vh] overflow-hidden'
-                : 'h-[calc(100vh-80px)] overflow-hidden'
+                : isAuthFullscreen
+                  ? 'overflow-hidden'
+                  : 'h-[calc(100vh-80px)] overflow-hidden'
             )}
           >
             {/* Drag handle */}
-            <div
-              data-sheet-drag-handle="true"
-              className="flex items-center justify-center py-5 -mx-4"
-            >
-              <div className="h-1 w-12 rounded-full bg-slate-300/80 dark:bg-white/15" />
-            </div>
+            {!isAuthFullscreen && (
+              <div
+                data-sheet-drag-handle="true"
+                className="flex items-center justify-center py-5 -mx-4"
+              >
+                <div className="h-1 w-12 rounded-full bg-slate-300/80 dark:bg-white/15" />
+              </div>
+            )}
 
             {sheetMode === 'marker' && marker ? (
-              <div className="flex-1 overflow-y-auto overscroll-contain pb-2" data-sheet-scrollable="true">
-                <p className="text-[11px] uppercase tracking-wide text-[#64748b] mb-1">
-                  Выбранная точка
-                </p>
-                <h2 className="text-base font-semibold text-slate-900 dark:text-white line-clamp-3">
-                  {marker.address ?? 'Адрес уточняется…'}
-                </h2>
-                <p className="text-xs text-slate-600 dark:text-[#9ca3af] mt-1 flex items-center gap-2">
-                  {marker.lat.toFixed(6)}, {marker.lng.toFixed(6)}
-                  <button
-                    type="button"
-                    onClick={copyCoords}
-                    className="text-sky-600 hover:text-sky-500 dark:text-[#3b82f6] dark:hover:text-sky-400"
-                  >
-                    <Copy className="h-3 w-3" />
-                  </button>
-                </p>
-
-                <div className="mt-4">
-                  <button
-                    type="button"
-                    onClick={handleCreateReport}
-                    className="w-full flex items-center gap-3 rounded-2xl bg-sky-50 hover:bg-sky-100 border border-sky-100 text-slate-900 dark:bg-[#0b1120] dark:hover:bg-white/5 dark:border-white/10 px-3 py-3 text-left text-sm dark:text-white transition-colors"
-                  >
-                    <div className="flex h-9 w-9 items-center justify-center rounded-2xl bg-gradient-to-br from-sky-500 to-indigo-500 text-white">
-                      <MapPin className="h-4 w-4" />
-                    </div>
-                    <div className="flex-1">
-                      <p className="font-medium">Создать обращение</p>
-                      <p className="text-xs text-[#94a3b8]">
-                        Откроется выбор рубрики и оформление доноса
-                      </p>
-                    </div>
-                    <ChevronRight className="h-4 w-4 text-[#64748b]" />
-                  </button>
-                </div>
-              </div>
+              <MapMarkerSheetContent marker={marker} onCopyCoords={copyCoords} onCreateReport={handleCreateReport} />
             ) : sheetMode === 'rubric' && marker ? (
-              <div
-                className="flex-1 overflow-y-auto overscroll-contain pb-2 sheet-swap-enter"
-                data-sheet-scrollable="true"
-              >
-                {!selectedRubric ? (
-                  <>
-                    <div className="mb-1 flex items-center justify-between gap-3">
-                      <h2 className="text-base font-semibold text-slate-900 dark:text-white">
-                        Выбор рубрики
-                      </h2>
-                      <button
-                        type="button"
-                        onClick={closeSheet}
-                        className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 shadow-sm border border-slate-300 hover:bg-slate-300 hover:text-slate-800 dark:bg-black/40 dark:text-[#9ca3af] dark:border-transparent dark:hover:bg-black/60"
-                        aria-label="Закрыть"
-                      >
-                        <X className="h-4 w-4" />
-                      </button>
-                    </div>
-                    <p className="text-[11px] uppercase tracking-wide text-[#64748b] mb-1">
-                      Выберите тип инцидента
-                    </p>
-                    <p className="text-xs text-slate-600 dark:text-[#94a3b8] mb-4">
-                      По адресу {marker.address ?? 'адрес уточняется'}:{' '}
-                      {marker.lat.toFixed(6)}, {marker.lng.toFixed(6)}
-                    </p>
-
-                    <div className="space-y-3">
-                      {rubrics.map((rubric) => (
-                        <button
-                          key={rubric.id}
-                          type="button"
-                          onClick={() => {
-                            setSelectedRubric(rubric);
-                            setRubricStep('create');
-                          }}
-                          className="w-full group relative bg-white rounded-2xl border border-slate-200 hover:border-slate-300 dark:bg-[#020617] dark:border-white/10 dark:hover:border-white/20 transition-all overflow-hidden text-left"
-                        >
-                          <div
-                            className={`absolute left-0 top-0 bottom-0 w-1.5 bg-gradient-to-b ${rubric.color}`}
-                          />
-                          <div className="flex items-center p-5 pl-7">
-                            <div
-                              className={`flex-shrink-0 w-14 h-14 rounded-2xl bg-gradient-to-br ${rubric.color} flex items-center justify-center text-white opacity-90`}
-                            >
-                              {rubric.icon}
-                            </div>
-                            <div className="flex-1 text-left ml-4">
-                              <h3 className="text-sm font-medium text-slate-900 dark:text-white group-hover:text-sky-500 dark:group-hover:text-sky-400 transition-colors">
-                                {rubric.title}
-                              </h3>
-                              <p className="text-xs text-[#94a3b8] mt-0.5 line-clamp-2">
-                                {rubric.description}
-                              </p>
-                            </div>
-                            <ChevronRight className="h-4 w-4 text-[#64748b] group-hover:text-sky-400 group-hover:translate-x-1 transition-all" />
-                          </div>
-                        </button>
-                      ))}
-                    </div>
-                  </>
-                ) : rubricStep === 'create' ? (
-                  selectedRubric && (
-                    <div className="space-y-4">
-                      <div className="flex items-center justify-between gap-3">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setRubricStep('select');
-                            setSelectedRubric(null);
-                          }}
-                          className="text-xs text-slate-600 hover:text-slate-900 dark:text-[#94a3b8] dark:hover:text-white"
-                        >
-                          ← Назад к выбору рубрики
-                        </button>
-                        <button
-                          type="button"
-                          onClick={closeSheet}
-                          className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 shadow-sm border border-slate-300 hover:bg-slate-300 hover:text-slate-800 dark:bg-black/40 dark:text-[#9ca3af] dark:border-transparent dark:hover:bg-black/60"
-                          aria-label="Закрыть"
-                        >
-                          <X className="h-4 w-4" />
-                        </button>
-                      </div>
-
-                      <div>
-                        <p className="text-[11px] uppercase tracking-wide text-[#64748b] mb-1">
-                          Создание обращения
-                        </p>
-                        <h2 className="text-base font-semibold text-slate-900 dark:text-white">
-                          {selectedRubric.title}
-                        </h2>
-                        <p className="text-xs text-slate-600 dark:text-[#94a3b8] mt-1">
-                          {marker.address ?? 'Адрес уточняется'} —{' '}
-                          {marker.lat.toFixed(6)}, {marker.lng.toFixed(6)}
-                        </p>
-                      </div>
-
-                      <div className="space-y-3">
-                        <div className="space-y-1">
-                          <label className="text-xs font-medium text-slate-700 dark:text-slate-200">
-                            Тема обращения
-                          </label>
-                          <input
-                            type="text"
-                            value={reportTitle}
-                            onChange={(e) => setReportTitle(e.target.value)}
-                            placeholder="Кратко опишите проблему"
-                            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none dark:bg-[#020617] dark:border-white/10 dark:text-white"
-                          />
-                        </div>
-
-                        <div className="space-y-1">
-                          <label className="text-xs font-medium text-slate-700 dark:text-slate-200">
-                            Текст обращения
-                          </label>
-                          <textarea
-                            value={reportText}
-                            onChange={(e) => setReportText(e.target.value)}
-                            rows={4}
-                            placeholder="Опишите, что произошло, когда и при каких условиях"
-                            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none resize-none dark:bg-[#020617] dark:border-white/10 dark:text-white"
-                          />
-                        </div>
-
-                        <div className="space-y-2">
-                          <label className="text-xs font-medium text-slate-700 dark:text-slate-200">
-                            Фото
-                          </label>
-                          <label className="flex cursor-pointer items-center justify-center rounded-xl border border-dashed border-slate-300 bg-white/40 px-3 py-3 text-xs text-slate-600 hover:bg-slate-50 dark:border-white/10 dark:bg-[#020617] dark:text-[#94a3b8] dark:hover:bg-white/5">
-                            <span>Добавить фото</span>
-                            <input
-                              type="file"
-                              accept="image/*"
-                              multiple
-                              className="hidden"
-                              onChange={handleReportPhotosChange}
-                            />
-                          </label>
-                          {reportPhotos.length > 0 && (
-                            <p className="text-[11px] text-slate-500 dark:text-[#9ca3af]">
-                              Выбрано файлов: {reportPhotos.length}
-                            </p>
-                          )}
-                        </div>
-                      </div>
-
-                      <button
-                        type="button"
-                        onClick={() => setRubricStep('preview')}
-                        className="w-full rounded-2xl bg-sky-500 px-4 py-3 text-sm font-medium text-white shadow-md hover:bg-sky-600 active:bg-sky-700 transition-colors"
-                        disabled={!reportTitle || !reportText}
-                      >
-                        Далее
-                      </button>
-                    </div>
-                  )
-                ) : (
-                  selectedRubric && (
-                    <div className="space-y-4">
-                      <div className="flex items-center justify-between gap-3">
-                        <button
-                          type="button"
-                          onClick={() => setRubricStep('create')}
-                          className="text-xs text-slate-600 hover:text-slate-900 dark:text-[#94a3b8] dark:hover:text-white"
-                        >
-                          ← Назад к редактированию
-                        </button>
-                        <button
-                          type="button"
-                          onClick={closeSheet}
-                          className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 shadow-sm border border-slate-300 hover:bg-slate-300 hover:text-slate-800 dark:bg-black/40 dark:text-[#9ca3af] dark:border-transparent dark:hover:bg-black/60"
-                          aria-label="Закрыть"
-                        >
-                          <X className="h-4 w-4" />
-                        </button>
-                      </div>
-
-                      <div>
-                        <p className="text-[11px] uppercase tracking-wide text-[#64748b] mb-1">
-                          Предпросмотр
-                        </p>
-                        <h2 className="text-base font-semibold text-slate-900 dark:text-white">
-                          {reportTitle || 'Без темы'}
-                        </h2>
-                        <p className="text-xs text-slate-600 dark:text-[#94a3b8] mt-1">
-                          {selectedRubric.title} • {marker.address ?? 'Адрес уточняется'} •{' '}
-                          {marker.lat.toFixed(6)}, {marker.lng.toFixed(6)}
-                        </p>
-                      </div>
-
-                      <div className="rounded-2xl border border-slate-200 bg-white/70 p-4 text-sm text-slate-900 dark:border-white/10 dark:bg-[#020617] dark:text-white">
-                        <div className="whitespace-pre-wrap break-words">
-                          {reportText || 'Текст не указан'}
-                        </div>
-                      </div>
-
-                      <div className="space-y-2">
-                        <p className="text-xs font-medium text-slate-700 dark:text-slate-200">
-                          Фото
-                        </p>
-                        {reportPhotoPreviews.length === 0 ? (
-                          <p className="text-xs text-slate-500 dark:text-[#9ca3af]">Фото не добавлены</p>
-                        ) : (
-                          <>
-                            <div className="w-32">
-                              <img
-                                src={reportPhotoPreviews[0]}
-                                alt="Превью первого фото"
-                                className="aspect-square w-full rounded-xl object-cover border border-slate-200 dark:border-white/10"
-                              />
-                            </div>
-                            <p className="text-[11px] text-slate-500 dark:text-[#9ca3af]">
-                              Всего фото: {reportPhotoPreviews.length}
-                            </p>
-                          </>
-                        )}
-                      </div>
-
-                      <button
-                        type="button"
-                        onClick={handlePublishReport}
-                        className="w-full rounded-2xl bg-sky-500 px-4 py-3 text-sm font-medium text-white shadow-md hover:bg-sky-600 active:bg-sky-700 transition-colors"
-                        disabled={incidentBusy || !reportTitle || !reportText}
-                      >
-                        Опубликовать обращение
-                      </button>
-
-                      <div className="space-y-2 pt-1">
-                        <p className="text-[11px] uppercase tracking-wide text-[#64748b]">
-                          Дополнительные действия
-                        </p>
-                        <div className="grid grid-cols-2 gap-2">
-                          <button
-                            type="button"
-                            onClick={handleSaveDraft}
-                            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 hover:bg-slate-50 dark:border-white/10 dark:bg-[#020617] dark:text-[#e5e7eb] dark:hover:bg-white/5"
-                            disabled={incidentBusy}
-                          >
-                            В черновики приложения
-                          </button>
-                          <button
-                            type="button"
-                            onClick={handleSaveToFiles}
-                            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 hover:bg-slate-50 dark:border-white/10 dark:bg-[#020617] dark:text-[#e5e7eb] dark:hover:bg:white/5"
-                            disabled={incidentBusy}
-                          >
-                            В документы смартфона
-                          </button>
-                          <button
-                            type="button"
-                            onClick={handleSendEmail}
-                            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 hover:bg-slate-50 dark:border-white/10 dark:bg-[#020617] dark:text-[#e5e7eb] dark:hover:bg:white/5"
-                            disabled={incidentBusy}
-                          >
-                            На e‑mail пользователя
-                          </button>
-                          <button
-                            type="button"
-                            onClick={handlePrint}
-                            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 hover:bg-slate-50 dark:border:white/10 dark:bg-[#020617] dark:text-[#e5e7eb] dark:hover:bg:white/5"
-                            disabled={incidentBusy}
-                          >
-                            Отправить на печать
-                          </button>
-                        </div>
-                        {incidentActionError && (
-                          <p className="text-[11px] text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/30 rounded-lg px-3 py-2">
-                            {incidentActionError}
-                          </p>
-                        )}
-                      </div>
-                    </div>
-                  )
-                )}
-              </div>
+              <MapRubricSheetContent
+                marker={marker}
+                selectedRubric={selectedRubric}
+                rubricStep={rubricStep}
+                rubrics={rubrics}
+                setSelectedRubric={setSelectedRubric}
+                setRubricStep={setRubricStep}
+                closeSheet={closeSheet}
+                reportTitle={reportTitle}
+                setReportTitle={setReportTitle}
+                reportText={reportText}
+                setReportText={setReportText}
+                reportPhotos={reportPhotos}
+                reportPhotoPreviews={reportPhotoPreviews}
+                handleReportPhotosChange={handleReportPhotosChange}
+                handlePublishReport={handlePublishReport}
+                handleSaveDraft={handleSaveDraft}
+                handleSaveToFiles={handleSaveToFiles}
+                handleSendEmail={handleSendEmail}
+                handlePrint={handlePrint}
+              />
             ) : (
-              <>
-                {/* Заголовок текущей вкладки */}
-                <div className="mb-3">
-                  <p className="text-[11px] uppercase tracking-wide text-[#64748b]">
-                    {activeTab === 'home' && 'Главная'}
-                    {activeTab === 'my' && 'Мои обращения'}
-                    {activeTab === 'all' && 'Все обращения'}
-                    {activeTab === 'profile' && 'Профиль'}
-                    {activeTab === 'settings' && 'Настройки'}
-                    {activeTab === 'auth' && 'Вход и регистрация'}
-                  </p>
-                </div>
-
-                <div
-                  className="flex-1 overflow-y-auto overscroll-contain space-y-4 pb-2"
-                  data-sheet-scrollable="true"
-                >
-                  {activeTab === 'home' && (
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between gap-3">
-                        <h2 className="text-base font-semibold text-slate-900 dark:text-white">
-                          Главная
-                        </h2>
-                        <button
-                          type="button"
-                          onClick={closeSheet}
-                          className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 shadow-sm border border-slate-300 hover:bg-slate-300 hover:text-slate-800 dark:bg-black/40 dark:text-[#9ca3af] dark:border-transparent dark:hover:bg-black/60"
-                          aria-label="Закрыть"
-                        >
-                          <X className="h-4 w-4" />
-                        </button>
-                      </div>
-                      <div className="flex gap-2 overflow-x-auto pb-1">
-                        {Array.from({ length: 4 }).map((_, i) => (
-                          <div
-                            key={i}
-                            className="min-w-[160px] rounded-2xl bg-white border border-slate-200 dark:bg-[#020617] dark:border-white/10 overflow-hidden"
-                          >
-                            <div className="h-24 bg-gradient-to-br from-sky-500/40 via-indigo-500/40 to-fuchsia-500/40" />
-                            <div className="p-3">
-                              <p className="text-xs text-slate-500 dark:text-[#9ca3af]">Заглушка карточки</p>
-                              <p className="text-sm font-medium text-slate-900 dark:text-white mt-0.5">
-                                Здесь будут подборки мест
-                              </p>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-
-                      <div className="space-y-3">
-                        {Array.from({ length: 5 }).map((_, i) => (
-                          <div
-                            key={i}
-                            className="flex items-center gap-3 rounded-2xl bg-white border border-slate-200 dark:bg-[#020617] dark:border-white/10 p-3"
-                          >
-                            <div className="h-16 w-16 rounded-2xl bg-gradient-to-br from-sky-500 to-indigo-500" />
-                            <div className="flex-1">
-                              <p className="text-sm font-medium text-slate-900 dark:text-white">
-                                Место #{i + 1}
-                              </p>
-                              <p className="text-xs text-[#9ca3af] mt-0.5">
-                                Здесь будет краткое описание, рейтинг и т.д.
-                              </p>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {activeTab === 'my' && (
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between gap-3">
-                        <h2 className="text-base font-semibold text-slate-900 dark:text-white">
-                          Мои обращения
-                        </h2>
-                        <button
-                          type="button"
-                          onClick={closeSheet}
-                          className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 shadow-sm border border-slate-300 hover:bg-slate-300 hover:text-slate-800 dark:bg-black/40 dark:text-[#9ca3af] dark:border-transparent dark:hover:bg-black/60"
-                          aria-label="Закрыть"
-                        >
-                          <X className="h-4 w-4" />
-                        </button>
-                      </div>
-                      <p className="text-sm text-slate-600 dark:text-[#94a3b8]">
-                        Заглушка страницы. Тут будет список ваших обращений и фильтры.
-                      </p>
-                      <div className="mt-2 rounded-2xl border border-slate-200 bg-white dark:border-white/10 dark:bg-[#020617] p-4">
-                        <p className="text-sm text-slate-600 dark:text-[#94a3b8]">
-                          Пока нет данных. Добавим список обращений позже.
-                        </p>
-                      </div>
-                    </div>
-                  )}
-
-                  {activeTab === 'all' && (
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between gap-3">
-                        <h2 className="text-base font-semibold text-slate-900 dark:text-white">
-                          Все обращения
-                        </h2>
-                        <button
-                          type="button"
-                          onClick={closeSheet}
-                          className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 shadow-sm border border-slate-300 hover:bg-slate-300 hover:text-slate-800 dark:bg-black/40 dark:text-[#9ca3af] dark:border-transparent dark:hover:bg-black/60"
-                          aria-label="Закрыть"
-                        >
-                          <X className="h-4 w-4" />
-                        </button>
-                      </div>
-                      <p className="text-sm text-slate-600 dark:text-[#94a3b8]">
-                        Здесь будет общий поток обращений (пока заглушка).
-                      </p>
-                      <div className="mt-2 rounded-2xl border border-slate-200 bg-white dark:border-white/10 dark:bg-[#020617] p-4">
-                        <p className="text-sm text-slate-600 dark:text-[#94a3b8]">
-                          Позже добавим ленту и фильтры по городу, району и типу инцидентов.
-                        </p>
-                      </div>
-                    </div>
-                  )}
-                  {activeTab === 'profile' && (
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between gap-3">
-                        <h2 className="text-base font-semibold text-slate-900 dark:text-white">
-                          Профиль
-                        </h2>
-                        <div className="flex items-center gap-2">
-                          {isAuthenticated && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                window.localStorage.removeItem('userId');
-                                window.localStorage.removeItem('authToken');
-                                setIsAuthenticated(false);
-                                setUserProfile(null);
-                                openTab('auth');
-                              }}
-                              className="px-3 py-1.5 rounded-full text-xs font-medium border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 dark:border-white/10 dark:bg-black/30 dark:text-[#cbd5f5] dark:hover:bg-white/5"
-                            >
-                              Выйти
-                            </button>
-                          )}
-                          <button
-                            type="button"
-                            onClick={closeSheet}
-                            className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 shadow-sm border border-slate-300 hover:bg-slate-300 hover:text-slate-800 dark:bg-black/40 dark:text-[#9ca3af] dark:border-transparent dark:hover:bg-black/60"
-                            aria-label="Закрыть"
-                          >
-                            <X className="h-4 w-4" />
-                          </button>
-                        </div>
-                      </div>
-
-                      {userProfile && userProfile.id && (
-                        <ProfileTab
-                          userId={userProfile.id}
-                          onAvatarChange={(url) =>
-                            setUserProfile((prev) =>
-                              prev
-                                ? { ...prev, avatar_url: url ?? prev.avatar_url ?? null }
-                                : { avatar_url: url ?? null },
-                            )
-                          }
-                        />
-                      )}
-                    </div>
-                  )}
-                  {activeTab === 'auth' && (
-                    <AuthPanel
-                      onAuthenticated={(payload) => {
-                        setIsAuthenticated(true);
-                        setUserProfile(payload);
-                        openTab('profile');
-                      }}
-                      closeSheet={closeSheet}
-                    />
-                  )}
-                  {activeTab === 'settings' && (
-                    <div className="space-y-4">
-                      {settingsView === 'main' && (
-                        <>
-                          <div className="flex items-center justify-between gap-3">
-                            <h2 className="text-base font-semibold text-slate-900 dark:text-white">
-                              Настройки
-                            </h2>
-                            <button
-                              type="button"
-                              onClick={closeSheet}
-                              className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 shadow-sm border border-slate-300 hover:bg-slate-300 hover:text-slate-800 dark:bg-black/40 dark:text-[#9ca3af] dark:border-transparent dark:hover:bg-black/60"
-                              aria-label="Закрыть настройки"
-                            >
-                              <X className="h-4 w-4" />
-                            </button>
-                          </div>
-
-                          <div className="mt-1 rounded-2xl border border-slate-200 bg-white dark:border-white/10 dark:bg-[#020617] p-4 flex items-center justify-between">
-                            <div>
-                              <p className="text-sm font-medium text-slate-900 dark:text-white">Тема приложения</p>
-                              <p className="text-xs text-slate-600 dark:text-[#94a3b8]">
-                                Переключение между светлой и тёмной темой
-                              </p>
-                            </div>
-                            <button
-                              type="button"
-                              onClick={toggleTheme}
-                              className={cn(
-                                'relative inline-flex h-7 w-12 items-center rounded-full border border-white/15 px-1 transition-all',
-                                themeMode === 'dark'
-                                  ? 'bg-slate-900 text-sky-400'
-                                  : 'bg-slate-100 text-amber-500'
-                              )}
-                            >
-                              <span
-                                className={cn(
-                                  'inline-flex h-5 w-5 items-center justify-center rounded-full shadow-sm text-[11px] transition-transform',
-                                  themeMode === 'dark'
-                                    ? 'translate-x-5 bg-slate-800 text-sky-300'
-                                    : 'translate-x-0 bg-white text-amber-500'
-                                )}
-                              >
-                                {themeMode === 'dark' ? '🌙' : '☀️'}
-                              </span>
-                            </button>
-                          </div>
-
-                          <div className="space-y-2">
-                            <button
-                              type="button"
-                              onClick={() => setSettingsView('about')}
-                              className="w-full flex items-center justify-between rounded-2xl bg-white hover:bg-slate-50 border border-slate-200 text-slate-900 dark:bg-[#020617] dark:hover:bg-white/5 dark:border-white/10 px-4 py-3 text-left text-sm dark:text-white transition-colors"
-                            >
-                              <div>
-                                <p className="font-medium">О проекте</p>
-                                <p className="text-xs text-[#94a3b8]">
-                                  Краткая информация о задумке и целях
-                                </p>
-                              </div>
-                              <ChevronRight className="h-4 w-4 text-[#64748b]" />
-                            </button>
-
-                            <button
-                              type="button"
-                              onClick={() => setSettingsView('feedback')}
-                              className="w-full flex items-center justify-between rounded-2xl bg-white hover:bg-slate-50 border border-slate-200 text-slate-900 dark:bg-[#020617] dark:hover:bg:white/5 dark:border-white/10 px-4 py-3 text-left text-sm dark:text-white transition-colors"
-                            >
-                              <div>
-                                <p className="font-medium">Обратная связь</p>
-                                <p className="text-xs text-[#94a3b8]">
-                                  Как связаться с командой проекта
-                                </p>
-                              </div>
-                              <ChevronRight className="h-4 w-4 text-[#64748b]" />
-                            </button>
-                          </div>
-                        </>
-                      )}
-
-                      {settingsView === 'about' && (
-                        <div className="space-y-3">
-                          <div className="flex items-center justify-between gap-3">
-                            <button
-                              type="button"
-                              onClick={() => setSettingsView('main')}
-                              className="text-xs text-slate-600 hover:text-slate-900 dark:text-[#94a3b8] dark:hover:text-white"
-                            >
-                              ← Назад к настройкам
-                            </button>
-                            <button
-                              type="button"
-                              onClick={closeSheet}
-                              className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 shadow-sm border border-slate-300 hover:bg-slate-300 hover:text-slate-800 dark:bg-black/40 dark:text-[#9ca3af] dark:border-transparent dark:hover:bg-black/60"
-                              aria-label="Закрыть"
-                            >
-                              <X className="h-4 w-4" />
-                            </button>
-                          </div>
-                          <h2 className="text-base font-semibold text-slate-900 dark:text-white">О проекте</h2>
-                          <p className="text-sm text-slate-600 dark:text-[#94a3b8]">
-                            Заглушка страницы. Здесь будет описание сервиса, его целей и того, как
-                            лучше всего им пользоваться.
-                          </p>
-                        </div>
-                      )}
-
-                      {settingsView === 'feedback' && (
-                        <div className="space-y-3">
-                          <div className="flex items-center justify-between gap-3">
-                            <button
-                              type="button"
-                              onClick={() => setSettingsView('main')}
-                              className="text-xs text-slate-600 hover:text-slate-900 dark:text-[#94a3b8] dark:hover:text-white"
-                            >
-                              ← Назад к настройкам
-                            </button>
-                            <button
-                              type="button"
-                              onClick={closeSheet}
-                              className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 shadow-sm border border-slate-300 hover:bg-slate-300 hover:text-slate-800 dark:bg-black/40 dark:text-[#9ca3af] dark:border-transparent dark:hover:bg-black/60"
-                              aria-label="Закрыть"
-                            >
-                              <X className="h-4 w-4" />
-                            </button>
-                          </div>
-                          <h2 className="text-base font-semibold text-slate-900 dark:text-white">Обратная связь</h2>
-                          <p className="text-sm text-slate-600 dark:text-[#94a3b8]">
-                            Заглушка страницы. Здесь позже появятся формы и контакты для связи с
-                            разработчиками проекта.
-                          </p>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </>
+              <MapTabsSheetContent
+                isAuthFullscreen={isAuthFullscreen}
+                activeTab={activeTab}
+                settingsView={settingsView}
+                closeSheet={closeSheet}
+                openTab={openTab}
+                setSettingsView={setSettingsView}
+                profileScrollRef={profileScrollRef}
+                handleProfileWheel={handleProfileWheel}
+                handleProfileTouchStart={handleProfileTouchStart}
+                handleProfileTouchMove={handleProfileTouchMove}
+                profileAvatarInputRef={profileAvatarInputRef}
+                userProfile={userProfile}
+                localAvatarPreviewUrl={localAvatarPreviewUrl}
+                isAvatarUploading={isAvatarUploading}
+                handleProfileAvatarFileChange={handleProfileAvatarFileChange}
+                userTrustProgress={userTrustProgress}
+                userActiveIncidents={userActiveIncidents}
+                profileStatusFilters={profileStatusFilters}
+                selectedProfileStatusFilter={selectedProfileStatusFilter}
+                setSelectedProfileStatusFilter={setSelectedProfileStatusFilter}
+                profileCategoryFilters={profileCategoryFilters}
+                selectedProfileCategoryFilter={selectedProfileCategoryFilter}
+                setSelectedProfileCategoryFilter={setSelectedProfileCategoryFilter}
+                filteredUserActiveIncidents={filteredUserActiveIncidents}
+                focusIncidentOnMap={focusIncidentOnMap}
+                setSheetMode={setSheetMode}
+                getTagIcon={getTagIcon}
+                getProfileIncidentCategoryTagClass={getProfileIncidentCategoryTagClass}
+                getProfileIncidentStatusTagClass={getProfileIncidentStatusTagClass}
+                getStatusIcon={getStatusIcon}
+                incidentDetails={INCIDENT_DETAILS}
+                nearbyIncidentsById={nearbyIncidentsById}
+                setIsAuthenticated={setIsAuthenticated}
+                setUserProfile={setUserProfile}
+                isAuthenticated={isAuthenticated}
+                pushNotificationsEnabled={pushNotificationsEnabled}
+                setPushNotificationsEnabled={setPushNotificationsEnabled}
+                emailNotificationsEnabled={emailNotificationsEnabled}
+                setEmailNotificationsEnabled={setEmailNotificationsEnabled}
+                ProfileTab={ProfileTab}
+              />
             )}
           </div>
         </div>
       </div>
-    </div>
-  );
-}
-
-type AuthResponseUser = {
-  id?: number;
-  email?: string;
-  first_name?: string;
-  last_name?: string;
-  avatar_url?: string | null;
-};
-
-type AuthPanelProps = {
-  onAuthenticated: (user: AuthResponseUser | null) => void;
-  closeSheet: () => void;
-};
-
-function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
-  const [mode, setMode] = useState<'login' | 'register'>('login');
-  const [identifier, setIdentifier] = useState('');
-  const [login, setLogin] = useState('');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [lastName, setLastName] = useState('');
-  const [firstName, setFirstName] = useState('');
-  const [middleName, setMiddleName] = useState('');
-  const [phone, setPhone] = useState('');
-  const [city, setCity] = useState('');
-  const [street, setStreet] = useState('');
-  const [house, setHouse] = useState('');
-  const [apartment, setApartment] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<string | null>(null);
-  const [forgotOpen, setForgotOpen] = useState(false);
-  const [forgotEmail, setForgotEmail] = useState('');
-  const [forgotStatus, setForgotStatus] = useState<'idle' | 'sending' | 'sent' | 'resetting'>('idle');
-  const [forgotStep, setForgotStep] = useState<'email' | 'reset'>('email');
-  const [forgotCode, setForgotCode] = useState('');
-  const [forgotNewPassword, setForgotNewPassword] = useState('');
-  const [forgotNewPassword2, setForgotNewPassword2] = useState('');
-
-  const API_PREFIX = '/v1';
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(null);
-    setSuccess(null);
-    setLoading(true);
-
-    try {
-      if (mode === 'login') {
-        const res = await fetch(`${API_PREFIX}/auth/login`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            identifier: identifier.trim(),
-            password,
-          }),
-        });
-
-        if (!res.ok) {
-          const json = await res.json().catch(() => null);
-          const msg =
-            (json && (json as { error?: string; message?: string; detail?: string }).error) ||
-            (json && (json as { error?: string; message?: string; detail?: string }).message) ||
-            (json && (json as { error?: string; message?: string; detail?: string }).detail) ||
-            'Не удалось выполнить вход. Проверьте данные и попробуйте ещё раз.';
-          throw new Error(msg);
-        }
-
-        const user = (await res.json()) as AuthResponseUser | null;
-        if (!user?.id) {
-          throw new Error('Не удалось получить пользователя после входа.');
-        }
-
-        if (typeof window !== 'undefined') {
-          window.localStorage.setItem('userId', String(user.id));
-        }
-
-        onAuthenticated(user);
-        closeSheet();
-      } else {
-        const res = await fetch(`${API_PREFIX}/users`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            login,
-            email,
-            password,
-            last_name: lastName,
-            first_name: firstName,
-            middle_name: middleName || undefined,
-            phone,
-            city,
-            street,
-            house,
-            apartment: apartment || undefined,
-            is_blocked: false,
-            role: 'user',
-          }),
-        });
-
-        if (!res.ok) {
-          const json = await res.json().catch(() => null);
-          const msg =
-            (json && (json as { error?: string; message?: string; detail?: string }).error) ||
-            (json && (json as { error?: string; message?: string; detail?: string }).message) ||
-            (json && (json as { error?: string; message?: string; detail?: string }).detail) ||
-            'Не удалось выполнить запрос. Проверьте данные и попробуйте ещё раз.';
-          throw new Error(msg);
-        }
-
-        const created = (await res.json().catch(() => null)) as AuthResponseUser | null;
-        setSuccess('Аккаунт создан. Теперь войдите под своими данными.');
-        setMode('login');
-        if (created?.email) setIdentifier(created.email);
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Ошибка запроса.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleSendResetCode = async () => {
-    const target = forgotEmail.trim();
-    if (!target) {
-      setError('Введите почту.');
-      return;
-    }
-
-    setError(null);
-    setSuccess(null);
-    setForgotStatus('sending');
-    try {
-      const res = await fetch(`${API_PREFIX}/users/password-reset/send-code`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: target }),
-      });
-
-      if (!res.ok) {
-        const json = await res.json().catch(() => null);
-        const msg =
-          (json && (json as { error?: string; message?: string; detail?: string }).error) ||
-          (json && (json as { error?: string; message?: string; detail?: string }).message) ||
-          (json && (json as { error?: string; message?: string; detail?: string }).detail) ||
-          'Не удалось отправить код. Проверьте почту и попробуйте ещё раз.';
-        throw new Error(msg);
-      }
-
-      setForgotStatus('sent');
-      setSuccess('Код отправлен на почту. Проверьте входящие.');
-      setForgotStep('reset');
-    } catch (err) {
-      setForgotStatus('idle');
-      setError(err instanceof Error ? err.message : 'Ошибка запроса.');
-    }
-  };
-
-  const handleResetPassword = async () => {
-    const email = forgotEmail.trim();
-    const code = forgotCode.trim();
-    const p1 = forgotNewPassword;
-    const p2 = forgotNewPassword2;
-
-    if (!email) {
-      setError('Введите почту.');
-      return;
-    }
-    if (!code) {
-      setError('Введите код из письма.');
-      return;
-    }
-    if (!p1 || p1.length < 6) {
-      setError('Пароль слишком короткий (минимум 6 символов).');
-      return;
-    }
-    if (p1 !== p2) {
-      setError('Пароли не совпадают.');
-      return;
-    }
-
-    setError(null);
-    setSuccess(null);
-    setForgotStatus('resetting');
-    try {
-      const res = await fetch(`${API_PREFIX}/users/password-reset/reset`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, code, new_password: p1 }),
-      });
-
-      if (!res.ok) {
-        const json = await res.json().catch(() => null);
-        const msg =
-          (json && (json as { error?: string; message?: string; detail?: string }).error) ||
-          (json && (json as { error?: string; message?: string; detail?: string }).message) ||
-          (json && (json as { error?: string; message?: string; detail?: string }).detail) ||
-          'Не удалось сменить пароль. Проверьте код и попробуйте ещё раз.';
-        throw new Error(msg);
-      }
-
-      setSuccess('Пароль обновлён. Теперь войдите с новым паролем.');
-      setForgotOpen(false);
-      setForgotStatus('idle');
-      setForgotStep('email');
-      setForgotCode('');
-      setForgotNewPassword('');
-      setForgotNewPassword2('');
-      setPassword('');
-      setMode('login');
-    } catch (err) {
-      setForgotStatus('sent');
-      setError(err instanceof Error ? err.message : 'Ошибка запроса.');
-    }
-  };
-
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between gap-3">
-        <h2 className="text-base font-semibold text-slate-900 dark:text-white">
-          {forgotOpen ? 'Восстановление пароля' : mode === 'login' ? 'Вход в аккаунт' : 'Регистрация'}
-        </h2>
-        <button
-          type="button"
-          onClick={closeSheet}
-          className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 shadow-sm border border-slate-300 hover:bg-slate-300 hover:text-slate-800 dark:bg-black/40 dark:text-[#9ca3af] dark:border-transparent dark:hover:bg-black/60"
-          aria-label="Закрыть"
-        >
-          <X className="h-4 w-4" />
-        </button>
-      </div>
-
-      {!forgotOpen && (
-        <div className="flex gap-2 text-xs font-medium">
-          <button
-            type="button"
-            className={cn(
-              'flex-1 rounded-full px-3 py-2 border transition-colors',
-              mode === 'login'
-                ? 'bg-sky-500 text-white border-sky-500'
-                : 'bg-transparent text-slate-600 dark:text-[#94a3b8] border-slate-300 dark:border-slate-700'
-            )}
-            onClick={() => setMode('login')}
-          >
-            Вход
-          </button>
-          <button
-            type="button"
-            className={cn(
-              'flex-1 rounded-full px-3 py-2 border transition-colors',
-              mode === 'register'
-                ? 'bg-sky-500 text-white border-sky-500'
-                : 'bg-transparent text-slate-600 dark:text-[#94a3b8] border-slate-300 dark:border-slate-700'
-            )}
-            onClick={() => setMode('register')}
-          >
-            Регистрация
-          </button>
-        </div>
-      )}
-
-      {forgotOpen ? (
-        <div className="space-y-3">
-          {forgotStep === 'email' ? (
-            <div className="space-y-1">
-              <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
-                Почта
-              </p>
-              <input
-                type="email"
-                value={forgotEmail}
-                onChange={(e) => setForgotEmail(e.target.value)}
-                className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
-                placeholder="you@example.com"
-              />
-              <p className="text-[11px] text-slate-500 dark:text-[#94a3b8]">
-                Мы отправим код восстановления на эту почту.
-              </p>
-            </div>
-          ) : (
-            <>
-              <div className="space-y-1">
-                <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
-                  Почта
-                </p>
-                <input
-                  type="email"
-                  value={forgotEmail}
-                  onChange={(e) => setForgotEmail(e.target.value)}
-                  className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
-                  placeholder="you@example.com"
-                />
-              </div>
-
-              <div className="space-y-1">
-                <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
-                  Код из письма
-                </p>
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  value={forgotCode}
-                  onChange={(e) => setForgotCode(e.target.value)}
-                  className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
-                  placeholder="123456"
-                />
-              </div>
-
-              <div className="space-y-1">
-                <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
-                  Новый пароль
-                </p>
-                <input
-                  type="password"
-                  value={forgotNewPassword}
-                  onChange={(e) => setForgotNewPassword(e.target.value)}
-                  className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
-                  placeholder="Минимум 6 символов"
-                />
-              </div>
-
-              <div className="space-y-1">
-                <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
-                  Повтор пароля
-                </p>
-                <input
-                  type="password"
-                  value={forgotNewPassword2}
-                  onChange={(e) => setForgotNewPassword2(e.target.value)}
-                  className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
-                  placeholder="Повторите пароль"
-                />
-              </div>
-            </>
-          )}
-
-          {success && (
-            <p className="text-[11px] text-emerald-700 dark:text-emerald-200 bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/40 rounded-lg px-3 py-2">
-              {success}
-            </p>
-          )}
-
-          {error && (
-            <p className="text-[11px] text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/40 rounded-lg px-3 py-2">
-              {error}
-            </p>
-          )}
-
-          {forgotStep === 'email' ? (
-            <button
-              type="button"
-              onClick={handleSendResetCode}
-              disabled={forgotStatus === 'sending'}
-              className="mt-1 w-full rounded-xl bg-sky-500 hover:bg-sky-600 disabled:opacity-70 disabled:cursor-not-allowed text-white text-xs font-semibold px-4 py-2 shadow-md shadow-sky-500/40"
-            >
-              {forgotStatus === 'sending' ? 'Отправка…' : 'Отправить код'}
-            </button>
-          ) : (
-            <div className="space-y-2">
-              <button
-                type="button"
-                onClick={handleResetPassword}
-                disabled={forgotStatus === 'resetting'}
-                className="mt-1 w-full rounded-xl bg-sky-500 hover:bg-sky-600 disabled:opacity-70 disabled:cursor-not-allowed text-white text-xs font-semibold px-4 py-2 shadow-md shadow-sky-500/40"
-              >
-                {forgotStatus === 'resetting' ? 'Сохранение…' : 'Сменить пароль'}
-              </button>
-              <button
-                type="button"
-                onClick={handleSendResetCode}
-                disabled={forgotStatus === 'sending' || forgotStatus === 'resetting'}
-                className="w-full text-xs text-slate-600 hover:text-slate-900 dark:text-[#94a3b8] dark:hover:text-white"
-              >
-                Отправить код ещё раз
-              </button>
-            </div>
-          )}
-
-          <button
-            type="button"
-            onClick={() => {
-              setForgotOpen(false);
-              setForgotStatus('idle');
-              setForgotStep('email');
-              setForgotEmail('');
-              setForgotCode('');
-              setForgotNewPassword('');
-              setForgotNewPassword2('');
-              setError(null);
-              setSuccess(null);
-            }}
-            className="w-full text-xs text-slate-600 hover:text-slate-900 dark:text-[#94a3b8] dark:hover:text-white"
-          >
-            ← Назад ко входу
-          </button>
-        </div>
-      ) : (
-      <form onSubmit={handleSubmit} className="space-y-3">
-        {mode === 'login' && (
-          <div className="space-y-1">
-            <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
-              Логин / почта / телефон
-            </p>
-            <input
-              type="text"
-              value={identifier}
-              onChange={(e) => setIdentifier(e.target.value)}
-              required
-              className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
-              placeholder="user123 / you@example.com / +79991234567"
-            />
-          </div>
-        )}
-
-        {mode === 'register' && (
-          <div className="space-y-1">
-            <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
-              Логин
-            </p>
-            <input
-              type="text"
-              value={login}
-              onChange={(e) => setLogin(e.target.value)}
-              required
-              className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
-              placeholder="Ваш логин"
-            />
-          </div>
-        )}
-
-        {mode === 'register' && (
-          <div className="space-y-1">
-            <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
-              Почта
-            </p>
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
-              className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
-              placeholder="you@example.com"
-            />
-          </div>
-        )}
-
-        <div className="space-y-1">
-          <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
-            Пароль
-          </p>
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-            className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
-            placeholder="Минимум 6 символов"
-          />
-        </div>
-
-        {mode === 'register' && (
-          <>
-            <div className="space-y-1">
-              <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
-                Фамилия
-              </p>
-              <input
-                type="text"
-                value={lastName}
-                onChange={(e) => setLastName(e.target.value)}
-                required
-                className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
-                placeholder="Иванов"
-              />
-            </div>
-
-            <div className="space-y-1">
-              <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
-                Имя
-              </p>
-              <input
-                type="text"
-                value={firstName}
-                onChange={(e) => setFirstName(e.target.value)}
-                required
-                className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
-                placeholder="Иван"
-              />
-            </div>
-
-            <div className="space-y-1">
-              <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
-                Отчество (необязательно)
-              </p>
-              <input
-                type="text"
-                value={middleName}
-                onChange={(e) => setMiddleName(e.target.value)}
-                className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
-                placeholder="Иванович"
-              />
-            </div>
-
-            <div className="space-y-1">
-              <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
-                Телефон
-              </p>
-              <input
-                type="tel"
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                required
-                className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
-                placeholder="+79991234567"
-              />
-            </div>
-
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-              <div className="space-y-1 sm:col-span-3">
-                <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
-                  Город
-                </p>
-                <input
-                  type="text"
-                  value={city}
-                  onChange={(e) => setCity(e.target.value)}
-                  required
-                  className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
-                  placeholder="Москва"
-                />
-              </div>
-              <div className="space-y-1 sm:col-span-3">
-                <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
-                  Улица
-                </p>
-                <input
-                  type="text"
-                  value={street}
-                  onChange={(e) => setStreet(e.target.value)}
-                  required
-                  className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
-                  placeholder="Тверская"
-                />
-              </div>
-              <div className="space-y-1">
-                <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
-                  Дом
-                </p>
-                <input
-                  type="text"
-                  value={house}
-                  onChange={(e) => setHouse(e.target.value)}
-                  required
-                  className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
-                  placeholder="1"
-                />
-              </div>
-              <div className="space-y-1">
-                <p className="text-[11px] font-semibold text-slate-500 dark:text-[#94a3b8] tracking-wide">
-                  Квартира (необязательно)
-                </p>
-                <input
-                  type="text"
-                  value={apartment}
-                  onChange={(e) => setApartment(e.target.value)}
-                  className="w-full rounded-xl border border-slate-200 dark:border-white/10 bg-white/90 dark:bg-black/40 px-3 py-2 text-base text-slate-900 dark:text-slate-50 outline-none"
-                  placeholder="10"
-                />
-              </div>
-            </div>
-          </>
-        )}
-
-        {success && (
-          <p className="text-[11px] text-emerald-700 dark:text-emerald-200 bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/40 rounded-lg px-3 py-2">
-            {success}
-          </p>
-        )}
-
-        {error && (
-          <p className="text-[11px] text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/40 rounded-lg px-3 py-2">
-            {error}
-          </p>
-        )}
-
-        <button
-          type="submit"
-          disabled={loading}
-          className="mt-1 w-full rounded-xl bg-sky-500 hover:bg-sky-600 disabled:opacity-70 disabled:cursor-not-allowed text-white text-xs font-semibold px-4 py-2 shadow-md shadow-sky-500/40"
-        >
-          {loading
-            ? 'Отправка...'
-            : mode === 'login'
-            ? 'Войти'
-            : 'Зарегистрироваться'}
-        </button>
-
-        {mode === 'login' && (
-          <button
-            type="button"
-            onClick={() => {
-              setForgotOpen(true);
-              setForgotEmail('');
-              setForgotStatus('idle');
-              setError(null);
-              setSuccess(null);
-            }}
-            className="w-full text-xs text-slate-600 hover:text-slate-900 dark:text-[#94a3b8] dark:hover:text-white"
-          >
-            Забыли пароль?
-          </button>
-        )}
-      </form>
-      )}
     </div>
   );
 }
