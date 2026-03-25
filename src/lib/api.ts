@@ -166,7 +166,8 @@ export class ApiError extends Error {
 }
 
 const RAW_BASE_URL =
-  (typeof import.meta !== 'undefined' && (import.meta as ImportMeta & { env?: Record<string, string> }).env?.VITE_API_BASE_URL) ||
+  (typeof import.meta !== 'undefined' &&
+    (import.meta as ImportMeta & { env?: Record<string, string> }).env?.VITE_API_BASE_URL) ||
   '/v1';
 
 const DEFAULT_BASE_URL = RAW_BASE_URL.replace(/\/+$/, '');
