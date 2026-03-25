@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type React from 'react';
 import type { ComponentType } from 'react';
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
@@ -134,32 +133,7 @@ type IncidentDetails = {
   photoUrls: string[];
 };
 
-const INCIDENT_DETAILS: Record<number, IncidentDetails> = {
-  1: {
-    description: 'Автомобиль регулярно оставляют на тротуаре, пешеходам и коляскам приходится обходить по проезжей части.',
-    tags: ['парковка', 'тротуар', 'безопасность'],
-    photoUrls: [
-      'https://picsum.photos/seed/incident-1/960/540',
-      'https://picsum.photos/seed/incident-1b/960/540',
-    ],
-  },
-  2: {
-    description: 'В торговом зале обнаружены продукты с истекшим сроком годности. Нужна проверка магазина.',
-    tags: ['торговля', 'просрочка', 'правапотребителей'],
-    photoUrls: [
-      'https://picsum.photos/seed/incident-2/960/540',
-      'https://picsum.photos/seed/incident-2b/960/540',
-    ],
-  },
-  3: {
-    description: 'Контейнерная площадка переполнена, мусор разлетается по двору и создает антисанитарию.',
-    tags: ['жкх', 'мусор', 'двор'],
-    photoUrls: [
-      'https://picsum.photos/seed/incident-3/960/540',
-      'https://picsum.photos/seed/incident-3b/960/540',
-    ],
-  },
-};
+const INCIDENT_DETAILS: Record<number, IncidentDetails> = {};
 
 function calculateDistanceKm(from: { lat: number; lng: number }, to: { lat: number; lng: number }) {
   const toRad = (value: number) => (value * Math.PI) / 180;
@@ -701,16 +675,20 @@ export default function MapScreen() {
     if (!selectedMapIncident) return null;
 
     const details = INCIDENT_DETAILS[selectedMapIncident.id];
-    if (details) return details;
 
     return {
       description:
         selectedMapIncident.description ||
+        details?.description ||
         `Заявка по категории «${selectedMapIncident.category}». Статус: ${selectedMapIncident.status}. Требуется проверка ответственной службы и контроль выполнения.`,
-      tags: selectedMapIncident.tags?.length
-        ? selectedMapIncident.tags
-        : [selectedMapIncident.category.toLowerCase().replace(/\s+/g, ''), 'обращение', 'контроль'],
-      photoUrls: selectedMapIncident.photoUrls || [],
+      tags:
+        selectedMapIncident.tags?.length
+          ? selectedMapIncident.tags
+          : details?.tags || [selectedMapIncident.category.toLowerCase().replace(/\s+/g, ''), 'обращение', 'контроль'],
+      photoUrls:
+        selectedMapIncident.photoUrls?.length
+          ? selectedMapIncident.photoUrls
+          : details?.photoUrls || [],
     };
   }, [selectedMapIncident]);
 
