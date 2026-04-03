@@ -43,6 +43,7 @@ type MapTabsSheetContentProps = {
   setSelectedProfileCategoryFilter: (value: string) => void;
   filteredUserActiveIncidents: IncidentForMapAction[];
   focusIncidentOnMap: (incident: IncidentForMapAction) => void;
+  openDraftForEditing: (incidentId: number) => void;
   setSheetMode: (mode: SheetMode) => void;
   getTagIcon: (value: string) => string;
   getProfileIncidentCategoryTagClass: (category: string) => string;
@@ -92,6 +93,7 @@ export const MapTabsSheetContent = memo(function MapTabsSheetContent({
   setSelectedProfileCategoryFilter,
   filteredUserActiveIncidents,
   focusIncidentOnMap,
+  openDraftForEditing,
   setSheetMode,
   getTagIcon,
   getProfileIncidentCategoryTagClass,
@@ -143,6 +145,7 @@ export const MapTabsSheetContent = memo(function MapTabsSheetContent({
           setSelectedProfileCategoryFilter={setSelectedProfileCategoryFilter}
           filteredUserActiveIncidents={filteredUserActiveIncidents}
           focusIncidentOnMap={focusIncidentOnMap}
+          openDraftForEditing={openDraftForEditing}
           setSheetMode={setSheetMode}
           getTagIcon={getTagIcon}
           getProfileIncidentCategoryTagClass={getProfileIncidentCategoryTagClass}

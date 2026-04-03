@@ -125,9 +125,10 @@ export function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
 
         if (typeof window !== 'undefined') {
           window.localStorage.setItem('userId', String(user.id));
+          window.localStorage.setItem('auth:user', JSON.stringify({ ...user, role: 'user' }));
         }
 
-        onAuthenticated(user);
+        onAuthenticated({ ...user, role: 'user' } as AuthResponseUser | null);
         closeSheet();
       } else {
         const res = await fetch(`${API_PREFIX}/users`, {

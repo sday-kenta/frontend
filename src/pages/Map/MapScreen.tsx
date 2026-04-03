@@ -2,14 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ComponentType } from 'react';
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
-import {
-  Car,
-  ShoppingBag,
-} from 'lucide-react';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import { cn, resolveAvatarUrl } from '@/lib/utils';
-import { withApiBase } from '@/lib/api';
+import { api, withApiBase, type Category, type Incident } from '@/lib/api';
 import ProfileTabComponent from '@/components/ProfileTab';
 import { MapControls } from '@/components/map/MapControls';
 import { SearchInputBar } from '@/components/map/SearchInputBar';
@@ -20,7 +16,6 @@ import { MapSearchExpandedContent } from '@/components/map/MapSearchExpandedCont
 import { AuthPanel } from '@/components/map/AuthPanel';
 import { MapProfileFab } from '@/components/map/MapProfileFab';
 import { MapMarkerSheetContent } from '@/components/map/MapMarkerSheetContent';
-import { MapRubricSheetContent } from '@/components/map/MapRubricSheetContent';
 import { MapTabsSheetContent } from '@/components/map/MapTabsSheetContent';
 
 const ProfileTab = ProfileTabComponent as ComponentType<{
@@ -44,9 +39,13 @@ type IncidentPreview = {
   status: string;
   lat: number;
   lng: number;
+  description?: string;
+  address?: string;
+  photoUrls?: string[];
+  tags?: string[];
+  createdAt?: string;
 };
 
-const NOMINATIM_URL = 'https://nominatim.openstreetmap.org/search';
 const DEBOUNCE_MS = 400;
 
 const OSM_STYLE_LIGHT: maplibregl.StyleSpecification = {
@@ -62,163 +61,180 @@ const OSM_STYLE_LIGHT: maplibregl.StyleSpecification = {
   layers: [{ id: 'osm', type: 'raster', source: 'osm' }],
 };
 
-const INCIDENT_PREVIEWS: IncidentPreview[] = [
-  {
-    id: 1,
-    title: 'Незаконная парковка на тротуаре',
-    category: 'Парковка',
-    status: 'В работе',
-    lat: 53.2019,
-    lng: 50.1572,
-  },
-  {
-    id: 2,
-    title: 'Просроченные продукты в магазине',
-    category: 'Торговля',
-    status: 'Новая',
-    lat: 53.1945,
-    lng: 50.1485,
-  },
-  {
-    id: 3,
-    title: 'Мусор у контейнерной площадки',
-    category: 'Благоустройство',
-    status: 'Проверка',
-    lat: 53.2061,
-    lng: 50.1638,
-  },
-  {
-    id: 4,
-    title: 'Опасная яма на дороге',
-    category: 'Дороги',
-    status: 'В работе',
-    lat: 53.2103,
-    lng: 50.1429,
-  },
-  {
-    id: 5,
-    title: 'Неубранный снег у остановки',
-    category: 'Благоустройство',
-    status: 'Новая',
-    lat: 53.1983,
-    lng: 50.1521,
-  },
-  {
-    id: 6,
-    title: 'Повреждённый дорожный знак',
-    category: 'Дороги',
-    status: 'Проверка',
-    lat: 53.2052,
-    lng: 50.1467,
-  },
-  {
-    id: 7,
-    title: 'Шум ночью во дворе',
-    category: 'Общественный порядок',
-    status: 'Новая',
-    lat: 53.1928,
-    lng: 50.1605,
-  },
-  {
-    id: 8,
-    title: 'Сломанная детская площадка',
-    category: 'Благоустройство',
-    status: 'В работе',
-    lat: 53.2088,
-    lng: 50.1542,
-  },
-  {
-    id: 9,
-    title: 'Нелегальная торговля у метро',
-    category: 'Торговля',
-    status: 'Проверка',
-    lat: 53.1964,
-    lng: 50.1399,
-  },
-  {
-    id: 10,
-    title: 'Неработающее освещение на переходе',
-    category: 'Дороги',
-    status: 'В работе',
-    lat: 53.2131,
-    lng: 50.1506,
-  },
-  {
-    id: 11,
-    title: 'Скопление мусора у подъезда',
-    category: 'ЖКХ',
-    status: 'Новая',
-    lat: 53.2027,
-    lng: 50.1664,
-  },
-  {
-    id: 12,
-    title: 'Парковка на газоне',
-    category: 'Парковка',
-    status: 'Проверка',
-    lat: 53.1909,
-    lng: 50.1474,
-  },
-  {
-    id: 13,
-    title: 'Стихийная свалка в лесополосе',
-    category: 'Экология',
-    status: 'Новая',
-    lat: 53.2162,
-    lng: 50.1598,
-  },
-  {
-    id: 14,
-    title: 'Яма на тротуаре возле школы',
-    category: 'Дороги',
-    status: 'В работе',
-    lat: 53.1997,
-    lng: 50.1446,
-  },
-  {
-    id: 15,
-    title: 'Протечка воды во дворе',
-    category: 'ЖКХ',
-    status: 'Проверка',
-    lat: 53.2074,
-    lng: 50.1418,
-  },
-];
+const QUICK_SEARCH_CHIPS_FALLBACK = ['Нарушение правил парковки', 'Продажа просроченных товаров'];
 
-const QUICK_SEARCH_CHIPS = ['Парковка', 'Просрочка', 'ЖКХ', 'Дороги', 'Мусор рядом'];
+function getStatusLabel(status: string) {
+  const normalized = status.toLowerCase();
+  if (normalized === 'published') return 'Опубликовано';
+  if (normalized === 'draft') return 'Черновик';
+  return status;
+}
 
+function getCategoryColorClass(title: string) {
+  const normalized = title.toLowerCase();
+  if (normalized.includes('парков')) return 'from-blue-500 to-blue-600';
+  if (normalized.includes('торгов') || normalized.includes('просроч')) return 'from-purple-500 to-pink-500';
+  if (normalized.includes('дорог') || normalized.includes('яма')) return 'from-amber-500 to-orange-500';
+  if (normalized.includes('жкх') || normalized.includes('благо') || normalized.includes('мусор')) return 'from-emerald-500 to-teal-500';
+  if (normalized.includes('эко')) return 'from-lime-500 to-green-600';
+  return 'from-sky-500 to-indigo-600';
+}
+
+function getCategoryEmoji(title: string) {
+  const normalized = title.toLowerCase();
+  if (normalized.includes('парков')) return '🚗';
+  if (normalized.includes('торгов') || normalized.includes('просроч')) return '🛒';
+  if (normalized.includes('дорог') || normalized.includes('яма') || normalized.includes('тротуар')) return '🛣️';
+  if (normalized.includes('жкх') || normalized.includes('благо') || normalized.includes('мусор')) return '🏠';
+  if (normalized.includes('эко')) return '🌿';
+  return '📍';
+}
+
+function buildIncidentTags(incident: import('@/lib/api').Incident) {
+  const tags = new Set<string>();
+  if (incident.category_title) tags.add(incident.category_title);
+  if (incident.city) tags.add(incident.city);
+  if (incident.street) tags.add(incident.street);
+  if (incident.house) tags.add(`дом ${incident.house}`);
+  if (incident.description) {
+    incident.description
+      .split(/[^\p{L}\p{N}]+/u)
+      .filter((part) => part.length >= 5)
+      .slice(0, 4)
+      .forEach((part) => tags.add(part.toLowerCase()));
+  }
+  return Array.from(tags).slice(0, 6);
+}
+
+function normalizeIncidentPhotoUrl(url: string) {
+  if (!url) return url;
+  return /^https?:\/\//i.test(url) || url.startsWith('blob:') || url.startsWith('data:')
+    ? url
+    : withApiBase(url);
+}
+
+function mapIncidentToPreview(incident: import('@/lib/api').Incident): IncidentPreview | null {
+  if (typeof incident.latitude !== 'number' || typeof incident.longitude !== 'number') return null;
+
+  return {
+    id: incident.id,
+    title: incident.title,
+    category: incident.category_title || `Категория #${incident.category_id}`,
+    status: getStatusLabel(incident.status),
+    lat: incident.latitude,
+    lng: incident.longitude,
+    description: incident.description,
+    address: incident.address_text || [incident.city, incident.street, incident.house].filter(Boolean).join(', '),
+    photoUrls: (incident.photos || []).map((photo) => normalizeIncidentPhotoUrl(photo.file_url)),
+    tags: buildIncidentTags(incident),
+    createdAt: incident.created_at,
+  };
+}
+
+async function blobToDataUrl(blob: Blob): Promise<string> {
+  return await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      if (typeof reader.result === 'string') {
+        resolve(reader.result);
+      } else {
+        reject(new Error('Не удалось подготовить фото для документа.'));
+      }
+    };
+    reader.onerror = () => reject(reader.error ?? new Error('Не удалось прочитать фото для документа.'));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function resolveDocumentPhotoSource(url: string): Promise<string> {
+  const normalizedUrl = normalizeIncidentPhotoUrl(url);
+  if (!normalizedUrl || normalizedUrl.startsWith('blob:') || normalizedUrl.startsWith('data:')) {
+    return normalizedUrl;
+  }
+
+  const response = await fetch(normalizedUrl, { credentials: 'include' });
+  if (!response.ok) {
+    throw new Error('Не удалось загрузить фото для документа.');
+  }
+
+  const blob = await response.blob();
+  return blobToDataUrl(blob);
+}
+
+async function loadImageElement(file: File): Promise<HTMLImageElement> {
+  const objectUrl = URL.createObjectURL(file);
+  const imageRef: Array<HTMLImageElement | null> = [null];
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        imageRef[0] = img;
+        resolve();
+      };
+      img.onerror = () => reject(new Error('Не удалось обработать изображение.'));
+      img.src = objectUrl;
+    });
+    return imageRef[0]!;
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
+async function compressPhotoForUpload(file: File): Promise<File> {
+  if (typeof window === 'undefined' || !file.type.startsWith('image/')) {
+    return file;
+  }
+
+  if (file.size <= 2 * 1024 * 1024) {
+    return file;
+  }
+
+  const image = await loadImageElement(file);
+  const maxSide = 1600;
+  const scale = Math.min(1, maxSide / Math.max(image.width, image.height));
+  const targetWidth = Math.max(1, Math.round(image.width * scale));
+  const targetHeight = Math.max(1, Math.round(image.height * scale));
+
+  const canvas = document.createElement('canvas');
+  canvas.width = targetWidth;
+  canvas.height = targetHeight;
+
+  const context = canvas.getContext('2d');
+  if (!context) {
+    return file;
+  }
+
+  context.drawImage(image, 0, 0, targetWidth, targetHeight);
+
+  const mimeType = file.type === 'image/png' ? 'image/png' : 'image/jpeg';
+  const quality = mimeType === 'image/png' ? undefined : 0.82;
+
+  const blob = await new Promise<Blob | null>((resolve) => {
+    canvas.toBlob(resolve, mimeType, quality);
+  });
+
+  if (!blob || blob.size >= file.size) {
+    return file;
+  }
+
+  const extension = mimeType === 'image/png' ? 'png' : 'jpg';
+  const nextName = file.name.replace(/\.[^.]+$/, '') || 'photo';
+  return new File([blob], `${nextName}.${extension}`, {
+    type: mimeType,
+    lastModified: Date.now(),
+  });
+}
+
+async function preparePhotosForUpload(files: File[]): Promise<File[]> {
+  return Promise.all(files.map((file) => compressPhotoForUpload(file)));
+}
 type IncidentDetails = {
   description: string;
   tags: string[];
   photoUrls: string[];
 };
 
-const INCIDENT_DETAILS: Record<number, IncidentDetails> = {
-  1: {
-    description: 'Автомобиль регулярно оставляют на тротуаре, пешеходам и коляскам приходится обходить по проезжей части.',
-    tags: ['парковка', 'тротуар', 'безопасность'],
-    photoUrls: [
-      'https://picsum.photos/seed/incident-1/960/540',
-      'https://picsum.photos/seed/incident-1b/960/540',
-    ],
-  },
-  2: {
-    description: 'В торговом зале обнаружены продукты с истекшим сроком годности. Нужна проверка магазина.',
-    tags: ['торговля', 'просрочка', 'правапотребителей'],
-    photoUrls: [
-      'https://picsum.photos/seed/incident-2/960/540',
-      'https://picsum.photos/seed/incident-2b/960/540',
-    ],
-  },
-  3: {
-    description: 'Контейнерная площадка переполнена, мусор разлетается по двору и создает антисанитарию.',
-    tags: ['жкх', 'мусор', 'двор'],
-    photoUrls: [
-      'https://picsum.photos/seed/incident-3/960/540',
-      'https://picsum.photos/seed/incident-3b/960/540',
-    ],
-  },
-};
+const INCIDENT_DETAILS: Record<number, IncidentDetails> = {};
 
 function calculateDistanceKm(from: { lat: number; lng: number }, to: { lat: number; lng: number }) {
   const toRad = (value: number) => (value * Math.PI) / 180;
@@ -254,10 +270,10 @@ function getProfileIncidentCategoryTagClass(category: string) {
 function getProfileIncidentStatusTagClass(status: string) {
   const normalized = status.toLowerCase();
 
-  if (normalized.includes('нов')) {
+  if (normalized.includes('нов') || normalized.includes('опублик')) {
     return 'border-sky-300/60 bg-sky-100/70 text-sky-700 dark:border-sky-400/40 dark:bg-sky-500/20 dark:text-sky-200';
   }
-  if (normalized.includes('работ')) {
+  if (normalized.includes('работ') || normalized.includes('чернов')) {
     return 'border-orange-300/60 bg-orange-100/70 text-orange-700 dark:border-orange-400/40 dark:bg-orange-500/20 dark:text-orange-200';
   }
 
@@ -293,31 +309,41 @@ function matchesIncidentByTagFilter(incident: IncidentPreview, normalizedFilter:
 
 function getStatusIcon(status: string) {
   const normalized = status.toLowerCase();
-  if (normalized.includes('нов')) return '🆕';
-  if (normalized.includes('работ')) return '🛠️';
+  if (normalized.includes('нов') || normalized.includes('опублик')) return '🆕';
+  if (normalized.includes('работ') || normalized.includes('чернов')) return '📝';
   if (normalized.includes('провер')) return '🔎';
   return 'ℹ️';
 }
 
 async function searchAddress(q: string): Promise<GeocodingResult[]> {
   if (!q.trim() || q.length < 3) return [];
-  const params = new URLSearchParams({ q, format: 'json', limit: '8' });
-  const res = await fetch(`${NOMINATIM_URL}?${params}`, {
-    headers: { Accept: 'application/json' },
-  });
-  if (!res.ok) return [];
-  const data = await res.json();
-  return data.map((i: { lat: string; lon: string; display_name: string; place_id: number }) => ({
-    lat: parseFloat(i.lat),
-    lng: parseFloat(i.lon),
-    display_name: i.display_name,
-    place_id: i.place_id,
-  }));
+
+  const response = await api.searchAddresses(q.trim());
+  return (response || [])
+    .filter((item) => typeof (item.latitude ?? item.lat) === 'number' && typeof (item.longitude ?? item.lon) === 'number')
+    .map((item, index) => ({
+      lat: Number(item.latitude ?? item.lat),
+      lng: Number(item.longitude ?? item.lon),
+      display_name:
+        item.display_name ||
+        item.full_address ||
+        item.address_text ||
+        [item.city, item.street || item.road, item.house || item.house_number].filter(Boolean).join(', '),
+      place_id: index,
+    }));
 }
 
 type Tab = 'home' | 'my' | 'all' | 'profile' | 'settings' | 'auth';
 type SheetMode = 'tabs' | 'marker' | 'rubric' | null;
 type SearchPanelSnap = 'collapsed' | 'half' | 'full';
+type Rubric = {
+  id: number;
+  title: string;
+  icon: React.ReactNode;
+  color: string;
+  description: string;
+  path: string;
+};
 
 export default function MapScreen() {
   const mapRef = useRef<HTMLDivElement>(null);
@@ -351,12 +377,20 @@ export default function MapScreen() {
     if (typeof window === 'undefined') return true;
     return window.localStorage.getItem('notifications-email') !== 'false';
   });
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [publishedIncidents, setPublishedIncidents] = useState<Incident[]>([]);
+  const [myIncidents, setMyIncidents] = useState<Incident[]>([]);
+  const [dataError, setDataError] = useState<string | null>(null);
+  const [reportSubmitting, setReportSubmitting] = useState(false);
+  const [reportFeedback, setReportFeedback] = useState<string | null>(null);
   const [selectedRubric, setSelectedRubric] = useState<Rubric | null>(null);
   const [rubricStep, setRubricStep] = useState<'select' | 'create' | 'preview'>('select');
   const [reportTitle, setReportTitle] = useState('');
   const [reportText, setReportText] = useState('');
   const [reportPhotos, setReportPhotos] = useState<File[]>([]);
+  const [existingReportPhotoPreviews, setExistingReportPhotoPreviews] = useState<string[]>([]);
   const [reportPhotoPreviews, setReportPhotoPreviews] = useState<string[]>([]);
+  const [editingIncidentId, setEditingIncidentId] = useState<number | null>(null);
   const [userProfile, setUserProfile] = useState<{
     id?: number;
     first_name?: string;
@@ -387,6 +421,7 @@ export default function MapScreen() {
   const [selectedProfileStatusFilter, setSelectedProfileStatusFilter] = useState<string>('Все');
   const [selectedProfileCategoryFilter, setSelectedProfileCategoryFilter] = useState<string>('Все');
   const [renderExpandedSearchContent, setRenderExpandedSearchContent] = useState(false);
+  const reportFlowOpen = sheetMode === 'rubric';
   const profileScrollRef = useRef<HTMLDivElement | null>(null);
   const profileTouchStartYRef = useRef<number | null>(null);
   const searchPanelTouchStartYRef = useRef<number | null>(null);
@@ -404,34 +439,14 @@ export default function MapScreen() {
     centerRef.current = center;
   }, [center]);
 
-  type Rubric = {
-    id: number;
-    title: string;
-    icon: React.ReactNode;
-    color: string;
-    description: string;
-    path: string;
-  };
-
-  const rubrics: Rubric[] = [
-    {
-      id: 1,
-      title: 'Нарушение правил парковки',
-      icon: <Car className="h-8 w-8" />,
-      color: 'from-blue-500 to-blue-600',
-      description:
-        'Неправильная парковка, место для инвалидов и другие нарушения',
-      path: '/create/parking',
-    },
-    {
-      id: 2,
-      title: 'Просроченные товары',
-      icon: <ShoppingBag className="h-8 w-8" />,
-      color: 'from-purple-500 to-pink-500',
-      description: 'Продажа просроченных продуктов в магазинах',
-      path: '/create/products',
-    },
-  ];
+  const rubrics: Rubric[] = categories.map((category) => ({
+    id: category.id,
+    title: category.title,
+    icon: <span className="text-xl" aria-hidden>{getCategoryEmoji(category.title)}</span>,
+    color: getCategoryColorClass(category.title),
+    description: `Сообщить о проблеме по категории «${category.title}».`,
+    path: `/create/category/${category.id}`,
+  }));
 
   const fetchSuggestions = useCallback(
     (q: string) => {
@@ -470,32 +485,70 @@ export default function MapScreen() {
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
-  }, [query, fetchSuggestions]);
+  }, [query, fetchSuggestions, reportFlowOpen]);
 
-  // Подтягиваем профиль текущего пользователя по сохранённому userId.
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const userId = window.localStorage.getItem('userId');
-    if (!userId) return;
+    let cancelled = false;
 
-    fetch(withApiBase(`/v1/users/${userId}`))
-      .then(async (res) => (res.ok ? res.json() : null))
-      .then((json: unknown) => {
-        if (!json) return;
-        const raw =
-          Array.isArray(json) ? json[0] : (json as { data?: unknown }).data ?? json;
-        if (raw && typeof raw === 'object')
-          setUserProfile(
-            raw as {
-              id?: number;
-              first_name?: string;
-              last_name?: string;
-              email?: string;
-              avatar_url?: string | null;
-            },
-          );
-      })
-      .catch(() => {});
+    const loadInitialData = async () => {
+      try {
+        const [loadedCategories, loadedIncidents] = await Promise.all([
+          api.listCategories(),
+          api.listIncidents(),
+        ]);
+
+        if (cancelled) return;
+
+        setCategories(loadedCategories);
+        setPublishedIncidents(loadedIncidents);
+        setDataError(null);
+      } catch (error) {
+        if (cancelled) return;
+        setDataError(error instanceof Error ? error.message : 'Не удалось загрузить данные карты.');
+        setCategories([]);
+        setPublishedIncidents([]);
+      }
+
+      if (typeof window === 'undefined') return;
+      const userId = window.localStorage.getItem('userId');
+      if (!userId) return;
+
+      try {
+        const rawUser = window.localStorage.getItem('auth:user');
+        if (rawUser) {
+          const parsedUser = JSON.parse(rawUser) as {
+            id?: number;
+            first_name?: string;
+            last_name?: string;
+            email?: string;
+            avatar_url?: string | null;
+          };
+          if (!cancelled) {
+            setUserProfile({
+              id: parsedUser.id,
+              first_name: parsedUser.first_name,
+              last_name: parsedUser.last_name,
+              email: parsedUser.email,
+              avatar_url: parsedUser.avatar_url ?? null,
+            });
+          }
+        }
+
+        const mine = await api.listMyIncidents({ status: 'all' });
+        if (cancelled) return;
+        setMyIncidents(mine);
+      } catch {
+        if (!cancelled) {
+          setMyIncidents([]);
+        }
+      }
+    };
+
+    void loadInitialData();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -523,36 +576,60 @@ export default function MapScreen() {
     setShowSuggestions(false);
   }, []);
 
-  const handlePlaceMarker = useCallback((lat: number, lng: number) => {
-    setMarker({ lat, lng });
+  const resolveMarkerAddress = useCallback(async (lat: number, lng: number) => {
+    try {
+      const data = await api.reverseGeocode(lat, lng);
+      const district = data.street || data.road || data.city;
+      const address =
+        data.display_name ||
+        data.full_address ||
+        data.address_text ||
+        [data.city, data.street || data.road, data.house || data.house_number].filter(Boolean).join(', ') ||
+        'Выбранная точка';
+
+      setMarker((prev) =>
+        prev && Math.abs(prev.lat - lat) < 0.000001 && Math.abs(prev.lng - lng) < 0.000001
+          ? {
+              ...prev,
+              address,
+              district: district || undefined,
+            }
+          : prev
+      );
+    } catch (error) {
+      const isOutOfZone = error instanceof Error && /area yet|вне зоны|not work in this area/i.test(error.message);
+      setMarker((prev) =>
+        prev && Math.abs(prev.lat - lat) < 0.000001 && Math.abs(prev.lng - lng) < 0.000001
+          ? {
+              ...prev,
+              address: prev.address || (isOutOfZone ? 'Точка вне зоны работы сервиса' : 'Выбранная точка'),
+            }
+          : prev
+      );
+    }
+  }, []);
+
+  const openReportFlowForPoint = useCallback((lat: number, lng: number, options?: { address?: string }) => {
+    setMarker({ lat, lng, address: options?.address });
     setCenter({ lat, lng });
     setSelectedMapIncidentId(null);
-    setSheetMode('marker');
-    const params = new URLSearchParams({
-      lat: String(lat),
-      lon: String(lng),
-      format: 'json',
-    });
-    fetch(`https://nominatim.openstreetmap.org/reverse?${params}`, {
-      headers: { Accept: 'application/json' },
-    })
-      .then((r) => r.json())
-      .then((data) => {
-        const addr = data.address;
-        const district =
-          addr?.suburb || addr?.district || addr?.municipality || addr?.city;
-        setMarker((prev) =>
-          prev
-            ? {
-                ...prev,
-                address: data.display_name ?? 'Выбранная точка',
-                district: district || undefined,
-              }
-            : prev
-        );
-      })
-      .catch(() => {});
-  }, []);
+    setSelectedRubric(null);
+    setRubricStep('select');
+    setReportFeedback(null);
+    setReportTitle('');
+    setReportText('');
+    setReportPhotos([]);
+    setExistingReportPhotoPreviews([]);
+    setEditingIncidentId(null);
+    setShowSuggestions(false);
+    setSheetMode('rubric');
+    setSearchPanelSnap('full');
+    void resolveMarkerAddress(lat, lng);
+  }, [resolveMarkerAddress]);
+
+  const handlePlaceMarker = useCallback((lat: number, lng: number) => {
+    openReportFlowForPoint(lat, lng);
+  }, [openReportFlowForPoint]);
 
   const clearMarker = useCallback(() => {
     setMarker(null);
@@ -563,7 +640,7 @@ export default function MapScreen() {
   }, [sheetMode]);
 
   const handleSheetTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
-    if (!isSheetOpen) return;
+    if (!isOverlaySheetOpen) return;
 
     // Drag должен начинаться только за ручку (handle), иначе при обычном скролле
     // пользователи случайно "закрывают" простыню.
@@ -583,14 +660,14 @@ export default function MapScreen() {
   };
 
   const handleSheetTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
-    if (!isSheetOpen || sheetDragStartYRef.current === null) return;
+    if (!isOverlaySheetOpen || sheetDragStartYRef.current === null) return;
     const touch = e.touches[0];
     const delta = touch.clientY - sheetDragStartYRef.current;
     setSheetDragY(delta > 0 ? delta : 0);
   };
 
   const handleSheetTouchEnd = () => {
-    if (!isSheetOpen) {
+    if (!isOverlaySheetOpen) {
       setSheetDragY(0);
       setIsSheetDragging(false);
       sheetDragStartYRef.current = null;
@@ -657,14 +734,26 @@ export default function MapScreen() {
 
   const handleCreateReport = useCallback(() => {
     if (!marker) return;
+    setSelectedMapIncidentId(null);
     setSelectedRubric(null);
     setRubricStep('select');
+    setReportFeedback(null);
+    setShowSuggestions(false);
     setSheetMode('rubric');
-  }, [marker]);
+    setSearchPanelSnap('full');
+    if (!marker.address || marker.address === 'Точка в центре карты') {
+      void resolveMarkerAddress(marker.lat, marker.lng);
+    }
+  }, [marker, resolveMarkerAddress]);
+
+  const incidentPreviews = useMemo(
+    () => publishedIncidents.map(mapIncidentToPreview).filter((item): item is IncidentPreview => Boolean(item)),
+    [publishedIncidents]
+  );
 
   const nearbyIncidents = useMemo(
     () =>
-      INCIDENT_PREVIEWS
+      incidentPreviews
         .map((incident) => {
           const distanceKm = calculateDistanceKm(center, {
             lat: incident.lat,
@@ -678,7 +767,7 @@ export default function MapScreen() {
           };
         })
         .sort((a, b) => a.distanceKm - b.distanceKm),
-    [center]
+    [center, incidentPreviews]
   );
 
   const nearbyIncidentsById = useMemo(
@@ -703,8 +792,14 @@ export default function MapScreen() {
     const incidentWithDistance = nearbyIncidentsById.get(selectedMapIncidentId);
     if (incidentWithDistance) return incidentWithDistance;
 
-    return INCIDENT_PREVIEWS.find((incident) => incident.id === selectedMapIncidentId) ?? null;
-  }, [nearbyIncidentsById, selectedMapIncidentId]);
+    const ownIncident = myIncidents.find((incident) => incident.id === selectedMapIncidentId);
+
+    return (
+      incidentPreviews.find((incident) => incident.id === selectedMapIncidentId) ??
+      (ownIncident ? mapIncidentToPreview(ownIncident) : null) ??
+      null
+    );
+  }, [incidentPreviews, myIncidents, nearbyIncidentsById, selectedMapIncidentId]);
 
   const selectedMapIncidentDistanceLabel = useMemo(() => {
     if (selectedMapIncidentId == null) return null;
@@ -715,37 +810,42 @@ export default function MapScreen() {
     if (!selectedMapIncident) return null;
 
     const details = INCIDENT_DETAILS[selectedMapIncident.id];
-    if (details) return details;
 
     return {
-      description: `Заявка по категории «${selectedMapIncident.category}». Статус: ${selectedMapIncident.status}. Требуется проверка ответственной службы и контроль выполнения.`,
-      tags: [selectedMapIncident.category.toLowerCase().replace(/\s+/g, ''), 'обращение', 'контроль'],
-      photoUrls: [
-        `https://picsum.photos/seed/incident-${selectedMapIncident.id}/960/540`,
-        `https://picsum.photos/seed/incident-${selectedMapIncident.id}-b/960/540`,
-      ],
+      description:
+        selectedMapIncident.description ||
+        details?.description ||
+        `Заявка по категории «${selectedMapIncident.category}». Статус: ${selectedMapIncident.status}. Требуется проверка ответственной службы и контроль выполнения.`,
+      tags:
+        selectedMapIncident.tags?.length
+          ? selectedMapIncident.tags
+          : details?.tags || [selectedMapIncident.category.toLowerCase().replace(/\s+/g, ''), 'обращение', 'контроль'],
+      photoUrls:
+        selectedMapIncident.photoUrls?.length
+          ? selectedMapIncident.photoUrls
+          : details?.photoUrls || [],
     };
   }, [selectedMapIncident]);
 
   const mapVisibleIncidents = useMemo(
     () =>
-      INCIDENT_PREVIEWS.filter((incident) => matchesIncidentByTagFilter(incident, normalizedSelectedMapTagFilter)),
-    [normalizedSelectedMapTagFilter]
+      incidentPreviews.filter((incident) => matchesIncidentByTagFilter(incident, normalizedSelectedMapTagFilter)),
+    [incidentPreviews, normalizedSelectedMapTagFilter]
   );
 
   const userActiveIncidents = useMemo(
-    () => INCIDENT_PREVIEWS.filter((incident) => incident.status !== 'Закрыта').slice(0, 8),
-    []
+    () => myIncidents.map(mapIncidentToPreview).filter((item): item is IncidentPreview => Boolean(item)).slice(0, 20),
+    [myIncidents]
   );
 
   const userTrustProgress = useMemo(() => {
-    const confirmed = INCIDENT_PREVIEWS.filter((incident) => {
+    const confirmed = userActiveIncidents.filter((incident) => {
       const lowStatus = incident.status.toLowerCase();
-      return lowStatus.includes('провер') || lowStatus.includes('работ');
+      return lowStatus.includes('опублик') || lowStatus.includes('работ') || lowStatus.includes('провер');
     }).length;
 
-    const useful = INCIDENT_PREVIEWS.filter((incident) => incident.status.toLowerCase().includes('работ')).length;
-    const reputationScore = 67;
+    const useful = userActiveIncidents.filter((incident) => incident.status.toLowerCase().includes('опублик')).length;
+    const reputationScore = Math.min(100, 25 + useful * 12 + confirmed * 5);
 
     const level =
       reputationScore >= 85
@@ -757,9 +857,9 @@ export default function MapScreen() {
             : 'Новичок';
 
     return { confirmed, useful, reputationScore, level };
-  }, []);
+  }, [userActiveIncidents]);
 
-  const profileStatusFilters = useMemo(() => ['Все', 'Новые', 'В работе', 'Проверка'], []);
+  const profileStatusFilters = useMemo(() => ['Все', 'Черновик', 'Опубликовано'], []);
 
   const profileCategoryFilters = useMemo(
     () => ['Все', ...Array.from(new Set(userActiveIncidents.map((incident) => incident.category)))],
@@ -771,9 +871,8 @@ export default function MapScreen() {
       const lowStatus = incident.status.toLowerCase();
       const statusMatch =
         selectedProfileStatusFilter === 'Все' ||
-        (selectedProfileStatusFilter === 'Новые' && lowStatus.includes('нов')) ||
-        (selectedProfileStatusFilter === 'В работе' && lowStatus.includes('работ')) ||
-        (selectedProfileStatusFilter === 'Проверка' && lowStatus.includes('провер'));
+        (selectedProfileStatusFilter === 'Черновик' && lowStatus.includes('чернов')) ||
+        (selectedProfileStatusFilter === 'Опубликовано' && lowStatus.includes('опублик'));
 
       const categoryMatch =
         selectedProfileCategoryFilter === 'Все' || incident.category === selectedProfileCategoryFilter;
@@ -782,23 +881,28 @@ export default function MapScreen() {
     });
   }, [selectedProfileCategoryFilter, selectedProfileStatusFilter, userActiveIncidents]);
 
-  const openCreateReportFromSearch = useCallback(() => {
-    const markerPoint = marker ?? {
-      lat: center.lat,
-      lng: center.lng,
-      address: 'Точка в центре карты',
-    };
+  const quickSearchChips = useMemo(() => {
+    const fromCategories = categories.slice(0, 5).map((category) => category.title);
+    return fromCategories.length > 0 ? fromCategories : QUICK_SEARCH_CHIPS_FALLBACK;
+  }, [categories]);
 
-    if (!marker) {
-      setMarker(markerPoint);
+  const openCreateReportFromSearch = useCallback(() => {
+    if (marker) {
+      setSelectedMapIncidentId(null);
+      setSelectedRubric(null);
+      setRubricStep('select');
+      setReportFeedback(null);
+      setShowSuggestions(false);
+      setSheetMode('rubric');
+      setSearchPanelSnap('full');
+      if (!marker.address || marker.address === 'Точка в центре карты') {
+        void resolveMarkerAddress(marker.lat, marker.lng);
+      }
+      return;
     }
 
-    setSelectedRubric(null);
-    setRubricStep('select');
-    setSheetMode('rubric');
-    setShowSuggestions(false);
-    setSearchPanelSnap('collapsed');
-  }, [center.lat, center.lng, marker]);
+    openReportFlowForPoint(center.lat, center.lng, { address: 'Точка в центре карты' });
+  }, [center.lat, center.lng, marker, openReportFlowForPoint, resolveMarkerAddress]);
 
   const handleQuickSearch = useCallback((value: string) => {
     setSelectedMapTagFilter((prev) => (prev === value ? null : value));
@@ -809,13 +913,14 @@ export default function MapScreen() {
   type IncidentSelectionTarget = Pick<IncidentPreview, 'id' | 'lat' | 'lng' | 'title'>;
 
   const focusIncidentOnMap = useCallback((incident: IncidentSelectionTarget) => {
+    setSheetMode(null);
+    setSelectedRubric(null);
+    setRubricStep('select');
+    setEditingIncidentId(null);
+    setExistingReportPhotoPreviews([]);
     setSelectedMapIncidentId(incident.id);
     setCenter({ lat: incident.lat, lng: incident.lng });
-    setMarker({
-      lat: incident.lat,
-      lng: incident.lng,
-      address: incident.title,
-    });
+    setMarker(null);
     setSearchPanelSnap('full');
     setShowSuggestions(false);
   }, []);
@@ -975,28 +1080,197 @@ export default function MapScreen() {
 
   useEffect(() => {
     const urls = reportPhotos.map((f) => URL.createObjectURL(f));
-    setReportPhotoPreviews(urls);
+    setReportPhotoPreviews([...existingReportPhotoPreviews, ...urls]);
     return () => {
       urls.forEach((u) => URL.revokeObjectURL(u));
     };
-  }, [reportPhotos]);
+  }, [existingReportPhotoPreviews, reportPhotos]);
+
+  useEffect(() => {
+    if (!reportFeedback) return;
+
+    const timeoutId = window.setTimeout(() => {
+      setReportFeedback((current) => (current === reportFeedback ? null : current));
+    }, 5000);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [reportFeedback]);
+
+  const refreshIncidents = useCallback(async () => {
+    const [allIncidents, mine] = await Promise.all([
+      api.listIncidents(),
+      isAuthenticated ? api.listMyIncidents({ status: 'all' }) : Promise.resolve([] as Incident[]),
+    ]);
+
+    setPublishedIncidents(allIncidents);
+    setMyIncidents(mine);
+  }, [isAuthenticated]);
+
+  useEffect(() => {
+    if (!isAuthenticated) {
+      setMyIncidents([]);
+      return;
+    }
+
+    const userId = typeof window !== 'undefined' ? window.localStorage.getItem('userId') : null;
+    if (!userId) return;
+
+    void Promise.all([
+      api.getUser(Number(userId)).then(setUserProfile),
+      api.listMyIncidents({ status: 'all' }).then(setMyIncidents),
+    ]).catch(() => undefined);
+  }, [isAuthenticated]);
+
+  const submitReport = useCallback(async (status: 'draft' | 'published') => {
+    if (!selectedRubric || !marker || !reportTitle.trim() || !reportText.trim()) {
+      setReportFeedback('Заполните тему, описание и выберите рубрику.');
+      return;
+    }
+
+    setReportSubmitting(true);
+    setReportFeedback(null);
+
+    try {
+      const addressParts = (marker.address || '').split(',').map((part) => part.trim()).filter(Boolean);
+      const payload = {
+        category_id: selectedRubric.id,
+        title: reportTitle.trim(),
+        description: reportText.trim(),
+        status,
+        address_text: marker.address,
+        city: addressParts[0],
+        street: addressParts[1],
+        house: addressParts[2],
+        latitude: marker.lat,
+        longitude: marker.lng,
+      } as const;
+
+      const savedIncident = editingIncidentId != null
+        ? await api.updateIncident(editingIncidentId, payload)
+        : await api.createIncident(payload);
+
+      let uploadWarning: string | null = null;
+
+      if (reportPhotos.length > 0) {
+        const preparedPhotos = await preparePhotosForUpload(reportPhotos);
+
+        try {
+          await api.uploadIncidentPhotos(savedIncident.id, preparedPhotos);
+        } catch (uploadError) {
+          uploadWarning = uploadError instanceof Error
+            ? `${uploadError.message} Обращение сохранено, но часть фото не загрузилась.`
+            : 'Обращение сохранено, но часть фото не загрузилась.';
+        }
+      }
+
+      await refreshIncidents();
+      setReportFeedback(
+        uploadWarning || (
+          editingIncidentId != null
+            ? status === 'published'
+              ? 'Черновик обновлён и опубликован.'
+              : 'Черновик обновлён.'
+            : status === 'published'
+              ? 'Обращение опубликовано.'
+              : 'Черновик сохранён.'
+        )
+      );
+      setReportTitle('');
+      setReportText('');
+      setReportPhotos([]);
+      setExistingReportPhotoPreviews([]);
+      setEditingIncidentId(null);
+      setSelectedRubric(null);
+      setRubricStep('select');
+      setSelectedMapIncidentId(status === 'published' ? savedIncident.id : null);
+      setSheetMode(null);
+      setMarker(null);
+      setActiveTab(status === 'draft' ? 'profile' : 'home');
+    } catch (error) {
+      setReportFeedback(error instanceof Error ? error.message : 'Не удалось сохранить обращение.');
+    } finally {
+      setReportSubmitting(false);
+    }
+  }, [editingIncidentId, marker, refreshIncidents, reportPhotos, reportText, reportTitle, selectedRubric]);
 
   const handlePublishReport = () => {
-    // Заглушка отправки обращения
-    console.log('Новое обращение', {
-      rubric: selectedRubric,
-      marker,
-      title: reportTitle,
-      text: reportText,
-      photos: reportPhotos,
-    });
-    setReportTitle('');
-    setReportText('');
-    setReportPhotos([]);
-    setSelectedRubric(null);
-    setRubricStep('select');
-    closeSheet();
+    void submitReport('published');
   };
+
+  const openDraftForEditing = useCallback(async (incidentId: number) => {
+    try {
+      const sourceIncident = myIncidents.find((incident) => incident.id === incidentId) ?? await api.getIncident(incidentId);
+      const incidentCategory = categories.find((category) => category.id === sourceIncident.category_id) ?? null;
+      const lat = sourceIncident.latitude ?? center.lat;
+      const lng = sourceIncident.longitude ?? center.lng;
+      const address = sourceIncident.address_text || [sourceIncident.city, sourceIncident.street, sourceIncident.house].filter(Boolean).join(', ') || 'Адрес уточняется';
+
+      setSelectedMapIncidentId(null);
+      setCenter({ lat, lng });
+      setMarker({ lat, lng, address });
+      setSelectedRubric(incidentCategory ? {
+        id: incidentCategory.id,
+        title: incidentCategory.title,
+        icon: <span className="text-xl" aria-hidden>{getCategoryEmoji(incidentCategory.title)}</span>,
+        color: getCategoryColorClass(incidentCategory.title),
+        description: `Сообщить о проблеме по категории «${incidentCategory.title}».`,
+        path: `/create/category/${incidentCategory.id}`,
+      } : null);
+      setRubricStep('create');
+      setReportTitle(sourceIncident.title || '');
+      setReportText(sourceIncident.description || '');
+      setReportPhotos([]);
+      setExistingReportPhotoPreviews(sourceIncident.photos?.map((photo) => normalizeIncidentPhotoUrl(photo.file_url)).filter(Boolean) ?? []);
+      setEditingIncidentId(sourceIncident.id);
+      setReportFeedback(null);
+      setShowSuggestions(false);
+      setSheetMode('rubric');
+      setSearchPanelSnap('full');
+      if (!sourceIncident.address_text && sourceIncident.latitude != null && sourceIncident.longitude != null) {
+        void resolveMarkerAddress(sourceIncident.latitude, sourceIncident.longitude);
+      }
+    } catch (error) {
+      setReportFeedback(error instanceof Error ? error.message : 'Не удалось открыть черновик.');
+      setActiveTab('profile');
+      setSheetMode('tabs');
+    }
+  }, [categories, center.lat, center.lng, myIncidents, resolveMarkerAddress]);
+
+  const ensureIncidentForDocumentAction = useCallback(async () => {
+    if (!selectedRubric || !marker || !reportTitle.trim() || !reportText.trim()) {
+      throw new Error('Заполните тему, описание и выберите рубрику.');
+    }
+
+    const addressParts = (marker.address || '').split(',').map((part) => part.trim()).filter(Boolean);
+    const payload = {
+      category_id: selectedRubric.id,
+      title: reportTitle.trim(),
+      description: reportText.trim(),
+      status: 'draft' as const,
+      address_text: marker.address,
+      city: addressParts[0],
+      street: addressParts[1],
+      house: addressParts[2],
+      latitude: marker.lat,
+      longitude: marker.lng,
+    };
+
+    const savedIncident = editingIncidentId != null
+      ? await api.updateIncident(editingIncidentId, payload)
+      : await api.createIncident(payload);
+
+    if (reportPhotos.length > 0) {
+      const preparedPhotos = await preparePhotosForUpload(reportPhotos);
+      await api.uploadIncidentPhotos(savedIncident.id, preparedPhotos);
+      setReportPhotos([]);
+    }
+
+    const latestIncident = await api.getIncident(savedIncident.id);
+    setEditingIncidentId(latestIncident.id);
+    setExistingReportPhotoPreviews(latestIncident.photos?.map((photo) => normalizeIncidentPhotoUrl(photo.file_url)).filter(Boolean) ?? []);
+    await refreshIncidents();
+    return latestIncident.id;
+  }, [editingIncidentId, marker, refreshIncidents, reportPhotos, reportText, reportTitle, selectedRubric]);
 
   const getCurrentReportPayload = () => ({
     rubric: selectedRubric,
@@ -1038,8 +1312,7 @@ export default function MapScreen() {
   };
 
   const handleSaveDraft = () => {
-    // Заглушка: сохранение черновика внутри приложения
-    console.log('Сохранить черновик обращения', getCurrentReportPayload());
+    void submitReport('draft');
   };
 
   const handleSaveToFiles = async () => {
@@ -1050,6 +1323,12 @@ export default function MapScreen() {
         .toISOString()
         .replace(/[:.]/g, '-')
         .slice(0, 19);
+
+      const photoSources = await Promise.all(
+        reportPhotoPreviews
+          .filter(Boolean)
+          .map((photoUrl) => resolveDocumentPhotoSource(photoUrl).catch(() => normalizeIncidentPhotoUrl(photoUrl))),
+      );
 
       const container = document.createElement('div');
       container.style.position = 'fixed';
@@ -1066,27 +1345,47 @@ export default function MapScreen() {
       container.style.whiteSpace = 'pre-wrap';
       container.innerHTML = html;
 
-      if (reportPhotoPreviews[0]) {
+      if (photoSources.length > 0) {
         const photoTitle = document.createElement('div');
         photoTitle.style.marginTop = '16px';
         photoTitle.style.fontWeight = 'bold';
         photoTitle.textContent = 'Фото:';
         container.appendChild(photoTitle);
 
-        const img = document.createElement('img');
-        img.src = reportPhotoPreviews[0];
-        img.alt = 'Фото из обращения';
-        img.style.display = 'block';
-        img.style.marginTop = '8px';
-        img.style.maxWidth = '100%';
-        img.style.maxHeight = '500px';
-        container.appendChild(img);
+        const photosGrid = document.createElement('div');
+        photosGrid.style.display = 'grid';
+        photosGrid.style.gridTemplateColumns = 'repeat(2, minmax(0, 1fr))';
+        photosGrid.style.gap = '12px';
+        photosGrid.style.marginTop = '8px';
+        container.appendChild(photosGrid);
+
+        await Promise.all(
+          photoSources.map(
+            (src) =>
+              new Promise<void>((resolve) => {
+                const img = document.createElement('img');
+                img.crossOrigin = 'anonymous';
+                img.alt = 'Фото из обращения';
+                img.style.display = 'block';
+                img.style.width = '100%';
+                img.style.aspectRatio = '1 / 1';
+                img.style.objectFit = 'cover';
+                img.style.borderRadius = '12px';
+                img.style.border = '1px solid #d1d5db';
+                img.onload = () => resolve();
+                img.onerror = () => resolve();
+                img.src = src;
+                photosGrid.appendChild(img);
+              }),
+          ),
+        );
       }
       document.body.appendChild(container);
 
       const canvas = await html2canvas(container, {
         scale: 2,
         backgroundColor: '#ffffff',
+        useCORS: true,
       });
 
       document.body.removeChild(container);
@@ -1109,7 +1408,7 @@ export default function MapScreen() {
       const imgHeight = canvas.height;
       const ratio = Math.min(
         availableWidth / imgWidth,
-        availableHeight / imgHeight
+        availableHeight / imgHeight,
       );
 
       const renderWidth = imgWidth * ratio;
@@ -1123,33 +1422,40 @@ export default function MapScreen() {
         offsetX,
         offsetY,
         renderWidth,
-        renderHeight
+        renderHeight,
       );
 
       const filename = `${safeTitle}-${timestamp}.pdf`;
       doc.save(filename);
     } catch (error) {
       console.error('Не удалось сохранить обращение в файлы устройства', error);
+      setReportFeedback(error instanceof Error ? error.message : 'Не удалось сохранить документ в файлы.');
     }
   };
 
-  const handleSendEmail = () => {
-    // Заглушка: отправка документа на email пользователя
-    console.log('Отправить обращение на email пользователя', getCurrentReportPayload());
+
+  const handleSendEmail = async () => {
+    setReportSubmitting(true);
+    setReportFeedback(null);
+
+    try {
+      const incidentId = await ensureIncidentForDocumentAction();
+      await api.sendIncidentDocumentToEmail(incidentId, userProfile?.email || undefined);
+      setReportFeedback(userProfile?.email ? `Документ отправлен на ${userProfile.email}.` : 'Документ отправлен на e-mail автора обращения.');
+    } catch (error) {
+      setReportFeedback(error instanceof Error ? error.message : 'Не удалось отправить документ на e-mail.');
+    } finally {
+      setReportSubmitting(false);
+    }
   };
 
-  const handlePrint = () => {
+  const handlePrint = async () => {
+    setReportSubmitting(true);
+    setReportFeedback(null);
+
     try {
-      const baseHtml = buildReportHtml();
-      const firstPhoto = reportPhotoPreviews[0];
-      const photoHtml = firstPhoto
-        ? `<div style="margin-top:16px;">
-             <img src="${firstPhoto}" alt="Фото из обращения" style="max-width:100%;max-height:500px;margin-top:8px;" />
-           </div>`
-        : '';
-
-      const printableHtml = `${baseHtml}${photoHtml}`;
-
+      const incidentId = await ensureIncidentForDocumentAction();
+      const printableHtml = await api.getIncidentDocumentPrintHtml(incidentId);
       const iframe = document.createElement('iframe');
       iframe.style.position = 'fixed';
       iframe.style.right = '0';
@@ -1162,52 +1468,28 @@ export default function MapScreen() {
       const frameWindow = iframe.contentWindow;
       if (!frameWindow) {
         document.body.removeChild(iframe);
-        console.error('Не удалось инициализировать окно печати');
-        return;
+        throw new Error('Не удалось открыть печатную версию документа.');
       }
 
       frameWindow.document.open();
-      frameWindow.document.write(`<!doctype html>
-<html lang="ru">
-  <head>
-    <meta charSet="utf-8" />
-    <title>Обращение для печати</title>
-    <style>
-      body {
-        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        font-size: 14px;
-        line-height: 1.5;
-        color: #111827;
-        padding: 24px;
-      }
-      h1 {
-        font-size: 20px;
-        margin-bottom: 16px;
-      }
-      .content {
-        white-space: normal;
-      }
-    </style>
-  </head>
-  <body>
-    <h1>Обращение гражданина</h1>
-    <div class="content">${printableHtml}</div>
-  </body>
-</html>`);
+      frameWindow.document.write(printableHtml);
       frameWindow.document.close();
+      frameWindow.focus();
 
-      iframe.onload = () => {
-        try {
-          frameWindow.focus();
-          frameWindow.print();
-        } finally {
-          setTimeout(() => {
+      window.setTimeout(() => {
+        frameWindow.print();
+        window.setTimeout(() => {
+          if (iframe.parentNode) {
             document.body.removeChild(iframe);
-          }, 1000);
-        }
-      };
+          }
+        }, 1500);
+      }, 250);
+
+      setReportFeedback('Печатная версия подготовлена.');
     } catch (error) {
-      console.error('Не удалось отправить обращение на печать', error);
+      setReportFeedback(error instanceof Error ? error.message : 'Не удалось открыть печатную версию.');
+    } finally {
+      setReportSubmitting(false);
     }
   };
 
@@ -1264,8 +1546,8 @@ export default function MapScreen() {
     setSheetMode('tabs');
   }, [closeSheet]);
 
-  const isSheetOpen = sheetMode !== null;
-  const isSheetVisible = isSheetOpen || isSheetClosing;
+  const isOverlaySheetOpen = sheetMode === 'tabs' || sheetMode === 'marker';
+  const isSheetVisible = isOverlaySheetOpen || isSheetClosing;
 
   // Мягкое закрытие: даём анимации контейнера плавно
   // уехать вниз так же, как при нажатии на фон / крестик.
@@ -1439,6 +1721,8 @@ export default function MapScreen() {
 
     const getStatusText = (status: string) => {
       const normalizedStatus = status.toLowerCase();
+      if (normalizedStatus.includes('опублик')) return 'Опубликовано';
+      if (normalizedStatus.includes('чернов')) return 'Черновик';
       if (normalizedStatus.includes('нов')) return 'Новая';
       if (normalizedStatus.includes('работ')) return 'В работе';
       if (normalizedStatus.includes('провер')) return 'Проверка';
@@ -1447,7 +1731,7 @@ export default function MapScreen() {
 
     const markers = mapVisibleIncidents.map((incident) => {
       const pinColor = getIncidentColor(incident.category);
-      const incidentTags = INCIDENT_DETAILS[incident.id]?.tags;
+      const incidentTags = incident.tags;
       const categoryIcon = getCategoryIcon(incident.category, incidentTags);
       const statusText = getStatusText(incident.status);
       const el = document.createElement('button');
@@ -1505,41 +1789,13 @@ export default function MapScreen() {
     if (marker) {
       const el = document.createElement('div');
       el.className = 'map-marker';
+      const draftPinColor = '#64748b';
       el.innerHTML = `
-        <div style="
-          position: relative;
-          transform: translateY(-8px);
-        ">
-          <div style="
-            width: 32px;
-            height: 32px;
-            background: #f43f5e;
-            border-radius: 50% 50% 50% 0;
-            border: 3px solid white;
-            box-shadow: 0 4px 10px rgba(0,0,0,0.45);
-            transform: rotate(-45deg);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-          ">
-            <div style="
-              width: 8px;
-              height: 8px;
-              background: white;
-              border-radius: 50%;
-            "></div>
+        <div style="position: relative; transform: translateY(-8px); display: inline-flex; flex-direction: column; align-items: center; gap: 3px;">
+          <div style="width: 30px; height: 30px; border-radius: 9999px; border: 3px solid white; background: ${draftPinColor}; box-shadow: 0 4px 12px rgba(15,23,42,0.38); color: white; font-size: 18px; font-weight: 700; display: flex; align-items: center; justify-content: center; text-shadow: 0 1px 2px rgba(15,23,42,0.55); line-height: 1;">
+            ?
           </div>
-          <div style="
-            position: absolute;
-            left: 50%;
-            bottom: -6px;
-            width: 10px;
-            height: 10px;
-            border-radius: 50%;
-            background: white;
-            border: 2px solid #f43f5e;
-            transform: translateX(-50%);
-          "></div>
+          <div style="width: 10px; height: 10px; border-radius: 9999px; background: white; border: 2px solid ${draftPinColor}; box-shadow: 0 2px 6px rgba(15,23,42,0.25);"></div>
         </div>
       `;
       const m = new maplibregl.Marker({ element: el, anchor: 'bottom' })
@@ -1617,9 +1873,12 @@ export default function MapScreen() {
       searchPanelSettleTimeoutRef.current = null;
     }
 
-    searchPanelTouchStartYRef.current = event.touches[0]?.clientY ?? null;
+    const touchTarget = event.target as HTMLElement | null;
+    const isFromHandle = Boolean(touchTarget?.closest('[data-search-drag-handle="true"]'));
+
+    searchPanelTouchTargetRef.current = touchTarget;
     searchPanelStartSnapRef.current = searchPanelSnap;
-    searchPanelTouchTargetRef.current = event.target as HTMLElement | null;
+    searchPanelTouchStartYRef.current = isFromHandle ? event.touches[0]?.clientY ?? null : null;
     searchPanelCanDragRef.current = false;
   }, [searchPanelSnap]);
 
@@ -1633,32 +1892,17 @@ export default function MapScreen() {
 
     const touchTarget = searchPanelTouchTargetRef.current;
     const isFromHandle = Boolean(touchTarget?.closest('[data-search-drag-handle="true"]'));
-    const scrollableParent = touchTarget?.closest('[data-search-scrollable="true"]') as HTMLElement | null;
-    const canScrollUp = Boolean(scrollableParent && scrollableParent.scrollTop > 0);
-    const canScrollDown = Boolean(
-      scrollableParent &&
-        scrollableParent.scrollTop + scrollableParent.clientHeight < scrollableParent.scrollHeight - 1
-    );
-    const isFullSnap = searchPanelStartSnapRef.current === 'full';
-    const canStartDragFromContent =
-      !scrollableParent ||
-      (isFullSnap
-        ? delta > 0 && !canScrollUp && absDelta > 16
-        : (delta > 0 && !canScrollUp) || (delta < 0 && !canScrollDown));
+
+    if (!isFromHandle) {
+      return;
+    }
 
     if (!isSearchPanelDragging) {
-      const activationThreshold = isFromHandle ? 6 : isFullSnap ? 12 : 6;
+      if (absDelta < 6) return;
 
-      if (absDelta < activationThreshold) return;
-
-      if (isFromHandle || canStartDragFromContent) {
-        searchPanelCanDragRef.current = true;
-        setIsSearchPanelDragging(true);
-        setSearchPanelDragHeight(getSearchPanelSnapHeightPx(searchPanelStartSnapRef.current));
-      } else {
-        searchPanelCanDragRef.current = false;
-        return;
-      }
+      searchPanelCanDragRef.current = true;
+      setIsSearchPanelDragging(true);
+      setSearchPanelDragHeight(getSearchPanelSnapHeightPx(searchPanelStartSnapRef.current));
     }
 
     if (!searchPanelCanDragRef.current) return;
@@ -1714,6 +1958,10 @@ export default function MapScreen() {
       selectedMapIncidentId !== null &&
       searchPanelStartSnapRef.current === 'full' &&
       delta > threshold;
+    const isClosingReportFlowBySwipeDown =
+      reportFlowOpen &&
+      searchPanelStartSnapRef.current === 'full' &&
+      delta > threshold;
 
     if (isClosingOpenedIncidentBySwipeDown) {
       setSelectedMapIncidentId(null);
@@ -1721,9 +1969,18 @@ export default function MapScreen() {
       targetSnap = 'collapsed';
     }
 
-    if (!isClosingOpenedIncidentBySwipeDown && Math.abs(delta) < threshold) {
+    if (isClosingReportFlowBySwipeDown) {
+      setSelectedRubric(null);
+      setRubricStep('select');
+      setSheetMode(null);
+      setMarker(null);
+      setShowSuggestions(false);
+      targetSnap = 'collapsed';
+    }
+
+    if (!isClosingOpenedIncidentBySwipeDown && !isClosingReportFlowBySwipeDown && Math.abs(delta) < threshold) {
       targetSnap = searchPanelStartSnapRef.current;
-    } else if (!isClosingOpenedIncidentBySwipeDown) {
+    } else if (!isClosingOpenedIncidentBySwipeDown && !isClosingReportFlowBySwipeDown) {
       targetSnap = getNearestSearchPanelSnap(clampedHeight);
     }
 
@@ -1746,7 +2003,7 @@ export default function MapScreen() {
       setSearchPanelDragHeight(null);
       searchPanelSettleTimeoutRef.current = null;
     }, 320);
-  }, [getNearestSearchPanelSnap, getSearchPanelSnapHeightPx, searchPanelDragHeight, selectedMapIncidentId]);
+  }, [getNearestSearchPanelSnap, getSearchPanelSnapHeightPx, reportFlowOpen, searchPanelDragHeight, selectedMapIncidentId]);
 
   useEffect(() => {
     const shouldShowExpandedContent =
@@ -1857,6 +2114,7 @@ export default function MapScreen() {
   }, []);
 
   const noopCloseSheet = useCallback(() => {}, []);
+  const topMapMessage = reportFeedback || dataError;
 
   if (!isAuthenticated) {
     return (
@@ -1871,6 +2129,16 @@ export default function MapScreen() {
 
   return (
     <div className="fixed inset-0 z-0">
+      {topMapMessage && (
+        <div className="pointer-events-none absolute left-1/2 top-4 z-[1300] -translate-x-1/2 rounded-full border border-border/70 bg-background/90 px-4 py-2 text-xs text-foreground shadow-lg backdrop-blur">
+          {topMapMessage}
+        </div>
+      )}
+      {reportSubmitting && (
+        <div className="pointer-events-none absolute left-1/2 top-16 z-[1300] -translate-x-1/2 rounded-full border border-border/70 bg-background/90 px-4 py-2 text-xs text-foreground shadow-lg backdrop-blur">
+          Сохраняем обращение...
+        </div>
+      )}
       <div
         ref={mapRef}
         className="h-full w-full [&_.maplibregl-ctrl-attrib]:!hidden bg-slate-200 dark:bg-[#1a1a1a]"
@@ -1885,7 +2153,7 @@ export default function MapScreen() {
           Когда открыта полноэкранная вкладка, он уходит под затемнение
           и становится визуально неактивным, как карта. */}
       <MapProfileFab
-        isDimmed={sheetMode === 'tabs' && isSheetOpen}
+        isDimmed={sheetMode === 'tabs' && isOverlaySheetOpen}
         avatarSrc={localAvatarPreviewUrl ?? resolveAvatarUrl(userProfile?.avatar_url) ?? null}
         onClick={handleProfileFabClick}
       />
@@ -1921,23 +2189,23 @@ export default function MapScreen() {
             onClear={handleSearchInputClear}
           />
 
-          {!selectedMapIncident && (
+          {!selectedMapIncident && !reportFlowOpen && (
             <div className="mt-1.5 flex items-center justify-between px-1 text-[11px] text-muted-foreground">
               <span className="line-clamp-1">Поиск по адресам, рубрикам и точкам рядом</span>
               <span className="shrink-0">{nearbyIncidents.length} рядом</span>
             </div>
           )}
 
-          {!selectedMapIncident && (
+          {!selectedMapIncident && !reportFlowOpen && (
             <QuickSearchChips
-              chips={QUICK_SEARCH_CHIPS}
+              chips={quickSearchChips}
               selectedChip={selectedMapTagFilter}
               onSelectChip={handleQuickSearch}
               getTagIcon={getTagIcon}
             />
           )}
 
-          {!selectedMapIncident && showSuggestions && suggestions.length > 0 && (
+          {!selectedMapIncident && !reportFlowOpen && showSuggestions && suggestions.length > 0 && (
             <SearchSuggestionsList
               suggestionsRef={suggestionsRef}
               suggestions={suggestions}
@@ -1964,6 +2232,27 @@ export default function MapScreen() {
             openCreateReportFromSearch={openCreateReportFromSearch}
             filteredNearbyIncidents={filteredNearbyIncidents}
             focusIncidentOnMap={focusIncidentOnMap}
+            reportFlowOpen={reportFlowOpen}
+            marker={marker}
+            selectedRubric={selectedRubric}
+            rubricStep={rubricStep}
+            rubrics={rubrics}
+            setSelectedRubric={setSelectedRubric}
+            setRubricStep={setRubricStep}
+            reportTitle={reportTitle}
+            setReportTitle={setReportTitle}
+            reportText={reportText}
+            setReportText={setReportText}
+            reportPhotos={reportPhotos}
+            reportPhotoPreviews={reportPhotoPreviews}
+            handleReportPhotosChange={handleReportPhotosChange}
+            handlePublishReport={handlePublishReport}
+            handleSaveDraft={handleSaveDraft}
+            handleSaveToFiles={handleSaveToFiles}
+            handleSendEmail={handleSendEmail}
+            handlePrint={handlePrint}
+            reportSubmitting={reportSubmitting}
+            reportFeedback={reportFeedback}
           />
       </MapSearchPanel>
 
@@ -1991,7 +2280,7 @@ export default function MapScreen() {
             isAuthFullscreen ? 'max-w-none' : 'max-w-xl'
           )}
           style={{
-            transform: isSheetOpen && !isSheetClosing
+            transform: isOverlaySheetOpen && !isSheetClosing
               ? `translateY(${sheetDragY}px)`
               : 'translateY(calc(100% + 32px))',
             transition: isSheetDragging ? 'none' : undefined,
@@ -2025,28 +2314,6 @@ export default function MapScreen() {
 
             {sheetMode === 'marker' && marker ? (
               <MapMarkerSheetContent marker={marker} onCopyCoords={copyCoords} onCreateReport={handleCreateReport} />
-            ) : sheetMode === 'rubric' && marker ? (
-              <MapRubricSheetContent
-                marker={marker}
-                selectedRubric={selectedRubric}
-                rubricStep={rubricStep}
-                rubrics={rubrics}
-                setSelectedRubric={setSelectedRubric}
-                setRubricStep={setRubricStep}
-                closeSheet={closeSheet}
-                reportTitle={reportTitle}
-                setReportTitle={setReportTitle}
-                reportText={reportText}
-                setReportText={setReportText}
-                reportPhotos={reportPhotos}
-                reportPhotoPreviews={reportPhotoPreviews}
-                handleReportPhotosChange={handleReportPhotosChange}
-                handlePublishReport={handlePublishReport}
-                handleSaveDraft={handleSaveDraft}
-                handleSaveToFiles={handleSaveToFiles}
-                handleSendEmail={handleSendEmail}
-                handlePrint={handlePrint}
-              />
             ) : (
               <MapTabsSheetContent
                 isAuthFullscreen={isAuthFullscreen}
@@ -2074,6 +2341,7 @@ export default function MapScreen() {
                 setSelectedProfileCategoryFilter={setSelectedProfileCategoryFilter}
                 filteredUserActiveIncidents={filteredUserActiveIncidents}
                 focusIncidentOnMap={focusIncidentOnMap}
+                openDraftForEditing={openDraftForEditing}
                 setSheetMode={setSheetMode}
                 getTagIcon={getTagIcon}
                 getProfileIncidentCategoryTagClass={getProfileIncidentCategoryTagClass}

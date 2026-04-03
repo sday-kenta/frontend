@@ -22,6 +22,7 @@ type ProfileTabContentProps = {
   setSelectedProfileCategoryFilter: (value: string) => void;
   filteredUserActiveIncidents: IncidentForMapAction[];
   focusIncidentOnMap: (incident: IncidentForMapAction) => void;
+  openDraftForEditing: (incidentId: number) => void;
   setSheetMode: (mode: SheetMode) => void;
   getTagIcon: (value: string) => string;
   getProfileIncidentCategoryTagClass: (category: string) => string;
@@ -50,6 +51,7 @@ export function ProfileTabContent({
   setSelectedProfileCategoryFilter,
   filteredUserActiveIncidents,
   focusIncidentOnMap,
+  openDraftForEditing,
   setSheetMode,
   getTagIcon,
   getProfileIncidentCategoryTagClass,
@@ -204,6 +206,11 @@ export function ProfileTabContent({
             key={incident.id}
             type="button"
             onClick={() => {
+              if (incident.status.toLowerCase().includes('чернов')) {
+                openDraftForEditing(incident.id);
+                return;
+              }
+
               focusIncidentOnMap(incident);
               setSheetMode(null);
             }}
