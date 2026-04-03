@@ -4,12 +4,11 @@ import { Menu, Bell, Home, Map, User, Settings, LogOut, ChevronRight, FolderOpen
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { resolveAvatarUrl } from "@/lib/utils";
-import { withApiBase } from "@/lib/api";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 export function Navbar() {
   const [isOpen, setIsOpen] = React.useState(false);
   const [notifications] = React.useState(3);
-  const [userProfile, setUserProfile] = React.useState<{
+  const [userProfile] = React.useState<{
     id: number;
     first_name?: string;
     last_name?: string;
