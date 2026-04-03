@@ -751,6 +751,11 @@ export default function MapScreen() {
     [publishedIncidents]
   );
 
+  const incidentPreviews = useMemo(
+    () => publishedIncidents.map(mapIncidentToPreview).filter((item): item is IncidentPreview => Boolean(item)),
+    [publishedIncidents]
+  );
+
   const nearbyIncidents = useMemo(
     () =>
       incidentPreviews
@@ -1192,6 +1197,77 @@ export default function MapScreen() {
       setReportSubmitting(false);
     }
   }, [editingIncidentId, marker, refreshIncidents, reportPhotos, reportText, reportTitle, selectedRubric]);
+
+  const refreshIncidents = useCallback(async () => {
+    const [allIncidents, mine] = await Promise.all([
+      api.listIncidents(),
+      isAuthenticated ? api.listMyIncidents({ status: 'all' }) : Promise.resolve([] as Incident[]),
+    ]);
+
+    setPublishedIncidents(allIncidents);
+    setMyIncidents(mine);
+  }, [isAuthenticated]);
+
+  useEffect(() => {
+    if (!isAuthenticated) {
+      setMyIncidents([]);
+      return;
+    }
+
+    const userId = typeof window !== 'undefined' ? window.localStorage.getItem('userId') : null;
+    if (!userId) return;
+
+    void Promise.all([
+      api.getUser(Number(userId)).then(setUserProfile),
+      api.listMyIncidents({ status: 'all' }).then(setMyIncidents),
+    ]).catch(() => undefined);
+  }, [isAuthenticated]);
+
+  const submitReport = useCallback(async (status: 'draft' | 'published') => {
+    if (!selectedRubric || !marker || !reportTitle.trim() || !reportText.trim()) {
+      setReportFeedback('Заполните тему, описание и выберите рубрику.');
+      return;
+    }
+
+    setReportSubmitting(true);
+    setReportFeedback(null);
+
+    try {
+      const addressParts = (marker.address || '').split(',').map((part) => part.trim()).filter(Boolean);
+      const createdIncident = await api.createIncident({
+        category_id: selectedRubric.id,
+        title: reportTitle.trim(),
+        description: reportText.trim(),
+        status,
+        address_text: marker.address,
+        city: addressParts[0],
+        street: addressParts[1],
+        house: addressParts[2],
+        latitude: marker.lat,
+        longitude: marker.lng,
+      });
+
+      if (reportPhotos.length > 0) {
+        await api.uploadIncidentPhotos(createdIncident.id, reportPhotos);
+      }
+
+      await refreshIncidents();
+      setReportFeedback(status === 'published' ? 'Обращение опубликовано.' : 'Черновик сохранён.');
+      setReportTitle('');
+      setReportText('');
+      setReportPhotos([]);
+      setSelectedRubric(null);
+      setRubricStep('select');
+      setSelectedMapIncidentId(createdIncident.id);
+      setSheetMode(null);
+      setMarker(null);
+      setActiveTab('home');
+    } catch (error) {
+      setReportFeedback(error instanceof Error ? error.message : 'Не удалось сохранить обращение.');
+    } finally {
+      setReportSubmitting(false);
+    }
+  }, [marker, refreshIncidents, reportPhotos, reportText, reportTitle, selectedRubric]);
 
   const handlePublishReport = () => {
     void submitReport('published');

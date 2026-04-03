@@ -110,14 +110,16 @@ export const MapTabsSheetContent = memo(function MapTabsSheetContent({
   setEmailNotificationsEnabled,
   ProfileTab,
 }: MapTabsSheetContentProps) {
+  const sheetScrollManaged = activeTab === 'profile' || activeTab === 'settings';
+
   return (
     <div
       className={cn('flex-1 overflow-y-auto overscroll-contain space-y-4 pb-2', isAuthFullscreen && 'pb-0')}
       data-sheet-scrollable="true"
-      ref={activeTab === 'profile' ? profileScrollRef : null}
-      onWheel={activeTab === 'profile' ? handleProfileWheel : undefined}
-      onTouchStart={activeTab === 'profile' ? handleProfileTouchStart : undefined}
-      onTouchMove={activeTab === 'profile' ? handleProfileTouchMove : undefined}
+      ref={sheetScrollManaged ? profileScrollRef : null}
+      onWheel={sheetScrollManaged ? handleProfileWheel : undefined}
+      onTouchStart={sheetScrollManaged ? handleProfileTouchStart : undefined}
+      onTouchMove={sheetScrollManaged ? handleProfileTouchMove : undefined}
     >
       {activeTab === 'home' && <HomeTabContent closeSheet={closeSheet} />}
 

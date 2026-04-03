@@ -65,6 +65,11 @@
       select
     ) {
     border-radius: 1.5rem !important; /* ~rounded-3xl */
+    /*
+      iOS Safari при фокусе увеличивает viewport, если вычисленный размер шрифта < 16px.
+      Утилиты вроде text-sm/md:text-sm перебивают классы на полях — поэтому фиксируем 16px здесь.
+    */
+    font-size: 16px !important;
   }
 }
 

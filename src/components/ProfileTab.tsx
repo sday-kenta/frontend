@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { FC, FormEvent } from 'react';
-import { Lock, Check, X, User, Mail, Phone, House } from 'lucide-react';
+import { Lock, KeyRound, Check, X, User, Mail, Phone, House } from 'lucide-react';
 
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -351,7 +351,9 @@ const ProfileTab: FC<ProfileTabProps> = ({
       
 
       <p className="px-1 text-xs text-slate-600 dark:text-[#94a3b8]">
-        Личные данные и контакты аккаунта
+        {activeProfileTab === 'profile'
+          ? 'Личные данные и контакты аккаунта'
+          : 'Смена пароля: код на почту и новый пароль'}
       </p>
 
 
@@ -619,78 +621,95 @@ const ProfileTab: FC<ProfileTabProps> = ({
       )}
 
       {!isLoading && profile && activeProfileTab === 'password' && (
-        <div className="space-y-3 rounded-3xl bg-white/95 p-4 shadow-sm ring-1 ring-slate-200/80 dark:bg-zinc-900/65 dark:ring-white/10">
-          <div>
-            <p className="text-sm font-medium text-slate-900 dark:text-white">Смена пароля</p>
-            <p className="text-xs text-slate-600 dark:text-[#94a3b8]">
-              Код придёт на почту: {profile.email}
+        <div className="space-y-4">
+          <div className={sectionCardClass}>
+            <div className="mb-3 flex items-center gap-1.5 text-xs font-semibold text-slate-700 dark:text-white">
+              <Lock className="h-3.5 w-3.5 text-sky-500 dark:text-sky-400" />
+              Код на почту
+            </div>
+            <p className="mb-3 text-xs leading-relaxed text-slate-600 dark:text-[#94a3b8]">
+              Отправим код подтверждения на{' '}
+              <span className="font-medium text-slate-800 dark:text-slate-200">{profile.email}</span>
             </p>
-          </div>
-
-          <div className="flex flex-col gap-2 sm:flex-row">
             <Button
               type="button"
               disabled={pwdStatus !== 'idle'}
               onClick={handleSendPasswordCode}
-              className="w-full rounded-2xl bg-sky-500 text-xs font-semibold text-white hover:bg-sky-600 sm:w-auto sm:flex-1"
+              className="w-full rounded-2xl bg-sky-500 py-3 text-sm font-semibold text-white shadow-lg shadow-sky-500/20 hover:bg-sky-600 disabled:bg-slate-300 disabled:text-slate-600 disabled:shadow-none dark:disabled:bg-white/10 dark:disabled:text-slate-400"
             >
               {pwdStatus === 'sending' ? 'Отправка…' : 'Отправить код'}
             </Button>
           </div>
 
-          <div className="space-y-1">
-            <p className="text-[11px] font-semibold tracking-wide text-slate-500 dark:text-[#94a3b8]">
-              Код из письма
-            </p>
-            <Input
-              type="text"
-              value={pwdCode}
-              onChange={(e) => setPwdCode(e.target.value)}
-              className={filledInputClass}
-              placeholder="123456"
-            />
-          </div>
-
-          <div className="space-y-1">
-            <p className="text-[11px] font-semibold tracking-wide text-slate-500 dark:text-[#94a3b8]">
+          <div className={cn(sectionCardClass, 'space-y-3')}>
+            <p className="flex items-center gap-1.5 text-xs font-semibold text-slate-700 dark:text-white">
+              <KeyRound className="h-3.5 w-3.5 text-sky-500 dark:text-sky-400" />
               Новый пароль
             </p>
-            <Input
-              type="password"
-              value={pwdNew}
-              onChange={(e) => setPwdNew(e.target.value)}
-              className={filledInputClass}
-              placeholder="Минимум 6 символов"
-            />
-          </div>
 
-          <div className="space-y-1">
-            <p className="text-[11px] font-semibold tracking-wide text-slate-500 dark:text-[#94a3b8]">
-              Повтор пароля
-            </p>
-            <Input
-              type="password"
-              value={pwdNew2}
-              onChange={(e) => setPwdNew2(e.target.value)}
-              className={filledInputClass}
-              placeholder="Повторите пароль"
-            />
-          </div>
-
-          {pwdMessage && (
-            <div className="rounded-xl border border-slate-200/80 bg-slate-50/80 px-3 py-2 text-xs text-slate-700 dark:border-white/10 dark:bg-zinc-950/70 dark:text-[#cbd5f5]">
-              {pwdMessage}
+            <div className="space-y-1">
+              <p className={fieldLabelClass}>Код из письма</p>
+              <Input
+                type="text"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                value={pwdCode}
+                onChange={(e) => setPwdCode(e.target.value)}
+                className={filledInputClass}
+                placeholder="Например, 123456"
+              />
             </div>
-          )}
 
-          <Button
-            type="button"
-            disabled={pwdStatus !== 'idle'}
-            onClick={handleChangePassword}
-            className="w-full rounded-2xl bg-sky-500 text-xs font-semibold text-white hover:bg-sky-600"
-          >
-            {pwdStatus === 'saving' ? 'Сохранение…' : 'Сменить пароль'}
-          </Button>
+            <div className="space-y-1">
+              <p className={fieldLabelClass}>Новый пароль</p>
+              <Input
+                type="password"
+                autoComplete="new-password"
+                value={pwdNew}
+                onChange={(e) => setPwdNew(e.target.value)}
+                className={filledInputClass}
+                placeholder="Минимум 6 символов"
+              />
+            </div>
+
+            <div className="space-y-1">
+              <p className={fieldLabelClass}>Повтор пароля</p>
+              <Input
+                type="password"
+                autoComplete="new-password"
+                value={pwdNew2}
+                onChange={(e) => setPwdNew2(e.target.value)}
+                className={filledInputClass}
+                placeholder="Повторите пароль"
+              />
+            </div>
+
+            {pwdMessage && (
+              <div
+                className={cn(
+                  'rounded-lg border px-3 py-2 text-xs',
+                  /успешно|отправлен/i.test(pwdMessage)
+                    ? 'border-emerald-500/40 bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-200'
+                    : /Не удалось|неверн|коротк|совпадают|Введите/i.test(pwdMessage)
+                      ? 'border-red-500/40 bg-red-50 text-red-700 dark:bg-red-500/10 dark:text-red-200'
+                      : 'border-slate-200/80 bg-slate-50/90 text-slate-700 dark:border-white/10 dark:bg-zinc-950/70 dark:text-[#cbd5f5]'
+                )}
+              >
+                {pwdMessage}
+              </div>
+            )}
+
+            <div className="pt-1 flex justify-end">
+              <Button
+                type="button"
+                disabled={pwdStatus !== 'idle'}
+                onClick={handleChangePassword}
+                className="w-full rounded-2xl bg-sky-500 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-sky-500/20 hover:bg-sky-600 disabled:bg-slate-300 disabled:text-slate-600 disabled:shadow-none dark:disabled:bg-white/10 dark:disabled:text-slate-400 md:w-auto"
+              >
+                {pwdStatus === 'saving' ? 'Сохранение…' : 'Сменить пароль'}
+              </Button>
+            </div>
+          </div>
         </div>
       )}
 
