@@ -397,6 +397,7 @@ export default function MapScreen() {
     last_name?: string;
     email?: string;
     avatar_url?: string | null;
+    role?: string;
   } | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
     if (typeof window === 'undefined') return false;
@@ -522,6 +523,7 @@ export default function MapScreen() {
             last_name?: string;
             email?: string;
             avatar_url?: string | null;
+            role?: string;
           };
           if (!cancelled) {
             setUserProfile({
@@ -530,6 +532,7 @@ export default function MapScreen() {
               last_name: parsedUser.last_name,
               email: parsedUser.email,
               avatar_url: parsedUser.avatar_url ?? null,
+              role: parsedUser.role,
             });
           }
         }
@@ -1045,6 +1048,7 @@ export default function MapScreen() {
                 last_name?: string;
                 email?: string;
                 avatar_url?: string | null;
+                role?: string;
               },
             );
           }
@@ -1170,10 +1174,10 @@ export default function MapScreen() {
         uploadWarning || (
           editingIncidentId != null
             ? status === 'published'
-              ? 'Черновик обновлён и опубликован.'
+              ? 'Обращение обновлено и опубликовано.'
               : 'Черновик обновлён.'
             : status === 'published'
-              ? 'Обращение опубликовано.'
+              ? 'Обращение опубликовано и отображается на карте.'
               : 'Черновик сохранён.'
         )
       );
@@ -1184,7 +1188,7 @@ export default function MapScreen() {
       setEditingIncidentId(null);
       setSelectedRubric(null);
       setRubricStep('select');
-      setSelectedMapIncidentId(status === 'published' ? savedIncident.id : null);
+      setSelectedMapIncidentId(null);
       setSheetMode(null);
       setMarker(null);
       setActiveTab(status === 'draft' ? 'profile' : 'home');
@@ -2107,6 +2111,7 @@ export default function MapScreen() {
     last_name?: string;
     email?: string;
     avatar_url?: string | null;
+    role?: string;
   } | null) => {
     if (!payload) return;
     setIsAuthenticated(true);

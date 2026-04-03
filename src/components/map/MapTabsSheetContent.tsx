@@ -58,6 +58,7 @@ type MapTabsSheetContentProps = {
     last_name?: string;
     email?: string;
     avatar_url?: string | null;
+    role?: string;
   } | null>>;
   isAuthenticated: boolean;
   pushNotificationsEnabled: boolean;

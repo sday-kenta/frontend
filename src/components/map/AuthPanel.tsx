@@ -8,6 +8,7 @@ export type AuthResponseUser = {
   first_name?: string;
   last_name?: string;
   avatar_url?: string | null;
+  role?: string;
 };
 
 type AuthPanelProps = {
@@ -123,12 +124,15 @@ export function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
           throw new Error('Не удалось получить пользователя после входа.');
         }
 
+        const roleResolved =
+          typeof user.role === 'string' && user.role.trim() !== '' ? user.role.trim() : 'user';
+
         if (typeof window !== 'undefined') {
           window.localStorage.setItem('userId', String(user.id));
-          window.localStorage.setItem('auth:user', JSON.stringify({ ...user, role: 'user' }));
+          window.localStorage.setItem('auth:user', JSON.stringify({ ...user, role: roleResolved }));
         }
 
-        onAuthenticated({ ...user, role: 'user' } as AuthResponseUser | null);
+        onAuthenticated({ ...user, role: roleResolved } as AuthResponseUser | null);
         closeSheet();
       } else {
         const res = await fetch(`${API_PREFIX}/users`, {
