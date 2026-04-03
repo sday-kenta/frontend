@@ -16,7 +16,6 @@ import { MapSearchExpandedContent } from '@/components/map/MapSearchExpandedCont
 import { AuthPanel } from '@/components/map/AuthPanel';
 import { MapProfileFab } from '@/components/map/MapProfileFab';
 import { MapMarkerSheetContent } from '@/components/map/MapMarkerSheetContent';
-import { MapRubricSheetContent } from '@/components/map/MapRubricSheetContent';
 import { MapTabsSheetContent } from '@/components/map/MapTabsSheetContent';
 
 const ProfileTab = ProfileTabComponent as ComponentType<{
@@ -107,6 +106,13 @@ function buildIncidentTags(incident: import('@/lib/api').Incident) {
   return Array.from(tags).slice(0, 6);
 }
 
+function normalizeIncidentPhotoUrl(url: string) {
+  if (!url) return url;
+  return /^https?:\/\//i.test(url) || url.startsWith('blob:') || url.startsWith('data:')
+    ? url
+    : withApiBase(url);
+}
+
 function mapIncidentToPreview(incident: import('@/lib/api').Incident): IncidentPreview | null {
   if (typeof incident.latitude !== 'number' || typeof incident.longitude !== 'number') return null;
 
@@ -119,14 +125,109 @@ function mapIncidentToPreview(incident: import('@/lib/api').Incident): IncidentP
     lng: incident.longitude,
     description: incident.description,
     address: incident.address_text || [incident.city, incident.street, incident.house].filter(Boolean).join(', '),
-    photoUrls: (incident.photos || []).map((photo) =>
-      photo.file_url.startsWith('http') ? photo.file_url : withApiBase(photo.file_url)
-    ),
+    photoUrls: (incident.photos || []).map((photo) => normalizeIncidentPhotoUrl(photo.file_url)),
     tags: buildIncidentTags(incident),
     createdAt: incident.created_at,
   };
 }
 
+async function blobToDataUrl(blob: Blob): Promise<string> {
+  return await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      if (typeof reader.result === 'string') {
+        resolve(reader.result);
+      } else {
+        reject(new Error('Не удалось подготовить фото для документа.'));
+      }
+    };
+    reader.onerror = () => reject(reader.error ?? new Error('Не удалось прочитать фото для документа.'));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function resolveDocumentPhotoSource(url: string): Promise<string> {
+  const normalizedUrl = normalizeIncidentPhotoUrl(url);
+  if (!normalizedUrl || normalizedUrl.startsWith('blob:') || normalizedUrl.startsWith('data:')) {
+    return normalizedUrl;
+  }
+
+  const response = await fetch(normalizedUrl, { credentials: 'include' });
+  if (!response.ok) {
+    throw new Error('Не удалось загрузить фото для документа.');
+  }
+
+  const blob = await response.blob();
+  return blobToDataUrl(blob);
+}
+
+async function loadImageElement(file: File): Promise<HTMLImageElement> {
+  const objectUrl = URL.createObjectURL(file);
+  const imageRef: Array<HTMLImageElement | null> = [null];
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        imageRef[0] = img;
+        resolve();
+      };
+      img.onerror = () => reject(new Error('Не удалось обработать изображение.'));
+      img.src = objectUrl;
+    });
+    return imageRef[0]!;
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
+async function compressPhotoForUpload(file: File): Promise<File> {
+  if (typeof window === 'undefined' || !file.type.startsWith('image/')) {
+    return file;
+  }
+
+  if (file.size <= 2 * 1024 * 1024) {
+    return file;
+  }
+
+  const image = await loadImageElement(file);
+  const maxSide = 1600;
+  const scale = Math.min(1, maxSide / Math.max(image.width, image.height));
+  const targetWidth = Math.max(1, Math.round(image.width * scale));
+  const targetHeight = Math.max(1, Math.round(image.height * scale));
+
+  const canvas = document.createElement('canvas');
+  canvas.width = targetWidth;
+  canvas.height = targetHeight;
+
+  const context = canvas.getContext('2d');
+  if (!context) {
+    return file;
+  }
+
+  context.drawImage(image, 0, 0, targetWidth, targetHeight);
+
+  const mimeType = file.type === 'image/png' ? 'image/png' : 'image/jpeg';
+  const quality = mimeType === 'image/png' ? undefined : 0.82;
+
+  const blob = await new Promise<Blob | null>((resolve) => {
+    canvas.toBlob(resolve, mimeType, quality);
+  });
+
+  if (!blob || blob.size >= file.size) {
+    return file;
+  }
+
+  const extension = mimeType === 'image/png' ? 'png' : 'jpg';
+  const nextName = file.name.replace(/\.[^.]+$/, '') || 'photo';
+  return new File([blob], `${nextName}.${extension}`, {
+    type: mimeType,
+    lastModified: Date.now(),
+  });
+}
+
+async function preparePhotosForUpload(files: File[]): Promise<File[]> {
+  return Promise.all(files.map((file) => compressPhotoForUpload(file)));
+}
 type IncidentDetails = {
   description: string;
   tags: string[];
@@ -287,7 +388,9 @@ export default function MapScreen() {
   const [reportTitle, setReportTitle] = useState('');
   const [reportText, setReportText] = useState('');
   const [reportPhotos, setReportPhotos] = useState<File[]>([]);
+  const [existingReportPhotoPreviews, setExistingReportPhotoPreviews] = useState<string[]>([]);
   const [reportPhotoPreviews, setReportPhotoPreviews] = useState<string[]>([]);
+  const [editingIncidentId, setEditingIncidentId] = useState<number | null>(null);
   const [userProfile, setUserProfile] = useState<{
     id?: number;
     first_name?: string;
@@ -318,6 +421,7 @@ export default function MapScreen() {
   const [selectedProfileStatusFilter, setSelectedProfileStatusFilter] = useState<string>('Все');
   const [selectedProfileCategoryFilter, setSelectedProfileCategoryFilter] = useState<string>('Все');
   const [renderExpandedSearchContent, setRenderExpandedSearchContent] = useState(false);
+  const reportFlowOpen = sheetMode === 'rubric';
   const profileScrollRef = useRef<HTMLDivElement | null>(null);
   const profileTouchStartYRef = useRef<number | null>(null);
   const searchPanelTouchStartYRef = useRef<number | null>(null);
@@ -381,7 +485,7 @@ export default function MapScreen() {
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
-  }, [query, fetchSuggestions]);
+  }, [query, fetchSuggestions, reportFlowOpen]);
 
   useEffect(() => {
     let cancelled = false;
@@ -472,42 +576,60 @@ export default function MapScreen() {
     setShowSuggestions(false);
   }, []);
 
-  const handlePlaceMarker = useCallback((lat: number, lng: number) => {
-    setMarker({ lat, lng });
+  const resolveMarkerAddress = useCallback(async (lat: number, lng: number) => {
+    try {
+      const data = await api.reverseGeocode(lat, lng);
+      const district = data.street || data.road || data.city;
+      const address =
+        data.display_name ||
+        data.full_address ||
+        data.address_text ||
+        [data.city, data.street || data.road, data.house || data.house_number].filter(Boolean).join(', ') ||
+        'Выбранная точка';
+
+      setMarker((prev) =>
+        prev && Math.abs(prev.lat - lat) < 0.000001 && Math.abs(prev.lng - lng) < 0.000001
+          ? {
+              ...prev,
+              address,
+              district: district || undefined,
+            }
+          : prev
+      );
+    } catch (error) {
+      const isOutOfZone = error instanceof Error && /area yet|вне зоны|not work in this area/i.test(error.message);
+      setMarker((prev) =>
+        prev && Math.abs(prev.lat - lat) < 0.000001 && Math.abs(prev.lng - lng) < 0.000001
+          ? {
+              ...prev,
+              address: prev.address || (isOutOfZone ? 'Точка вне зоны работы сервиса' : 'Выбранная точка'),
+            }
+          : prev
+      );
+    }
+  }, []);
+
+  const openReportFlowForPoint = useCallback((lat: number, lng: number, options?: { address?: string }) => {
+    setMarker({ lat, lng, address: options?.address });
     setCenter({ lat, lng });
     setSelectedMapIncidentId(null);
-    setSheetMode('marker');
+    setSelectedRubric(null);
+    setRubricStep('select');
+    setReportFeedback(null);
+    setReportTitle('');
+    setReportText('');
+    setReportPhotos([]);
+    setExistingReportPhotoPreviews([]);
+    setEditingIncidentId(null);
+    setShowSuggestions(false);
+    setSheetMode('rubric');
+    setSearchPanelSnap('full');
+    void resolveMarkerAddress(lat, lng);
+  }, [resolveMarkerAddress]);
 
-    api.reverseGeocode(lat, lng)
-      .then((data) => {
-        const district = data.street || data.road || data.city;
-        setMarker((prev) =>
-          prev
-            ? {
-                ...prev,
-                address:
-                  data.display_name ||
-                  data.full_address ||
-                  data.address_text ||
-                  [data.city, data.street || data.road, data.house || data.house_number].filter(Boolean).join(', ') ||
-                  'Выбранная точка',
-                district: district || undefined,
-              }
-            : prev
-        );
-      })
-      .catch((error) => {
-        const isOutOfZone = error instanceof Error && /area yet|вне зоны|not work in this area/i.test(error.message);
-        setMarker((prev) =>
-          prev
-            ? {
-                ...prev,
-                address: prev.address || (isOutOfZone ? 'Точка вне зоны работы сервиса' : 'Выбранная точка'),
-              }
-            : prev
-        );
-      });
-  }, []);
+  const handlePlaceMarker = useCallback((lat: number, lng: number) => {
+    openReportFlowForPoint(lat, lng);
+  }, [openReportFlowForPoint]);
 
   const clearMarker = useCallback(() => {
     setMarker(null);
@@ -518,7 +640,7 @@ export default function MapScreen() {
   }, [sheetMode]);
 
   const handleSheetTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
-    if (!isSheetOpen) return;
+    if (!isOverlaySheetOpen) return;
 
     // Drag должен начинаться только за ручку (handle), иначе при обычном скролле
     // пользователи случайно "закрывают" простыню.
@@ -538,14 +660,14 @@ export default function MapScreen() {
   };
 
   const handleSheetTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
-    if (!isSheetOpen || sheetDragStartYRef.current === null) return;
+    if (!isOverlaySheetOpen || sheetDragStartYRef.current === null) return;
     const touch = e.touches[0];
     const delta = touch.clientY - sheetDragStartYRef.current;
     setSheetDragY(delta > 0 ? delta : 0);
   };
 
   const handleSheetTouchEnd = () => {
-    if (!isSheetOpen) {
+    if (!isOverlaySheetOpen) {
       setSheetDragY(0);
       setIsSheetDragging(false);
       sheetDragStartYRef.current = null;
@@ -612,15 +734,24 @@ export default function MapScreen() {
 
   const handleCreateReport = useCallback(() => {
     if (!marker) return;
+    setSelectedMapIncidentId(null);
     setSelectedRubric(null);
     setRubricStep('select');
+    setReportFeedback(null);
+    setShowSuggestions(false);
     setSheetMode('rubric');
-  }, [marker]);
+    setSearchPanelSnap('full');
+    if (!marker.address || marker.address === 'Точка в центре карты') {
+      void resolveMarkerAddress(marker.lat, marker.lng);
+    }
+  }, [marker, resolveMarkerAddress]);
 
   const incidentPreviews = useMemo(
     () => publishedIncidents.map(mapIncidentToPreview).filter((item): item is IncidentPreview => Boolean(item)),
     [publishedIncidents]
   );
+
+  
 
   const nearbyIncidents = useMemo(
     () =>
@@ -663,8 +794,14 @@ export default function MapScreen() {
     const incidentWithDistance = nearbyIncidentsById.get(selectedMapIncidentId);
     if (incidentWithDistance) return incidentWithDistance;
 
-    return incidentPreviews.find((incident) => incident.id === selectedMapIncidentId) ?? null;
-  }, [incidentPreviews, nearbyIncidentsById, selectedMapIncidentId]);
+    const ownIncident = myIncidents.find((incident) => incident.id === selectedMapIncidentId);
+
+    return (
+      incidentPreviews.find((incident) => incident.id === selectedMapIncidentId) ??
+      (ownIncident ? mapIncidentToPreview(ownIncident) : null) ??
+      null
+    );
+  }, [incidentPreviews, myIncidents, nearbyIncidentsById, selectedMapIncidentId]);
 
   const selectedMapIncidentDistanceLabel = useMemo(() => {
     if (selectedMapIncidentId == null) return null;
@@ -752,22 +889,22 @@ export default function MapScreen() {
   }, [categories]);
 
   const openCreateReportFromSearch = useCallback(() => {
-    const markerPoint = marker ?? {
-      lat: center.lat,
-      lng: center.lng,
-      address: 'Точка в центре карты',
-    };
-
-    if (!marker) {
-      setMarker(markerPoint);
+    if (marker) {
+      setSelectedMapIncidentId(null);
+      setSelectedRubric(null);
+      setRubricStep('select');
+      setReportFeedback(null);
+      setShowSuggestions(false);
+      setSheetMode('rubric');
+      setSearchPanelSnap('full');
+      if (!marker.address || marker.address === 'Точка в центре карты') {
+        void resolveMarkerAddress(marker.lat, marker.lng);
+      }
+      return;
     }
 
-    setSelectedRubric(null);
-    setRubricStep('select');
-    setSheetMode('rubric');
-    setShowSuggestions(false);
-    setSearchPanelSnap('collapsed');
-  }, [center.lat, center.lng, marker]);
+    openReportFlowForPoint(center.lat, center.lng, { address: 'Точка в центре карты' });
+  }, [center.lat, center.lng, marker, openReportFlowForPoint, resolveMarkerAddress]);
 
   const handleQuickSearch = useCallback((value: string) => {
     setSelectedMapTagFilter((prev) => (prev === value ? null : value));
@@ -778,13 +915,14 @@ export default function MapScreen() {
   type IncidentSelectionTarget = Pick<IncidentPreview, 'id' | 'lat' | 'lng' | 'title'>;
 
   const focusIncidentOnMap = useCallback((incident: IncidentSelectionTarget) => {
+    setSheetMode(null);
+    setSelectedRubric(null);
+    setRubricStep('select');
+    setEditingIncidentId(null);
+    setExistingReportPhotoPreviews([]);
     setSelectedMapIncidentId(incident.id);
     setCenter({ lat: incident.lat, lng: incident.lng });
-    setMarker({
-      lat: incident.lat,
-      lng: incident.lng,
-      address: incident.title,
-    });
+    setMarker(null);
     setSearchPanelSnap('full');
     setShowSuggestions(false);
   }, []);
@@ -944,11 +1082,21 @@ export default function MapScreen() {
 
   useEffect(() => {
     const urls = reportPhotos.map((f) => URL.createObjectURL(f));
-    setReportPhotoPreviews(urls);
+    setReportPhotoPreviews([...existingReportPhotoPreviews, ...urls]);
     return () => {
       urls.forEach((u) => URL.revokeObjectURL(u));
     };
-  }, [reportPhotos]);
+  }, [existingReportPhotoPreviews, reportPhotos]);
+
+  useEffect(() => {
+    if (!reportFeedback) return;
+
+    const timeoutId = window.setTimeout(() => {
+      setReportFeedback((current) => (current === reportFeedback ? null : current));
+    }, 5000);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [reportFeedback]);
 
   const refreshIncidents = useCallback(async () => {
     const [allIncidents, mine] = await Promise.all([
@@ -986,7 +1134,7 @@ export default function MapScreen() {
 
     try {
       const addressParts = (marker.address || '').split(',').map((part) => part.trim()).filter(Boolean);
-      const createdIncident = await api.createIncident({
+      const payload = {
         category_id: selectedRubric.id,
         title: reportTitle.trim(),
         description: reportText.trim(),
@@ -997,33 +1145,134 @@ export default function MapScreen() {
         house: addressParts[2],
         latitude: marker.lat,
         longitude: marker.lng,
-      });
+      } as const;
+
+      const savedIncident = editingIncidentId != null
+        ? await api.updateIncident(editingIncidentId, payload)
+        : await api.createIncident(payload);
+
+      let uploadWarning: string | null = null;
 
       if (reportPhotos.length > 0) {
-        await api.uploadIncidentPhotos(createdIncident.id, reportPhotos);
+        const preparedPhotos = await preparePhotosForUpload(reportPhotos);
+
+        try {
+          await api.uploadIncidentPhotos(savedIncident.id, preparedPhotos);
+        } catch (uploadError) {
+          uploadWarning = uploadError instanceof Error
+            ? `${uploadError.message} Обращение сохранено, но часть фото не загрузилась.`
+            : 'Обращение сохранено, но часть фото не загрузилась.';
+        }
       }
 
       await refreshIncidents();
-      setReportFeedback(status === 'published' ? 'Обращение опубликовано.' : 'Черновик сохранён.');
+      setReportFeedback(
+        uploadWarning || (
+          editingIncidentId != null
+            ? status === 'published'
+              ? 'Черновик обновлён и опубликован.'
+              : 'Черновик обновлён.'
+            : status === 'published'
+              ? 'Обращение опубликовано.'
+              : 'Черновик сохранён.'
+        )
+      );
       setReportTitle('');
       setReportText('');
       setReportPhotos([]);
+      setExistingReportPhotoPreviews([]);
+      setEditingIncidentId(null);
       setSelectedRubric(null);
       setRubricStep('select');
-      setSelectedMapIncidentId(createdIncident.id);
+      setSelectedMapIncidentId(status === 'published' ? savedIncident.id : null);
       setSheetMode(null);
       setMarker(null);
-      setActiveTab('home');
+      setActiveTab(status === 'draft' ? 'profile' : 'home');
     } catch (error) {
       setReportFeedback(error instanceof Error ? error.message : 'Не удалось сохранить обращение.');
     } finally {
       setReportSubmitting(false);
     }
-  }, [marker, refreshIncidents, reportPhotos, reportText, reportTitle, selectedRubric]);
+  }, [editingIncidentId, marker, refreshIncidents, reportPhotos, reportText, reportTitle, selectedRubric]);
 
   const handlePublishReport = () => {
     void submitReport('published');
   };
+
+  const openDraftForEditing = useCallback(async (incidentId: number) => {
+    try {
+      const sourceIncident = myIncidents.find((incident) => incident.id === incidentId) ?? await api.getIncident(incidentId);
+      const incidentCategory = categories.find((category) => category.id === sourceIncident.category_id) ?? null;
+      const lat = sourceIncident.latitude ?? center.lat;
+      const lng = sourceIncident.longitude ?? center.lng;
+      const address = sourceIncident.address_text || [sourceIncident.city, sourceIncident.street, sourceIncident.house].filter(Boolean).join(', ') || 'Адрес уточняется';
+
+      setSelectedMapIncidentId(null);
+      setCenter({ lat, lng });
+      setMarker({ lat, lng, address });
+      setSelectedRubric(incidentCategory ? {
+        id: incidentCategory.id,
+        title: incidentCategory.title,
+        icon: <span className="text-xl" aria-hidden>{getCategoryEmoji(incidentCategory.title)}</span>,
+        color: getCategoryColorClass(incidentCategory.title),
+        description: `Сообщить о проблеме по категории «${incidentCategory.title}».`,
+        path: `/create/category/${incidentCategory.id}`,
+      } : null);
+      setRubricStep('create');
+      setReportTitle(sourceIncident.title || '');
+      setReportText(sourceIncident.description || '');
+      setReportPhotos([]);
+      setExistingReportPhotoPreviews(sourceIncident.photos?.map((photo) => normalizeIncidentPhotoUrl(photo.file_url)).filter(Boolean) ?? []);
+      setEditingIncidentId(sourceIncident.id);
+      setReportFeedback(null);
+      setShowSuggestions(false);
+      setSheetMode('rubric');
+      setSearchPanelSnap('full');
+      if (!sourceIncident.address_text && sourceIncident.latitude != null && sourceIncident.longitude != null) {
+        void resolveMarkerAddress(sourceIncident.latitude, sourceIncident.longitude);
+      }
+    } catch (error) {
+      setReportFeedback(error instanceof Error ? error.message : 'Не удалось открыть черновик.');
+      setActiveTab('profile');
+      setSheetMode('tabs');
+    }
+  }, [categories, center.lat, center.lng, myIncidents, resolveMarkerAddress]);
+
+  const ensureIncidentForDocumentAction = useCallback(async () => {
+    if (!selectedRubric || !marker || !reportTitle.trim() || !reportText.trim()) {
+      throw new Error('Заполните тему, описание и выберите рубрику.');
+    }
+
+    const addressParts = (marker.address || '').split(',').map((part) => part.trim()).filter(Boolean);
+    const payload = {
+      category_id: selectedRubric.id,
+      title: reportTitle.trim(),
+      description: reportText.trim(),
+      status: 'draft' as const,
+      address_text: marker.address,
+      city: addressParts[0],
+      street: addressParts[1],
+      house: addressParts[2],
+      latitude: marker.lat,
+      longitude: marker.lng,
+    };
+
+    const savedIncident = editingIncidentId != null
+      ? await api.updateIncident(editingIncidentId, payload)
+      : await api.createIncident(payload);
+
+    if (reportPhotos.length > 0) {
+      const preparedPhotos = await preparePhotosForUpload(reportPhotos);
+      await api.uploadIncidentPhotos(savedIncident.id, preparedPhotos);
+      setReportPhotos([]);
+    }
+
+    const latestIncident = await api.getIncident(savedIncident.id);
+    setEditingIncidentId(latestIncident.id);
+    setExistingReportPhotoPreviews(latestIncident.photos?.map((photo) => normalizeIncidentPhotoUrl(photo.file_url)).filter(Boolean) ?? []);
+    await refreshIncidents();
+    return latestIncident.id;
+  }, [editingIncidentId, marker, refreshIncidents, reportPhotos, reportText, reportTitle, selectedRubric]);
 
   const getCurrentReportPayload = () => ({
     rubric: selectedRubric,
@@ -1077,6 +1326,12 @@ export default function MapScreen() {
         .replace(/[:.]/g, '-')
         .slice(0, 19);
 
+      const photoSources = await Promise.all(
+        reportPhotoPreviews
+          .filter(Boolean)
+          .map((photoUrl) => resolveDocumentPhotoSource(photoUrl).catch(() => normalizeIncidentPhotoUrl(photoUrl))),
+      );
+
       const container = document.createElement('div');
       container.style.position = 'fixed';
       container.style.left = '-10000px';
@@ -1092,27 +1347,47 @@ export default function MapScreen() {
       container.style.whiteSpace = 'pre-wrap';
       container.innerHTML = html;
 
-      if (reportPhotoPreviews[0]) {
+      if (photoSources.length > 0) {
         const photoTitle = document.createElement('div');
         photoTitle.style.marginTop = '16px';
         photoTitle.style.fontWeight = 'bold';
         photoTitle.textContent = 'Фото:';
         container.appendChild(photoTitle);
 
-        const img = document.createElement('img');
-        img.src = reportPhotoPreviews[0];
-        img.alt = 'Фото из обращения';
-        img.style.display = 'block';
-        img.style.marginTop = '8px';
-        img.style.maxWidth = '100%';
-        img.style.maxHeight = '500px';
-        container.appendChild(img);
+        const photosGrid = document.createElement('div');
+        photosGrid.style.display = 'grid';
+        photosGrid.style.gridTemplateColumns = 'repeat(2, minmax(0, 1fr))';
+        photosGrid.style.gap = '12px';
+        photosGrid.style.marginTop = '8px';
+        container.appendChild(photosGrid);
+
+        await Promise.all(
+          photoSources.map(
+            (src) =>
+              new Promise<void>((resolve) => {
+                const img = document.createElement('img');
+                img.crossOrigin = 'anonymous';
+                img.alt = 'Фото из обращения';
+                img.style.display = 'block';
+                img.style.width = '100%';
+                img.style.aspectRatio = '1 / 1';
+                img.style.objectFit = 'cover';
+                img.style.borderRadius = '12px';
+                img.style.border = '1px solid #d1d5db';
+                img.onload = () => resolve();
+                img.onerror = () => resolve();
+                img.src = src;
+                photosGrid.appendChild(img);
+              }),
+          ),
+        );
       }
       document.body.appendChild(container);
 
       const canvas = await html2canvas(container, {
         scale: 2,
         backgroundColor: '#ffffff',
+        useCORS: true,
       });
 
       document.body.removeChild(container);
@@ -1135,7 +1410,7 @@ export default function MapScreen() {
       const imgHeight = canvas.height;
       const ratio = Math.min(
         availableWidth / imgWidth,
-        availableHeight / imgHeight
+        availableHeight / imgHeight,
       );
 
       const renderWidth = imgWidth * ratio;
@@ -1149,33 +1424,40 @@ export default function MapScreen() {
         offsetX,
         offsetY,
         renderWidth,
-        renderHeight
+        renderHeight,
       );
 
       const filename = `${safeTitle}-${timestamp}.pdf`;
       doc.save(filename);
     } catch (error) {
       console.error('Не удалось сохранить обращение в файлы устройства', error);
+      setReportFeedback(error instanceof Error ? error.message : 'Не удалось сохранить документ в файлы.');
     }
   };
 
-  const handleSendEmail = () => {
-    // Заглушка: отправка документа на email пользователя
-    console.log('Отправить обращение на email пользователя', getCurrentReportPayload());
+
+  const handleSendEmail = async () => {
+    setReportSubmitting(true);
+    setReportFeedback(null);
+
+    try {
+      const incidentId = await ensureIncidentForDocumentAction();
+      await api.sendIncidentDocumentToEmail(incidentId, userProfile?.email || undefined);
+      setReportFeedback(userProfile?.email ? `Документ отправлен на ${userProfile.email}.` : 'Документ отправлен на e-mail автора обращения.');
+    } catch (error) {
+      setReportFeedback(error instanceof Error ? error.message : 'Не удалось отправить документ на e-mail.');
+    } finally {
+      setReportSubmitting(false);
+    }
   };
 
-  const handlePrint = () => {
+  const handlePrint = async () => {
+    setReportSubmitting(true);
+    setReportFeedback(null);
+
     try {
-      const baseHtml = buildReportHtml();
-      const firstPhoto = reportPhotoPreviews[0];
-      const photoHtml = firstPhoto
-        ? `<div style="margin-top:16px;">
-             <img src="${firstPhoto}" alt="Фото из обращения" style="max-width:100%;max-height:500px;margin-top:8px;" />
-           </div>`
-        : '';
-
-      const printableHtml = `${baseHtml}${photoHtml}`;
-
+      const incidentId = await ensureIncidentForDocumentAction();
+      const printableHtml = await api.getIncidentDocumentPrintHtml(incidentId);
       const iframe = document.createElement('iframe');
       iframe.style.position = 'fixed';
       iframe.style.right = '0';
@@ -1188,52 +1470,28 @@ export default function MapScreen() {
       const frameWindow = iframe.contentWindow;
       if (!frameWindow) {
         document.body.removeChild(iframe);
-        console.error('Не удалось инициализировать окно печати');
-        return;
+        throw new Error('Не удалось открыть печатную версию документа.');
       }
 
       frameWindow.document.open();
-      frameWindow.document.write(`<!doctype html>
-<html lang="ru">
-  <head>
-    <meta charSet="utf-8" />
-    <title>Обращение для печати</title>
-    <style>
-      body {
-        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        font-size: 14px;
-        line-height: 1.5;
-        color: #111827;
-        padding: 24px;
-      }
-      h1 {
-        font-size: 20px;
-        margin-bottom: 16px;
-      }
-      .content {
-        white-space: normal;
-      }
-    </style>
-  </head>
-  <body>
-    <h1>Обращение гражданина</h1>
-    <div class="content">${printableHtml}</div>
-  </body>
-</html>`);
+      frameWindow.document.write(printableHtml);
       frameWindow.document.close();
+      frameWindow.focus();
 
-      iframe.onload = () => {
-        try {
-          frameWindow.focus();
-          frameWindow.print();
-        } finally {
-          setTimeout(() => {
+      window.setTimeout(() => {
+        frameWindow.print();
+        window.setTimeout(() => {
+          if (iframe.parentNode) {
             document.body.removeChild(iframe);
-          }, 1000);
-        }
-      };
+          }
+        }, 1500);
+      }, 250);
+
+      setReportFeedback('Печатная версия подготовлена.');
     } catch (error) {
-      console.error('Не удалось отправить обращение на печать', error);
+      setReportFeedback(error instanceof Error ? error.message : 'Не удалось открыть печатную версию.');
+    } finally {
+      setReportSubmitting(false);
     }
   };
 
@@ -1290,8 +1548,8 @@ export default function MapScreen() {
     setSheetMode('tabs');
   }, [closeSheet]);
 
-  const isSheetOpen = sheetMode !== null;
-  const isSheetVisible = isSheetOpen || isSheetClosing;
+  const isOverlaySheetOpen = sheetMode === 'tabs' || sheetMode === 'marker';
+  const isSheetVisible = isOverlaySheetOpen || isSheetClosing;
 
   // Мягкое закрытие: даём анимации контейнера плавно
   // уехать вниз так же, как при нажатии на фон / крестик.
@@ -1617,9 +1875,12 @@ export default function MapScreen() {
       searchPanelSettleTimeoutRef.current = null;
     }
 
-    searchPanelTouchStartYRef.current = event.touches[0]?.clientY ?? null;
+    const touchTarget = event.target as HTMLElement | null;
+    const isFromHandle = Boolean(touchTarget?.closest('[data-search-drag-handle="true"]'));
+
+    searchPanelTouchTargetRef.current = touchTarget;
     searchPanelStartSnapRef.current = searchPanelSnap;
-    searchPanelTouchTargetRef.current = event.target as HTMLElement | null;
+    searchPanelTouchStartYRef.current = isFromHandle ? event.touches[0]?.clientY ?? null : null;
     searchPanelCanDragRef.current = false;
   }, [searchPanelSnap]);
 
@@ -1633,32 +1894,17 @@ export default function MapScreen() {
 
     const touchTarget = searchPanelTouchTargetRef.current;
     const isFromHandle = Boolean(touchTarget?.closest('[data-search-drag-handle="true"]'));
-    const scrollableParent = touchTarget?.closest('[data-search-scrollable="true"]') as HTMLElement | null;
-    const canScrollUp = Boolean(scrollableParent && scrollableParent.scrollTop > 0);
-    const canScrollDown = Boolean(
-      scrollableParent &&
-        scrollableParent.scrollTop + scrollableParent.clientHeight < scrollableParent.scrollHeight - 1
-    );
-    const isFullSnap = searchPanelStartSnapRef.current === 'full';
-    const canStartDragFromContent =
-      !scrollableParent ||
-      (isFullSnap
-        ? delta > 0 && !canScrollUp && absDelta > 16
-        : (delta > 0 && !canScrollUp) || (delta < 0 && !canScrollDown));
+
+    if (!isFromHandle) {
+      return;
+    }
 
     if (!isSearchPanelDragging) {
-      const activationThreshold = isFromHandle ? 6 : isFullSnap ? 12 : 6;
+      if (absDelta < 6) return;
 
-      if (absDelta < activationThreshold) return;
-
-      if (isFromHandle || canStartDragFromContent) {
-        searchPanelCanDragRef.current = true;
-        setIsSearchPanelDragging(true);
-        setSearchPanelDragHeight(getSearchPanelSnapHeightPx(searchPanelStartSnapRef.current));
-      } else {
-        searchPanelCanDragRef.current = false;
-        return;
-      }
+      searchPanelCanDragRef.current = true;
+      setIsSearchPanelDragging(true);
+      setSearchPanelDragHeight(getSearchPanelSnapHeightPx(searchPanelStartSnapRef.current));
     }
 
     if (!searchPanelCanDragRef.current) return;
@@ -1714,6 +1960,10 @@ export default function MapScreen() {
       selectedMapIncidentId !== null &&
       searchPanelStartSnapRef.current === 'full' &&
       delta > threshold;
+    const isClosingReportFlowBySwipeDown =
+      reportFlowOpen &&
+      searchPanelStartSnapRef.current === 'full' &&
+      delta > threshold;
 
     if (isClosingOpenedIncidentBySwipeDown) {
       setSelectedMapIncidentId(null);
@@ -1721,9 +1971,18 @@ export default function MapScreen() {
       targetSnap = 'collapsed';
     }
 
-    if (!isClosingOpenedIncidentBySwipeDown && Math.abs(delta) < threshold) {
+    if (isClosingReportFlowBySwipeDown) {
+      setSelectedRubric(null);
+      setRubricStep('select');
+      setSheetMode(null);
+      setMarker(null);
+      setShowSuggestions(false);
+      targetSnap = 'collapsed';
+    }
+
+    if (!isClosingOpenedIncidentBySwipeDown && !isClosingReportFlowBySwipeDown && Math.abs(delta) < threshold) {
       targetSnap = searchPanelStartSnapRef.current;
-    } else if (!isClosingOpenedIncidentBySwipeDown) {
+    } else if (!isClosingOpenedIncidentBySwipeDown && !isClosingReportFlowBySwipeDown) {
       targetSnap = getNearestSearchPanelSnap(clampedHeight);
     }
 
@@ -1746,7 +2005,7 @@ export default function MapScreen() {
       setSearchPanelDragHeight(null);
       searchPanelSettleTimeoutRef.current = null;
     }, 320);
-  }, [getNearestSearchPanelSnap, getSearchPanelSnapHeightPx, searchPanelDragHeight, selectedMapIncidentId]);
+  }, [getNearestSearchPanelSnap, getSearchPanelSnapHeightPx, reportFlowOpen, searchPanelDragHeight, selectedMapIncidentId]);
 
   useEffect(() => {
     const shouldShowExpandedContent =
@@ -1896,7 +2155,7 @@ export default function MapScreen() {
           Когда открыта полноэкранная вкладка, он уходит под затемнение
           и становится визуально неактивным, как карта. */}
       <MapProfileFab
-        isDimmed={sheetMode === 'tabs' && isSheetOpen}
+        isDimmed={sheetMode === 'tabs' && isOverlaySheetOpen}
         avatarSrc={localAvatarPreviewUrl ?? resolveAvatarUrl(userProfile?.avatar_url) ?? null}
         onClick={handleProfileFabClick}
       />
@@ -1932,14 +2191,14 @@ export default function MapScreen() {
             onClear={handleSearchInputClear}
           />
 
-          {!selectedMapIncident && (
+          {!selectedMapIncident && !reportFlowOpen && (
             <div className="mt-1.5 flex items-center justify-between px-1 text-[11px] text-muted-foreground">
               <span className="line-clamp-1">Поиск по адресам, рубрикам и точкам рядом</span>
               <span className="shrink-0">{nearbyIncidents.length} рядом</span>
             </div>
           )}
 
-          {!selectedMapIncident && (
+          {!selectedMapIncident && !reportFlowOpen && (
             <QuickSearchChips
               chips={quickSearchChips}
               selectedChip={selectedMapTagFilter}
@@ -1948,7 +2207,7 @@ export default function MapScreen() {
             />
           )}
 
-          {!selectedMapIncident && showSuggestions && suggestions.length > 0 && (
+          {!selectedMapIncident && !reportFlowOpen && showSuggestions && suggestions.length > 0 && (
             <SearchSuggestionsList
               suggestionsRef={suggestionsRef}
               suggestions={suggestions}
@@ -1975,6 +2234,27 @@ export default function MapScreen() {
             openCreateReportFromSearch={openCreateReportFromSearch}
             filteredNearbyIncidents={filteredNearbyIncidents}
             focusIncidentOnMap={focusIncidentOnMap}
+            reportFlowOpen={reportFlowOpen}
+            marker={marker}
+            selectedRubric={selectedRubric}
+            rubricStep={rubricStep}
+            rubrics={rubrics}
+            setSelectedRubric={setSelectedRubric}
+            setRubricStep={setRubricStep}
+            reportTitle={reportTitle}
+            setReportTitle={setReportTitle}
+            reportText={reportText}
+            setReportText={setReportText}
+            reportPhotos={reportPhotos}
+            reportPhotoPreviews={reportPhotoPreviews}
+            handleReportPhotosChange={handleReportPhotosChange}
+            handlePublishReport={handlePublishReport}
+            handleSaveDraft={handleSaveDraft}
+            handleSaveToFiles={handleSaveToFiles}
+            handleSendEmail={handleSendEmail}
+            handlePrint={handlePrint}
+            reportSubmitting={reportSubmitting}
+            reportFeedback={reportFeedback}
           />
       </MapSearchPanel>
 
@@ -2002,7 +2282,7 @@ export default function MapScreen() {
             isAuthFullscreen ? 'max-w-none' : 'max-w-xl'
           )}
           style={{
-            transform: isSheetOpen && !isSheetClosing
+            transform: isOverlaySheetOpen && !isSheetClosing
               ? `translateY(${sheetDragY}px)`
               : 'translateY(calc(100% + 32px))',
             transition: isSheetDragging ? 'none' : undefined,
@@ -2036,28 +2316,6 @@ export default function MapScreen() {
 
             {sheetMode === 'marker' && marker ? (
               <MapMarkerSheetContent marker={marker} onCopyCoords={copyCoords} onCreateReport={handleCreateReport} />
-            ) : sheetMode === 'rubric' && marker ? (
-              <MapRubricSheetContent
-                marker={marker}
-                selectedRubric={selectedRubric}
-                rubricStep={rubricStep}
-                rubrics={rubrics}
-                setSelectedRubric={setSelectedRubric}
-                setRubricStep={setRubricStep}
-                closeSheet={closeSheet}
-                reportTitle={reportTitle}
-                setReportTitle={setReportTitle}
-                reportText={reportText}
-                setReportText={setReportText}
-                reportPhotos={reportPhotos}
-                reportPhotoPreviews={reportPhotoPreviews}
-                handleReportPhotosChange={handleReportPhotosChange}
-                handlePublishReport={handlePublishReport}
-                handleSaveDraft={handleSaveDraft}
-                handleSaveToFiles={handleSaveToFiles}
-                handleSendEmail={handleSendEmail}
-                handlePrint={handlePrint}
-              />
             ) : (
               <MapTabsSheetContent
                 isAuthFullscreen={isAuthFullscreen}
@@ -2085,6 +2343,7 @@ export default function MapScreen() {
                 setSelectedProfileCategoryFilter={setSelectedProfileCategoryFilter}
                 filteredUserActiveIncidents={filteredUserActiveIncidents}
                 focusIncidentOnMap={focusIncidentOnMap}
+                openDraftForEditing={openDraftForEditing}
                 setSheetMode={setSheetMode}
                 getTagIcon={getTagIcon}
                 getProfileIncidentCategoryTagClass={getProfileIncidentCategoryTagClass}
