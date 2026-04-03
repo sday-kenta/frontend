@@ -1,5 +1,17 @@
 import { memo, type ChangeEvent, type ReactNode } from 'react';
-import { ChevronRight, X } from 'lucide-react';
+import {
+  ArrowLeft,
+  Camera,
+  Check,
+  CircleDot,
+  FileDown,
+  ImagePlus,
+  Mail,
+  Printer,
+  Save,
+  Send,
+} from 'lucide-react';
+import { cn } from '@/lib/utils';
 
 type MarkerPoint = {
   lat: number;
@@ -25,7 +37,6 @@ type MapRubricSheetContentProps = {
   rubrics: RubricItem[];
   setSelectedRubric: (rubric: RubricItem | null) => void;
   setRubricStep: (step: RubricStep) => void;
-  closeSheet: () => void;
   reportTitle: string;
   setReportTitle: (value: string) => void;
   reportText: string;
@@ -38,7 +49,69 @@ type MapRubricSheetContentProps = {
   handleSaveToFiles: () => void;
   handleSendEmail: () => void;
   handlePrint: () => void;
+  reportSubmitting?: boolean;
+  reportFeedback?: string | null;
 };
+
+const stepTitles: Record<RubricStep, string> = {
+  select: 'Выбор рубрики',
+  create: 'Детали обращения',
+  preview: 'Проверка перед отправкой',
+};
+
+const stepOrder: RubricStep[] = ['select', 'create', 'preview'];
+
+function SurfaceCard({ children, className = '' }: { children: ReactNode; className?: string }) {
+  return (
+    <div className={cn('overflow-hidden rounded-[26px] border border-white/10 bg-[linear-gradient(180deg,rgba(15,23,42,0.92),rgba(2,6,23,0.98))] p-4 shadow-[0_18px_38px_rgba(0,0,0,0.28)] backdrop-blur-xl', className)}>
+      {children}
+    </div>
+  );
+}
+
+function MetadataPill({ children, className = '' }: { children: ReactNode; className?: string }) {
+  return (
+    <span className={cn('inline-flex items-center gap-1 rounded-full border border-white/10 bg-white/[0.05] px-2.5 py-1 text-[11px] text-white/65', className)}>
+      {children}
+    </span>
+  );
+}
+
+function StepRail({ rubricStep }: { rubricStep: RubricStep }) {
+  const activeIndex = stepOrder.indexOf(rubricStep);
+
+  return (
+    <div className="grid grid-cols-3 gap-2">
+      {stepOrder.map((step, index) => {
+        const isActive = step === rubricStep;
+        const isDone = index < activeIndex;
+        return (
+          <div
+            key={step}
+            className={cn(
+              'rounded-2xl border px-3 py-2 text-left transition',
+              isActive
+                ? 'border-sky-400/30 bg-sky-500/12 text-white shadow-[0_0_0_1px_rgba(56,189,248,0.14)]'
+                : isDone
+                  ? 'border-emerald-400/20 bg-emerald-500/10 text-white/85'
+                  : 'border-white/8 bg-white/[0.03] text-white/45'
+            )}
+          >
+            <div className="mb-1 flex items-center gap-2 text-[11px] uppercase tracking-[0.18em]">
+              {isDone ? <Check className="h-3 w-3" /> : <CircleDot className="h-3 w-3" />}
+              <span>Шаг {index + 1}</span>
+            </div>
+            <div className="text-xs font-medium leading-tight">
+              {step === 'select' && 'Рубрика'}
+              {step === 'create' && 'Описание'}
+              {step === 'preview' && 'Отправка'}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 export const MapRubricSheetContent = memo(function MapRubricSheetContent({
   marker,
@@ -47,7 +120,6 @@ export const MapRubricSheetContent = memo(function MapRubricSheetContent({
   rubrics,
   setSelectedRubric,
   setRubricStep,
-  closeSheet,
   reportTitle,
   setReportTitle,
   reportText,
@@ -60,229 +132,294 @@ export const MapRubricSheetContent = memo(function MapRubricSheetContent({
   handleSaveToFiles,
   handleSendEmail,
   handlePrint,
+  reportSubmitting = false,
+  reportFeedback = null,
 }: MapRubricSheetContentProps) {
-  return (
-    <div className="flex-1 overflow-y-auto overscroll-contain pb-2 sheet-swap-enter" data-sheet-scrollable="true">
-      {!selectedRubric ? (
-        <>
-          <div className="mb-1 flex items-center justify-between gap-3">
-            <h2 className="text-base font-semibold text-slate-900 dark:text-white">Выбор рубрики</h2>
-            <button
-              type="button"
-              onClick={closeSheet}
-              className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 shadow-sm border border-slate-300 hover:bg-slate-300 hover:text-slate-800 dark:bg-black/40 dark:text-[#9ca3af] dark:border-transparent dark:hover:bg-black/60"
-              aria-label="Закрыть"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-          <p className="text-[11px] uppercase tracking-wide text-[#64748b] mb-1">Выберите тип инцидента</p>
-          <p className="text-xs text-slate-600 dark:text-[#94a3b8] mb-4">
-            По адресу {marker.address ?? 'адрес уточняется'}: {marker.lat.toFixed(6)}, {marker.lng.toFixed(6)}
-          </p>
+  const canContinueToPreview = reportTitle.trim().length > 0 && reportText.trim().length > 0;
+  const canGoBack = rubricStep !== 'select';
 
-          <div className="space-y-3">
-            {rubrics.map((rubric) => (
-              <button
-                key={rubric.id}
-                type="button"
-                onClick={() => {
-                  setSelectedRubric(rubric);
-                  setRubricStep('create');
-                }}
-                className="w-full group relative bg-white rounded-[12px] border border-slate-200 hover:border-slate-300 dark:bg-[#020617] dark:border-white/10 dark:hover:border-white/20 transition-all overflow-hidden text-left"
-              >
-                <div className={`absolute left-0 top-0 bottom-0 w-1.5 bg-gradient-to-b ${rubric.color}`} />
-                <div className="flex items-center p-5 pl-7">
-                  <div
-                    className={`flex-shrink-0 w-14 h-14 rounded-[12px] bg-gradient-to-br ${rubric.color} flex items-center justify-center text-white opacity-90`}
-                  >
-                    {rubric.icon}
-                  </div>
-                  <div className="flex-1 text-left ml-4">
-                    <h3 className="text-sm font-medium text-slate-900 dark:text-white group-hover:text-sky-500 dark:group-hover:text-sky-400 transition-colors">
-                      {rubric.title}
-                    </h3>
-                    <p className="text-xs text-[#94a3b8] mt-0.5 line-clamp-2">{rubric.description}</p>
-                  </div>
-                  <ChevronRight className="h-4 w-4 text-[#64748b] group-hover:text-sky-400 group-hover:translate-x-1 transition-all" />
-                </div>
-              </button>
-            ))}
+  const goBack = () => {
+    if (rubricStep === 'preview') {
+      setRubricStep('create');
+      return;
+    }
+
+    if (rubricStep === 'create') {
+      setSelectedRubric(null);
+      setRubricStep('select');
+    }
+  };
+
+  return (
+    <div className="space-y-3 px-1 pb-24 text-white" data-search-scrollable="true">
+      <SurfaceCard className="p-0">
+        <div className="relative overflow-hidden rounded-[26px] bg-[radial-gradient(circle_at_top_left,rgba(56,189,248,0.18),transparent_42%),radial-gradient(circle_at_bottom_right,rgba(37,99,235,0.16),transparent_34%),linear-gradient(180deg,rgba(15,23,42,0.98),rgba(2,6,23,0.98))] p-4">
+          <div className="absolute right-0 top-0 h-24 w-24 rounded-full bg-sky-400/10 blur-2xl" />
+          <div className="relative flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <p className="mb-2 text-[11px] uppercase tracking-[0.22em] text-sky-200/70">Создание обращения</p>
+              <h3 className="text-sm font-semibold text-white">{stepTitles[rubricStep]}</h3>
+              <p className="mt-1 text-xs leading-relaxed text-white/55">
+                {marker.address ?? 'Адрес уточняется'}
+              </p>
+            </div>
+            {selectedRubric ? (
+              <span className={cn('inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-[20px] bg-gradient-to-br text-white shadow-lg', selectedRubric.color)}>
+                {selectedRubric.icon}
+              </span>
+            ) : (
+              <span className="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-[20px] border border-white/10 bg-white/[0.05] text-lg text-white/70">
+                📍
+              </span>
+            )}
           </div>
-        </>
-      ) : rubricStep === 'create' ? (
-        <div className="space-y-4">
-          <div className="flex items-center justify-between gap-3">
+
+          <div className="mt-4 flex flex-wrap gap-2">
+            <MetadataPill>{marker.lat.toFixed(6)}</MetadataPill>
+            <MetadataPill>{marker.lng.toFixed(6)}</MetadataPill>
+            {selectedRubric ? <MetadataPill>{selectedRubric.title}</MetadataPill> : <MetadataPill>Выбери рубрику</MetadataPill>}
+          </div>
+
+          {reportFeedback && (
+            <div className="mt-4 rounded-2xl border border-sky-400/20 bg-sky-400/10 px-3 py-2 text-xs text-sky-100">
+              {reportFeedback}
+            </div>
+          )}
+        </div>
+      </SurfaceCard>
+
+      <StepRail rubricStep={rubricStep} />
+
+      {canGoBack ? (
+        <button
+          type="button"
+          onClick={goBack}
+          className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3 py-2 text-xs font-medium text-white/75 transition hover:bg-white/[0.08] hover:text-white"
+        >
+          <ArrowLeft className="h-3.5 w-3.5" />
+          Назад к предыдущему шагу
+        </button>
+      ) : null}
+
+      {!selectedRubric ? (
+        <div className="space-y-3">
+          {rubrics.map((rubric) => (
             <button
+              key={rubric.id}
               type="button"
               onClick={() => {
-                setRubricStep('select');
-                setSelectedRubric(null);
+                setSelectedRubric(rubric);
+                setRubricStep('create');
               }}
-              className="text-xs text-slate-600 hover:text-slate-900 dark:text-[#94a3b8] dark:hover:text-white"
+              className="group w-full text-left"
             >
-              ← Назад к выбору рубрики
+              <SurfaceCard className="relative overflow-hidden transition group-hover:border-sky-400/25 group-hover:bg-white/[0.08]">
+                <div className="absolute -right-8 -top-8 h-24 w-24 rounded-full bg-sky-400/10 blur-2xl" />
+                <div className="relative flex items-center gap-4">
+                  <div className={cn('flex h-14 w-14 shrink-0 items-center justify-center rounded-[22px] bg-gradient-to-br text-white shadow-lg', rubric.color)}>
+                    {rubric.icon}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="mb-1 flex items-center gap-2">
+                      <span className="rounded-full border border-white/10 bg-white/[0.05] px-2 py-1 text-[10px] uppercase tracking-[0.18em] text-white/55">
+                        Рубрика
+                      </span>
+                    </div>
+                    <h3 className="truncate text-sm font-semibold text-white transition group-hover:text-sky-200">{rubric.title}</h3>
+                    <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-white/45">{rubric.description}</p>
+                  </div>
+                </div>
+              </SurfaceCard>
             </button>
-            <button
-              type="button"
-              onClick={closeSheet}
-              className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 shadow-sm border border-slate-300 hover:bg-slate-300 hover:text-slate-800 dark:bg-black/40 dark:text-[#9ca3af] dark:border-transparent dark:hover:bg-black/60"
-              aria-label="Закрыть"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-
-          <div>
-            <p className="text-[11px] uppercase tracking-wide text-[#64748b] mb-1">Создание обращения</p>
-            <h2 className="text-base font-semibold text-slate-900 dark:text-white">{selectedRubric.title}</h2>
-            <p className="text-xs text-slate-600 dark:text-[#94a3b8] mt-1">
-              {marker.address ?? 'Адрес уточняется'} — {marker.lat.toFixed(6)}, {marker.lng.toFixed(6)}
-            </p>
-          </div>
-
-          <div className="space-y-3">
-            <div className="space-y-1">
-              <label className="text-xs font-medium text-slate-700 dark:text-slate-200">Тема обращения</label>
-              <input
-                type="text"
-                value={reportTitle}
-                onChange={(e) => setReportTitle(e.target.value)}
-                placeholder="Кратко опишите проблему"
-                className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-base text-slate-900 placeholder:text-slate-400 focus:outline-none dark:bg-[#020617] dark:border-white/10 dark:text-white"
-              />
+          ))}
+        </div>
+      ) : rubricStep === 'create' ? (
+        <div className="space-y-3">
+          <SurfaceCard>
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-[11px] uppercase tracking-[0.2em] text-white/40">Шаг 2</p>
+                <h3 className="mt-1 text-base font-semibold text-white">Опиши проблему в том же потоке</h3>
+              </div>
+              <span className={cn('inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br text-white shadow-lg', selectedRubric.color)}>
+                {selectedRubric.icon}
+              </span>
             </div>
 
-            <div className="space-y-1">
-              <label className="text-xs font-medium text-slate-700 dark:text-slate-200">Текст обращения</label>
-              <textarea
-                value={reportText}
-                onChange={(e) => setReportText(e.target.value)}
-                rows={4}
-                placeholder="Опишите, что произошло, когда и при каких условиях"
-                className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-base text-slate-900 placeholder:text-slate-400 focus:outline-none resize-none dark:bg-[#020617] dark:border-white/10 dark:text-white"
-              />
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-xs font-medium text-slate-700 dark:text-slate-200">Фото</label>
-              <label className="flex cursor-pointer items-center justify-center rounded-xl border border-dashed border-slate-300 bg-white/40 px-3 py-3 text-xs text-slate-600 hover:bg-slate-50 dark:border-white/10 dark:bg-[#020617] dark:text-[#94a3b8] dark:hover:bg-white/5">
-                <span>Добавить фото</span>
+            <div className="space-y-3">
+              <label className="block">
+                <span className="mb-2 block text-xs font-medium text-white/65">Тема</span>
                 <input
-                  type="file"
-                  accept="image/*"
-                  multiple
-                  className="hidden"
-                  onChange={handleReportPhotosChange}
+                  type="text"
+                  value={reportTitle}
+                  onChange={(e) => setReportTitle(e.target.value)}
+                  placeholder="Например: незаконная парковка у подъезда"
+                  className="w-full rounded-[22px] border border-white/10 bg-white/[0.04] px-4 py-3 text-base text-white placeholder:text-white/28 outline-none transition focus:border-sky-400/30 focus:bg-white/[0.06]"
                 />
               </label>
-              {reportPhotos.length > 0 && (
-                <p className="text-[11px] text-slate-500 dark:text-[#9ca3af]">Выбрано файлов: {reportPhotos.length}</p>
-              )}
+
+              <label className="block">
+                <span className="mb-2 block text-xs font-medium text-white/65">Описание</span>
+                <textarea
+                  value={reportText}
+                  onChange={(e) => setReportText(e.target.value)}
+                  rows={5}
+                  placeholder="Что произошло, когда это заметили, почему это важно и что должен увидеть модератор"
+                  className="w-full resize-none rounded-[22px] border border-white/10 bg-white/[0.04] px-4 py-3 text-base text-white placeholder:text-white/28 outline-none transition focus:border-sky-400/30 focus:bg-white/[0.06]"
+                  style={{ WebkitUserSelect: 'text' }}
+                />
+              </label>
             </div>
-          </div>
+          </SurfaceCard>
+
+          <SurfaceCard>
+            <div className="mb-3 flex items-center gap-3">
+              <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.05] text-sky-200">
+                <Camera className="h-4 w-4" />
+              </div>
+              <div>
+                <h4 className="text-sm font-semibold text-white">Фотодоказательства</h4>
+                <p className="text-xs text-white/45">Фото прикрепятся к инциденту и уйдут в backend после публикации.</p>
+              </div>
+            </div>
+
+            <label className="flex cursor-pointer flex-col items-center justify-center rounded-[22px] border border-dashed border-white/12 bg-white/[0.03] px-4 py-5 text-center transition hover:border-sky-400/30 hover:bg-white/[0.05]">
+              <span className="mb-2 inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-sky-500/14 text-sky-200">
+                <ImagePlus className="h-4 w-4" />
+              </span>
+              <span className="text-sm font-medium text-white">Добавить фото</span>
+              <span className="mt-1 text-xs text-white/45">JPG, PNG и другие изображения, которые поддерживает устройство</span>
+              <input
+                type="file"
+                accept="image/*"
+                multiple
+                className="hidden"
+                onChange={handleReportPhotosChange}
+              />
+            </label>
+
+            {reportPhotoPreviews.length > 0 && (
+              <div className="mt-4 space-y-3">
+                <div className="grid grid-cols-3 gap-2">
+                  {reportPhotoPreviews.slice(0, 3).map((preview, index) => (
+                    <img
+                      key={`${preview}-${index}`}
+                      src={preview}
+                      alt={`Фото ${index + 1}`}
+                      className="aspect-square w-full rounded-[20px] border border-white/10 object-cover"
+                    />
+                  ))}
+                </div>
+                <p className="text-xs text-white/45">Выбрано файлов: {reportPhotos.length}</p>
+              </div>
+            )}
+          </SurfaceCard>
 
           <button
             type="button"
             onClick={() => setRubricStep('preview')}
-            className="w-full rounded-2xl bg-sky-500 px-4 py-3 text-sm font-medium text-white shadow-md hover:bg-sky-600 active:bg-sky-700 transition-colors"
-            disabled={!reportTitle || !reportText}
+            disabled={!canContinueToPreview || reportSubmitting}
+            className="flex w-full items-center justify-center gap-2 rounded-[24px] bg-[linear-gradient(135deg,#38bdf8,#2563eb)] px-4 py-4 text-sm font-semibold text-white shadow-[0_18px_30px_rgba(37,99,235,0.35)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            Далее
+            Проверить перед отправкой
           </button>
         </div>
       ) : (
-        <div className="space-y-4">
-          <div className="flex items-center justify-between gap-3">
-            <button
-              type="button"
-              onClick={() => setRubricStep('create')}
-              className="text-xs text-slate-600 hover:text-slate-900 dark:text-[#94a3b8] dark:hover:text-white"
-            >
-              ← Назад к редактированию
-            </button>
-            <button
-              type="button"
-              onClick={closeSheet}
-              className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 shadow-sm border border-slate-300 hover:bg-slate-300 hover:text-slate-800 dark:bg-black/40 dark:text-[#9ca3af] dark:border-transparent dark:hover:bg-black/60"
-              aria-label="Закрыть"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
+        <div className="space-y-3">
+          <SurfaceCard>
+            <div className="mb-4 flex items-start justify-between gap-4">
+              <div>
+                <p className="text-[11px] uppercase tracking-[0.22em] text-white/40">Шаг 3</p>
+                <h3 className="mt-1 text-base font-semibold text-white">{reportTitle || 'Без темы'}</h3>
+              </div>
+              <MetadataPill className="border-emerald-400/20 bg-emerald-500/10 text-emerald-200">Готово к отправке</MetadataPill>
+            </div>
 
-          <div>
-            <p className="text-[11px] uppercase tracking-wide text-[#64748b] mb-1">Предпросмотр</p>
-            <h2 className="text-base font-semibold text-slate-900 dark:text-white">{reportTitle || 'Без темы'}</h2>
-            <p className="text-xs text-slate-600 dark:text-[#94a3b8] mt-1">
-              {selectedRubric.title} • {marker.address ?? 'Адрес уточняется'} • {marker.lat.toFixed(6)}, {marker.lng.toFixed(6)}
-            </p>
-          </div>
+            <div className="space-y-3 text-sm">
+              <div className="rounded-[22px] border border-white/8 bg-white/[0.03] p-4">
+                <p className="mb-2 text-[11px] uppercase tracking-[0.18em] text-white/40">Категория и точка</p>
+                <p className="font-medium text-white">{selectedRubric.title}</p>
+                <p className="mt-1 text-xs leading-relaxed text-white/50">{marker.address ?? 'Адрес уточняется'}</p>
+                <p className="mt-2 text-xs text-white/35">{marker.lat.toFixed(6)}, {marker.lng.toFixed(6)}</p>
+              </div>
 
-          <div className="rounded-2xl border border-slate-200 bg-white/70 p-4 text-sm text-slate-900 dark:border-white/10 dark:bg-[#020617] dark:text-white">
-            <div className="whitespace-pre-wrap break-words">{reportText || 'Текст не указан'}</div>
-          </div>
-
-          <div className="space-y-2">
-            <p className="text-xs font-medium text-slate-700 dark:text-slate-200">Фото</p>
-            {reportPhotoPreviews.length === 0 ? (
-              <p className="text-xs text-slate-500 dark:text-[#9ca3af]">Фото не добавлены</p>
-            ) : (
-              <>
-                <div className="w-32">
-                  <img
-                    src={reportPhotoPreviews[0]}
-                    alt="Превью первого фото"
-                    className="aspect-square w-full rounded-xl object-cover border border-slate-200 dark:border-white/10"
-                  />
+              <div className="rounded-[22px] border border-white/8 bg-white/[0.03] p-4">
+                <p className="mb-2 text-[11px] uppercase tracking-[0.18em] text-white/40">Описание</p>
+                <div className="whitespace-pre-wrap break-words text-sm leading-relaxed text-white/80">
+                  {reportText || 'Текст не указан'}
                 </div>
-                <p className="text-[11px] text-slate-500 dark:text-[#9ca3af]">Всего фото: {reportPhotoPreviews.length}</p>
-              </>
-            )}
-          </div>
+              </div>
+
+              <div className="rounded-[22px] border border-white/8 bg-white/[0.03] p-4">
+                <p className="mb-2 text-[11px] uppercase tracking-[0.18em] text-white/40">Вложения</p>
+                {reportPhotoPreviews.length === 0 ? (
+                  <p className="text-xs text-white/45">Фото не добавлены</p>
+                ) : (
+                  <div className="space-y-3">
+                    <div className="grid grid-cols-3 gap-2">
+                      {reportPhotoPreviews.slice(0, 3).map((preview, index) => (
+                        <img
+                          key={`${preview}-${index}`}
+                          src={preview}
+                          alt={`Превью ${index + 1}`}
+                          className="aspect-square w-full rounded-[18px] border border-white/10 object-cover"
+                        />
+                      ))}
+                    </div>
+                    <p className="text-xs text-white/45">Всего фото: {reportPhotoPreviews.length}</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          </SurfaceCard>
 
           <button
             type="button"
             onClick={handlePublishReport}
-            className="w-full rounded-2xl bg-sky-500 px-4 py-3 text-sm font-medium text-white shadow-md hover:bg-sky-600 active:bg-sky-700 transition-colors"
-            disabled={!reportTitle || !reportText}
+            disabled={!canContinueToPreview || reportSubmitting}
+            className="flex w-full items-center justify-center gap-2 rounded-[24px] bg-[linear-gradient(135deg,#22c55e,#2563eb)] px-4 py-4 text-sm font-semibold text-white shadow-[0_18px_30px_rgba(34,197,94,0.28)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            Опубликовать обращение
+            <Send className="h-4 w-4" />
+            {reportSubmitting ? 'Отправляем...' : 'Опубликовать обращение'}
           </button>
 
-          <div className="space-y-2 pt-1">
-            <p className="text-[11px] uppercase tracking-wide text-[#64748b]">Дополнительные действия</p>
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={handleSaveDraft}
-                className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 hover:bg-slate-50 dark:border-white/10 dark:bg-[#020617] dark:text-[#e5e7eb] dark:hover:bg-white/5"
-              >
-                В черновики приложения
-              </button>
-              <button
-                type="button"
-                onClick={handleSaveToFiles}
-                className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 hover:bg-slate-50 dark:border-white/10 dark:bg-[#020617] dark:text-[#e5e7eb] dark:hover:bg:white/5"
-              >
-                В документы смартфона
-              </button>
-              <button
-                type="button"
-                onClick={handleSendEmail}
-                className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 hover:bg-slate-50 dark:border-white/10 dark:bg-[#020617] dark:text-[#e5e7eb] dark:hover:bg:white/5"
-              >
-                На e‑mail пользователя
-              </button>
-              <button
-                type="button"
-                onClick={handlePrint}
-                className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-700 hover:bg-slate-50 dark:border:white/10 dark:bg-[#020617] dark:text-[#e5e7eb] dark:hover:bg:white/5"
-              >
-                Отправить на печать
-              </button>
-            </div>
+          <div className="grid grid-cols-2 gap-3">
+            <button
+              type="button"
+              onClick={handleSaveDraft}
+              disabled={reportSubmitting}
+              className="flex items-center justify-center gap-2 rounded-[22px] border border-white/10 bg-white/[0.05] px-3 py-3 text-xs font-medium text-white/85 transition hover:bg-white/[0.08] disabled:opacity-50"
+            >
+              <Save className="h-3.5 w-3.5" />
+              В черновики
+            </button>
+            <button
+              type="button"
+              onClick={handleSaveToFiles}
+              disabled={reportSubmitting}
+              className="flex items-center justify-center gap-2 rounded-[22px] border border-white/10 bg-white/[0.05] px-3 py-3 text-xs font-medium text-white/85 transition hover:bg-white/[0.08] disabled:opacity-50"
+            >
+              <FileDown className="h-3.5 w-3.5" />
+              В файлы
+            </button>
+            <button
+              type="button"
+              onClick={handleSendEmail}
+              disabled={reportSubmitting}
+              className="flex items-center justify-center gap-2 rounded-[22px] border border-white/10 bg-white/[0.05] px-3 py-3 text-xs font-medium text-white/85 transition hover:bg-white/[0.08] disabled:opacity-50"
+            >
+              <Mail className="h-3.5 w-3.5" />
+              На e-mail
+            </button>
+            <button
+              type="button"
+              onClick={handlePrint}
+              disabled={reportSubmitting}
+              className="flex items-center justify-center gap-2 rounded-[22px] border border-white/10 bg-white/[0.05] px-3 py-3 text-xs font-medium text-white/85 transition hover:bg-white/[0.08] disabled:opacity-50"
+            >
+              <Printer className="h-3.5 w-3.5" />
+              Печать
+            </button>
           </div>
         </div>
       )}

@@ -10,6 +10,8 @@ export type UserProfile = {
   last_name?: string;
   email?: string;
   avatar_url?: string | null;
+  /** Backend role: user | admin | premium */
+  role?: string;
 };
 
 export type TrustProgress = {

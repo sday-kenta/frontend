@@ -38,3 +38,11 @@ export function resolveAvatarUrl(url: string | null | undefined): string | undef
   const filename = u.replace(/^\/+/, "");
   return filename ? withApiBase(`/v1/avatars/${filename}`) : undefined;
 }
+
+/** Russian label for backend role (`user` / `admin` / `premium`). */
+export function formatUserRoleLabel(role: string | null | undefined): string {
+  const r = (role || 'user').toLowerCase().trim();
+  if (r === 'admin') return 'Админ';
+  if (r === 'premium') return 'Премиум';
+  return 'Пользователь';
+}

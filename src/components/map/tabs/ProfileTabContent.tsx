@@ -1,6 +1,6 @@
 import { Camera, Loader2, Settings, User, X } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { cn, resolveAvatarUrl } from '@/lib/utils';
+import { cn, formatUserRoleLabel, resolveAvatarUrl } from '@/lib/utils';
 import type { IncidentDetailsMap, IncidentForMapAction, SheetMode, TrustProgress, UserProfile } from '@/components/map/tabs/types';
 
 type ProfileTabContentProps = {
@@ -22,6 +22,7 @@ type ProfileTabContentProps = {
   setSelectedProfileCategoryFilter: (value: string) => void;
   filteredUserActiveIncidents: IncidentForMapAction[];
   focusIncidentOnMap: (incident: IncidentForMapAction) => void;
+  openDraftForEditing: (incidentId: number) => void;
   setSheetMode: (mode: SheetMode) => void;
   getTagIcon: (value: string) => string;
   getProfileIncidentCategoryTagClass: (category: string) => string;
@@ -50,6 +51,7 @@ export function ProfileTabContent({
   setSelectedProfileCategoryFilter,
   filteredUserActiveIncidents,
   focusIncidentOnMap,
+  openDraftForEditing,
   setSheetMode,
   getTagIcon,
   getProfileIncidentCategoryTagClass,
@@ -86,7 +88,7 @@ export function ProfileTabContent({
       </div>
 
       <div className="rounded-2xl p->">
-        <p className="text-xs text-slate-500 dark:text-[#94a3b8]">Пользователь</p>
+        <p className="text-xs text-slate-500 dark:text-[#94a3b8]">Роль</p>
         <div className="mt-2 flex items-center gap-3">
           <button
             type="button"
@@ -125,7 +127,7 @@ export function ProfileTabContent({
                   : 'Пользователь'}
               </p>
               <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-700 dark:bg-white/10 dark:text-slate-200">
-                Пользователь
+                {formatUserRoleLabel(userProfile?.role)}
               </span>
             </div>
             <p className="truncate text-xs text-slate-600 dark:text-[#94a3b8]">{userProfile?.email || 'E-mail не указан'}</p>
@@ -204,6 +206,11 @@ export function ProfileTabContent({
             key={incident.id}
             type="button"
             onClick={() => {
+              if (incident.status.toLowerCase().includes('чернов')) {
+                openDraftForEditing(incident.id);
+                return;
+              }
+
               focusIncidentOnMap(incident);
               setSheetMode(null);
             }}

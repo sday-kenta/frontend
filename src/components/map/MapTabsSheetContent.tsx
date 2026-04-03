@@ -43,6 +43,7 @@ type MapTabsSheetContentProps = {
   setSelectedProfileCategoryFilter: (value: string) => void;
   filteredUserActiveIncidents: IncidentForMapAction[];
   focusIncidentOnMap: (incident: IncidentForMapAction) => void;
+  openDraftForEditing: (incidentId: number) => void;
   setSheetMode: (mode: SheetMode) => void;
   getTagIcon: (value: string) => string;
   getProfileIncidentCategoryTagClass: (category: string) => string;
@@ -57,6 +58,7 @@ type MapTabsSheetContentProps = {
     last_name?: string;
     email?: string;
     avatar_url?: string | null;
+    role?: string;
   } | null>>;
   isAuthenticated: boolean;
   pushNotificationsEnabled: boolean;
@@ -92,6 +94,7 @@ export const MapTabsSheetContent = memo(function MapTabsSheetContent({
   setSelectedProfileCategoryFilter,
   filteredUserActiveIncidents,
   focusIncidentOnMap,
+  openDraftForEditing,
   setSheetMode,
   getTagIcon,
   getProfileIncidentCategoryTagClass,
@@ -108,14 +111,16 @@ export const MapTabsSheetContent = memo(function MapTabsSheetContent({
   setEmailNotificationsEnabled,
   ProfileTab,
 }: MapTabsSheetContentProps) {
+  const sheetScrollManaged = activeTab === 'profile' || activeTab === 'settings';
+
   return (
     <div
       className={cn('flex-1 overflow-y-auto overscroll-contain space-y-4 pb-2', isAuthFullscreen && 'pb-0')}
       data-sheet-scrollable="true"
-      ref={activeTab === 'profile' ? profileScrollRef : null}
-      onWheel={activeTab === 'profile' ? handleProfileWheel : undefined}
-      onTouchStart={activeTab === 'profile' ? handleProfileTouchStart : undefined}
-      onTouchMove={activeTab === 'profile' ? handleProfileTouchMove : undefined}
+      ref={sheetScrollManaged ? profileScrollRef : null}
+      onWheel={sheetScrollManaged ? handleProfileWheel : undefined}
+      onTouchStart={sheetScrollManaged ? handleProfileTouchStart : undefined}
+      onTouchMove={sheetScrollManaged ? handleProfileTouchMove : undefined}
     >
       {activeTab === 'home' && <HomeTabContent closeSheet={closeSheet} />}
 
@@ -143,6 +148,7 @@ export const MapTabsSheetContent = memo(function MapTabsSheetContent({
           setSelectedProfileCategoryFilter={setSelectedProfileCategoryFilter}
           filteredUserActiveIncidents={filteredUserActiveIncidents}
           focusIncidentOnMap={focusIncidentOnMap}
+          openDraftForEditing={openDraftForEditing}
           setSheetMode={setSheetMode}
           getTagIcon={getTagIcon}
           getProfileIncidentCategoryTagClass={getProfileIncidentCategoryTagClass}

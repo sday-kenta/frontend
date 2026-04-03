@@ -116,6 +116,12 @@ export interface VerifyEmailCodeRequest extends SendEmailCodeRequest {
   code: string;
 }
 
+export interface SendFeedbackRequest {
+  message: string;
+  email?: string;
+  name?: string;
+}
+
 export interface SendPasswordResetCodeRequest {
   email: string;
 }
@@ -146,6 +152,10 @@ export interface ApiClientOptions {
   getSession?: () => Session;
   onUnauthorized?: () => void;
 }
+
+type ApiRequestInit = RequestInit & {
+  timeoutMs?: number;
+};
 
 type ApiEnvelope<T> = {
   status?: string;
@@ -253,6 +263,8 @@ export class ApiClient {
   private readonly baseUrl: string;
   private readonly getSession: () => Session;
   private readonly onUnauthorized?: () => void;
+  private readonly requestTimeoutMs = 20000;
+  private readonly uploadTimeoutMs = 45000;
 
   constructor(options: ApiClientOptions = {}) {
     this.baseUrl = (options.baseUrl || DEFAULT_BASE_URL).replace(/\/$/, '');
@@ -260,7 +272,7 @@ export class ApiClient {
     this.onUnauthorized = options.onUnauthorized;
   }
 
-  private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  private buildHeaders(init: ApiRequestInit = {}) {
     const session = this.getSession();
     const headers = new Headers(init.headers || {});
 
@@ -271,42 +283,85 @@ export class ApiClient {
     if (session.userId) headers.set('X-User-ID', String(session.userId));
     if (session.role) headers.set('X-User-Role', session.role);
 
+    return headers;
+  }
+
+  private async rawRequest(path: string, init: ApiRequestInit = {}): Promise<Response> {
+    const headers = this.buildHeaders(init);
+    const controller = new AbortController();
+    const timeoutMs = init.timeoutMs ?? (init.body instanceof FormData ? this.uploadTimeoutMs : this.requestTimeoutMs);
+    const timeoutId = typeof window !== 'undefined'
+      ? window.setTimeout(() => controller.abort(new DOMException('Request timeout', 'AbortError')), timeoutMs)
+      : undefined;
+
     let response: Response;
 
     try {
+      const { timeoutMs: _timeoutMs, signal: externalSignal, ...requestInit } = init;
+
+      if (externalSignal) {
+        if (externalSignal.aborted) {
+          controller.abort(externalSignal.reason);
+        } else {
+          externalSignal.addEventListener('abort', () => controller.abort(externalSignal.reason), { once: true });
+        }
+      }
+
       response = await fetch(`${this.baseUrl}${path}`, {
-        ...init,
+        ...requestInit,
         headers,
+        signal: controller.signal,
       });
     } catch (error) {
+      if (timeoutId) {
+        window.clearTimeout(timeoutId);
+      }
+
       const rawMessage = error instanceof Error ? error.message : '';
       const normalized = rawMessage.toLowerCase();
-      const message =
-        normalized.includes('load failed') ||
-        normalized.includes('failed to fetch') ||
-        normalized.includes('networkerror') ||
-        normalized.includes('network error')
-          ? 'Не удалось соединиться с сервером. Проверьте VITE_API_BASE_URL или proxy на /v1.'
-          : rawMessage || 'Не удалось выполнить запрос к серверу.';
+      const isAbort = error instanceof DOMException && error.name === 'AbortError';
+      const message = isAbort
+        ? 'Сервер отвечает слишком долго. Попробуйте ещё раз или загрузите меньше/легче фото.'
+        : normalized.includes('load failed') ||
+          normalized.includes('failed to fetch') ||
+          normalized.includes('networkerror') ||
+          normalized.includes('network error')
+            ? 'Не удалось соединиться с сервером. Проверьте VITE_API_BASE_URL или proxy на /v1.'
+            : rawMessage || 'Не удалось выполнить запрос к серверу.';
 
-      throw new ApiError(0, message, error);
+      throw new ApiError(isAbort ? 408 : 0, message, error);
     }
 
-    const payload = await parseBody(response);
+    if (timeoutId) {
+      window.clearTimeout(timeoutId);
+    }
 
     if (!response.ok) {
+      const payload = await parseBody(response);
+
       if (response.status === 401 && this.onUnauthorized) {
         this.onUnauthorized();
       }
 
-      const message =
-        typeof payload === 'object' && payload && 'message' in payload
-          ? String((payload as { message?: string }).message)
-          : `Ошибка запроса (${response.status})`;
+      let message = `Ошибка запроса (${response.status})`;
+      if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
+        const p = payload as { error?: string; message?: string };
+        if (typeof p.error === 'string' && p.error.trim()) {
+          message = p.error.trim();
+        } else if (typeof p.message === 'string' && p.message.trim()) {
+          message = p.message.trim();
+        }
+      }
 
       throw new ApiError(response.status, message, payload);
     }
 
+    return response;
+  }
+
+  private async request<T>(path: string, init: ApiRequestInit = {}): Promise<T> {
+    const response = await this.rawRequest(path, init);
+    const payload = await parseBody(response);
     return unwrapData<T>(payload);
   }
 
@@ -380,6 +435,14 @@ export class ApiClient {
 
   sendPasswordResetCode(payload: SendPasswordResetCodeRequest) {
     return this.request<void>('/users/password-reset/send-code', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  /** Обратная связь: письмо на служебный SMTP (тот же, что для кодов). */
+  sendFeedback(payload: SendFeedbackRequest) {
+    return this.request<void>('/feedback', {
       method: 'POST',
       body: JSON.stringify(payload),
     });
@@ -472,6 +535,7 @@ export class ApiClient {
     return this.request<IncidentPhoto[]>(`/incidents/${id}/photos`, {
       method: 'POST',
       body: formData,
+      timeoutMs: this.uploadTimeoutMs,
     });
   }
 
@@ -485,14 +549,36 @@ export class ApiClient {
     return `${this.baseUrl}/incidents/${id}/document/download`;
   }
 
+  async downloadIncidentDocument(id: number) {
+    const response = await this.rawRequest(`/incidents/${id}/document/download`, {
+      method: 'GET',
+      headers: { Accept: 'application/pdf,text/html,*/*' },
+    });
+
+    return {
+      blob: await response.blob(),
+      filename: response.headers.get('content-disposition')?.match(/filename\*?=(?:UTF-8''|")?([^";]+)/)?.[1] || `incident-${id}.pdf`,
+      contentType: response.headers.get('content-type') || 'application/pdf',
+    };
+  }
+
   getIncidentDocumentPrintUrl(id: number) {
     return `${this.baseUrl}/incidents/${id}/document/print`;
   }
 
-  sendIncidentDocumentToEmail(id: number, email: string) {
+  async getIncidentDocumentPrintHtml(id: number) {
+    const response = await this.rawRequest(`/incidents/${id}/document/print`, {
+      method: 'GET',
+      headers: { Accept: 'text/html,*/*' },
+    });
+
+    return response.text();
+  }
+
+  sendIncidentDocumentToEmail(id: number, email?: string) {
     return this.request<void>(`/incidents/${id}/document/email`, {
       method: 'POST',
-      body: JSON.stringify({ email }),
+      body: JSON.stringify(email ? { email } : {}),
     });
   }
 }

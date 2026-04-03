@@ -8,7 +8,7 @@ import { VitePWA } from "vite-plugin-pwa"
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "")
-  const apiTarget = env.VITE_API_PROXY_TARGET || "http://localhost:8080"
+  const apiTarget = env.VITE_API_PROXY_TARGET || "http://192.168.1.50:8080"
 
   return {
     plugins: [
@@ -16,11 +16,11 @@ export default defineConfig(({ mode }) => {
       tailwindcss(),
       VitePWA({
         registerType: "autoUpdate",
-        includeAssets: ["vite.svg"],
+        includeAssets: ["avatar.svg"],
         manifest: {
-          name: "Сдай кента",
-          short_name: "Сдай кента",
-          description: "Сдай кента",
+          name: "Сдай Кента",
+          short_name: "Сдай Кента",
+          description: "Сдай Кента",
           start_url: "/frontend/",
           scope: "/frontend/",
           display: "standalone",
@@ -28,13 +28,13 @@ export default defineConfig(({ mode }) => {
           theme_color: "#0b0f1a",
           icons: [
             {
-              src: "/frontend/vite.svg",
+              src: "/frontend/avatar.svg",
               sizes: "192x192",
               type: "image/svg+xml",
               purpose: "any",
             },
             {
-              src: "/frontend/vite.svg",
+              src: "/frontend/avatar.svg",
               sizes: "512x512",
               type: "image/svg+xml",
               purpose: "any",
