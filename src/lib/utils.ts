@@ -6,37 +6,26 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
 
-/** Resolves avatar URL: absolute URLs as-is, relative paths via /v1/avatars/ (proxied to backend). */
+/** Keeps backend `avatar_url` as-is except for trimming empty values. */
+export function normalizeAvatarPath(url: string | null | undefined): string | null {
+  if (!url || typeof url !== "string" || !url.trim()) return null;
+  return url.trim();
+}
+
+/** Resolves `avatar_url` directly; relative values are expanded against API origin. */
 export function resolveAvatarUrl(url: string | null | undefined): string | undefined {
-  if (!url || typeof url !== "string" || !url.trim()) return undefined;
-  const u = url.trim();
+  const normalized = normalizeAvatarPath(url);
+  if (!normalized) return undefined;
 
-  if (u.startsWith('/v1/avatars/')) {
-    return withApiBase(u);
+  if (normalized.startsWith('blob:') || normalized.startsWith('data:')) {
+    return normalized;
   }
 
-  if (u.startsWith('v1/avatars/')) {
-    return withApiBase(`/${u}`);
+  if (normalized.startsWith("http://") || normalized.startsWith("https://")) {
+    return normalized;
   }
 
-  if (u.startsWith("http://") || u.startsWith("https://")) {
-    try {
-      const parsed = new URL(u);
-      const isInternalHost = ['localhost', '127.0.0.1', 'minio'].includes(parsed.hostname);
-      const avatarFileName = parsed.pathname.split('/avatars/')[1];
-
-      if (isInternalHost && avatarFileName) {
-        return withApiBase(`/v1/avatars/${avatarFileName.replace(/^\/+/, '')}`);
-      }
-    } catch {
-      return u;
-    }
-
-    return u;
-  }
-
-  const filename = u.replace(/^\/+/, "");
-  return filename ? withApiBase(`/v1/avatars/${filename}`) : undefined;
+  return withApiBase(normalized.startsWith('/') ? normalized : `/${normalized}`);
 }
 
 /** Russian label for backend role (`user` / `admin` / `premium`). */

@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { cn } from '@/lib/utils';
+import { cn, normalizeAvatarPath } from '@/lib/utils';
 import { withApiBase } from '@/lib/api';
 
 export type AuthResponseUser = {
@@ -126,13 +126,17 @@ export function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
 
         const roleResolved =
           typeof user.role === 'string' && user.role.trim() !== '' ? user.role.trim() : 'user';
+        const normalizedUser = {
+          ...user,
+          role: roleResolved,
+          avatar_url: normalizeAvatarPath(user.avatar_url),
+        };
 
         if (typeof window !== 'undefined') {
           window.localStorage.setItem('userId', String(user.id));
-          window.localStorage.setItem('auth:user', JSON.stringify({ ...user, role: roleResolved }));
         }
 
-        onAuthenticated({ ...user, role: roleResolved } as AuthResponseUser | null);
+        onAuthenticated(normalizedUser as AuthResponseUser | null);
         closeSheet();
       } else {
         const res = await fetch(`${API_PREFIX}/users`, {

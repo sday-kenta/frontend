@@ -4,7 +4,7 @@ import { Lock, KeyRound, Check, X, User, Mail, Phone, House } from 'lucide-react
 
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { cn } from '@/lib/utils';
+import { cn, normalizeAvatarPath } from '@/lib/utils';
 import { withApiBase } from '@/lib/api';
 
 type UserProfile = {
@@ -117,7 +117,7 @@ const ProfileTab: FC<ProfileTabProps> = ({
         const raw: any = Array.isArray(json) ? json[0] : (json?.data ?? json);
         const user: UserProfile = {
           ...raw,
-          avatar_url: raw?.avatar_url ?? raw?.avatar ?? raw?.avatarUrl ?? null,
+          avatar_url: normalizeAvatarPath(raw?.avatar_url ?? null),
         };
         return user;
       })
@@ -195,9 +195,13 @@ const ProfileTab: FC<ProfileTabProps> = ({
       }
 
       const updated = (await res.json()) as UserProfile;
-      setInitialProfile(updated);
-      setProfile(updated);
-      onAvatarChange?.(updated.avatar_url ?? null);
+      const normalizedUpdated: UserProfile = {
+        ...updated,
+        avatar_url: normalizeAvatarPath(updated.avatar_url),
+      };
+      setInitialProfile(normalizedUpdated);
+      setProfile(normalizedUpdated);
+      onAvatarChange?.(normalizedUpdated.avatar_url ?? null);
 
       setStatus('success');
       setStatusMessage('Данные профиля обновлены.');

@@ -153,20 +153,6 @@ export function Navbar() {
     };
   }, [updateIndicator]);
 
-  // Временный пользователь для теста (id = 1)
-  React.useEffect(() => {
-    fetch(withApiBase('/v1/users/1'))
-      .then(async (res) => {
-        if (!res.ok) return null;
-        const json = await res.json();
-        const raw: any = Array.isArray(json) ? json[0] : (json?.data ?? json);
-        return raw;
-      })
-      .then((user) => {
-        if (user) setUserProfile(user);
-      })
-      .catch(() => {});
-  }, []);
 
   const isAuthenticated = !!userProfile;
 

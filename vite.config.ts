@@ -8,7 +8,8 @@ import { VitePWA } from "vite-plugin-pwa"
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "")
-  const apiTarget = env.VITE_API_PROXY_TARGET || "http://192.168.31.31:8080"
+  const apiBaseUrl = env.VITE_API_BASE_URL || ""
+  const apiTarget = env.VITE_API_PROXY_TARGET || apiBaseUrl.replace(/\/v1\/?$/, "") || "http://192.168.31.31:8080"
 
   return {
     plugins: [
