@@ -1,6 +1,26 @@
-import { ChevronRight, X } from 'lucide-react';
+import type { ReactNode } from 'react';
+import { ChevronLeft, ChevronRight, X } from 'lucide-react';
+import { AboutProjectSection } from '@/components/map/AboutProjectSection';
+import { FeedbackSection } from '@/components/map/FeedbackSection';
 import { cn } from '@/lib/utils';
 import type { ProfileTabComponent, SettingsView, UserProfile } from '@/components/map/tabs/types';
+
+const settingsSheetIconButtonClass =
+  'flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 shadow-sm border border-slate-300 hover:bg-slate-300 hover:text-slate-800 dark:bg-black/40 dark:text-[#9ca3af] dark:border-transparent dark:hover:bg-black/60';
+
+type SettingsSheetHeaderProps = {
+  title: string;
+  rightSlot: ReactNode;
+};
+
+function SettingsSheetHeader({ title, rightSlot }: SettingsSheetHeaderProps) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <h2 className="min-w-0 truncate text-base font-semibold text-slate-900 dark:text-white">{title}</h2>
+      <div className="flex shrink-0 items-center gap-2">{rightSlot}</div>
+    </div>
+  );
+}
 
 type SettingsTabContentProps = {
   settingsView: SettingsView;
@@ -37,24 +57,24 @@ export function SettingsTabContent({
     <div className="space-y-4">
       {settingsView === 'main' && (
         <>
-          <div className="flex items-center justify-between gap-3">
-            <button
-              type="button"
-              onClick={() => openTab('profile')}
-              className="text-xs text-slate-600 hover:text-slate-900 dark:text-[#94a3b8] dark:hover:text-white"
-            >
-              ← Профиль
-            </button>
-            <h2 className="text-base font-semibold text-slate-900 dark:text-white">Настройки</h2>
-            <button
-              type="button"
-              onClick={closeSheet}
-              className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 shadow-sm hover:bg-slate-300 hover:text-slate-800 dark:bg-black/40 dark:text-[#9ca3af] dark:hover:bg-black/60"
-              aria-label="Закрыть настройки"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
+          <SettingsSheetHeader
+            title="Настройки"
+            rightSlot={
+              <>
+                <button
+                  type="button"
+                  onClick={() => openTab('profile')}
+                  className={settingsSheetIconButtonClass}
+                  aria-label="К профилю"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </button>
+                <button type="button" onClick={closeSheet} className={settingsSheetIconButtonClass} aria-label="Закрыть">
+                  <X className="h-4 w-4" />
+                </button>
+              </>
+            }
+          />
 
           <div className="rounded-2xl bg-white p-3 dark:bg-transparent">
             <div className="flex items-center justify-between gap-3">
@@ -162,49 +182,48 @@ export function SettingsTabContent({
 
       {settingsView === 'about' && (
         <div className="space-y-3">
-          <div className="flex items-center justify-between gap-3">
-            <button
-              type="button"
-              onClick={() => setSettingsView('main')}
-              className="text-xs text-slate-600 hover:text-slate-900 dark:text-[#94a3b8] dark:hover:text-white"
-            >
-              ← Назад к настройкам
-            </button>
-            <button
-              type="button"
-              onClick={closeSheet}
-              className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 shadow-sm hover:bg-slate-300 hover:text-slate-800 dark:bg-black/40 dark:text-[#9ca3af] dark:hover:bg-black/60"
-              aria-label="Закрыть"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-          <h2 className="text-base font-semibold text-slate-900 dark:text-white">О проекте</h2>
-          <p className="text-sm text-slate-600 dark:text-[#94a3b8]">
-            Заглушка страницы. Здесь будет описание сервиса, его целей и того, как лучше всего им пользоваться.
-          </p>
+          <SettingsSheetHeader
+            title="О проекте"
+            rightSlot={
+              <>
+                <button
+                  type="button"
+                  onClick={() => setSettingsView('main')}
+                  className={settingsSheetIconButtonClass}
+                  aria-label="Назад к настройкам"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </button>
+                <button type="button" onClick={closeSheet} className={settingsSheetIconButtonClass} aria-label="Закрыть">
+                  <X className="h-4 w-4" />
+                </button>
+              </>
+            }
+          />
+          <AboutProjectSection />
         </div>
       )}
 
       {settingsView === 'profile' && (
         <div className="space-y-3">
-          <div className="flex items-center justify-between gap-3">
-            <button
-              type="button"
-              onClick={() => setSettingsView('main')}
-              className="text-xs text-slate-600 hover:text-slate-900 dark:text-[#94a3b8] dark:hover:text-white"
-            >
-              ← Назад к настройкам
-            </button>
-            <button
-              type="button"
-              onClick={closeSheet}
-              className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 shadow-sm hover:bg-slate-300 hover:text-slate-800 dark:bg-black/40 dark:text-[#9ca3af] dark:hover:bg-black/60"
-              aria-label="Закрыть"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
+          <SettingsSheetHeader
+            title="Данные профиля"
+            rightSlot={
+              <>
+                <button
+                  type="button"
+                  onClick={() => setSettingsView('main')}
+                  className={settingsSheetIconButtonClass}
+                  aria-label="Назад к настройкам"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </button>
+                <button type="button" onClick={closeSheet} className={settingsSheetIconButtonClass} aria-label="Закрыть">
+                  <X className="h-4 w-4" />
+                </button>
+              </>
+            }
+          />
 
           {userProfile && userProfile.id ? (
             <ProfileTab
@@ -227,27 +246,25 @@ export function SettingsTabContent({
 
       {settingsView === 'feedback' && (
         <div className="space-y-3">
-          <div className="flex items-center justify-between gap-3">
-            <button
-              type="button"
-              onClick={() => setSettingsView('main')}
-              className="text-xs text-slate-600 hover:text-slate-900 dark:text-[#94a3b8] dark:hover:text-white"
-            >
-              ← Назад к настройкам
-            </button>
-            <button
-              type="button"
-              onClick={closeSheet}
-              className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 shadow-sm hover:bg-slate-300 hover:text-slate-800 dark:bg-black/40 dark:text-[#9ca3af] dark:hover:bg-black/60"
-              aria-label="Закрыть"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-          <h2 className="text-base font-semibold text-slate-900 dark:text-white">Обратная связь</h2>
-          <p className="text-sm text-slate-600 dark:text-[#94a3b8]">
-            Заглушка страницы. Здесь позже появятся формы и контакты для связи с разработчиками проекта.
-          </p>
+          <SettingsSheetHeader
+            title="Обратная связь"
+            rightSlot={
+              <>
+                <button
+                  type="button"
+                  onClick={() => setSettingsView('main')}
+                  className={settingsSheetIconButtonClass}
+                  aria-label="Назад к настройкам"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </button>
+                <button type="button" onClick={closeSheet} className={settingsSheetIconButtonClass} aria-label="Закрыть">
+                  <X className="h-4 w-4" />
+                </button>
+              </>
+            }
+          />
+          <FeedbackSection />
         </div>
       )}
     </div>
