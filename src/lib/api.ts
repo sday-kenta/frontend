@@ -116,6 +116,12 @@ export interface VerifyEmailCodeRequest extends SendEmailCodeRequest {
   code: string;
 }
 
+export interface SendFeedbackRequest {
+  message: string;
+  email?: string;
+  name?: string;
+}
+
 export interface SendPasswordResetCodeRequest {
   email: string;
 }
@@ -337,10 +343,15 @@ export class ApiClient {
         this.onUnauthorized();
       }
 
-      const message =
-        typeof payload === 'object' && payload && 'message' in payload
-          ? String((payload as { message?: string }).message)
-          : `Ошибка запроса (${response.status})`;
+      let message = `Ошибка запроса (${response.status})`;
+      if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
+        const p = payload as { error?: string; message?: string };
+        if (typeof p.error === 'string' && p.error.trim()) {
+          message = p.error.trim();
+        } else if (typeof p.message === 'string' && p.message.trim()) {
+          message = p.message.trim();
+        }
+      }
 
       throw new ApiError(response.status, message, payload);
     }
@@ -424,6 +435,14 @@ export class ApiClient {
 
   sendPasswordResetCode(payload: SendPasswordResetCodeRequest) {
     return this.request<void>('/users/password-reset/send-code', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  /** Обратная связь: письмо на служебный SMTP (тот же, что для кодов). */
+  sendFeedback(payload: SendFeedbackRequest) {
+    return this.request<void>('/feedback', {
       method: 'POST',
       body: JSON.stringify(payload),
     });
