@@ -4,7 +4,7 @@ import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
-import { cn, resolveAvatarUrl } from '@/lib/utils';
+import { cn, normalizeAvatarPath, resolveAvatarUrl } from '@/lib/utils';
 import { api, withApiBase, type Category, type Incident } from '@/lib/api';
 import ProfileTabComponent from '@/components/ProfileTab';
 import { MapControls } from '@/components/map/MapControls';
@@ -345,6 +345,24 @@ type Rubric = {
   path: string;
 };
 
+type MapUserProfile = {
+  id?: number;
+  first_name?: string;
+  last_name?: string;
+  email?: string;
+  avatar_url?: string | null;
+  role?: string;
+};
+
+function normalizeMapUserProfile(profile: MapUserProfile | null | undefined): MapUserProfile | null {
+  if (!profile) return null;
+
+  return {
+    ...profile,
+    avatar_url: normalizeAvatarPath(profile.avatar_url),
+  };
+}
+
 export default function MapScreen() {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<maplibregl.Map | null>(null);
@@ -391,14 +409,7 @@ export default function MapScreen() {
   const [existingReportPhotoPreviews, setExistingReportPhotoPreviews] = useState<string[]>([]);
   const [reportPhotoPreviews, setReportPhotoPreviews] = useState<string[]>([]);
   const [editingIncidentId, setEditingIncidentId] = useState<number | null>(null);
-  const [userProfile, setUserProfile] = useState<{
-    id?: number;
-    first_name?: string;
-    last_name?: string;
-    email?: string;
-    avatar_url?: string | null;
-    role?: string;
-  } | null>(null);
+  const [userProfile, setUserProfile] = useState<MapUserProfile | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
     if (typeof window === 'undefined') return false;
     return !!window.localStorage.getItem('userId');
@@ -515,28 +526,6 @@ export default function MapScreen() {
       if (!userId) return;
 
       try {
-        const rawUser = window.localStorage.getItem('auth:user');
-        if (rawUser) {
-          const parsedUser = JSON.parse(rawUser) as {
-            id?: number;
-            first_name?: string;
-            last_name?: string;
-            email?: string;
-            avatar_url?: string | null;
-            role?: string;
-          };
-          if (!cancelled) {
-            setUserProfile({
-              id: parsedUser.id,
-              first_name: parsedUser.first_name,
-              last_name: parsedUser.last_name,
-              email: parsedUser.email,
-              avatar_url: parsedUser.avatar_url ?? null,
-              role: parsedUser.role,
-            });
-          }
-        }
-
         const mine = await api.listMyIncidents({ status: 'all' });
         if (cancelled) return;
         setMyIncidents(mine);
@@ -960,15 +949,6 @@ export default function MapScreen() {
     );
   }, [marker]);
 
-  const normalizeAvatarValue = (raw: unknown): string | null => {
-    if (typeof raw !== 'string' || !raw.trim()) return null;
-    const value = raw.trim();
-    if (value.startsWith('/v1/avatars/')) {
-      return value.replace('/v1/avatars/', '');
-    }
-    return value;
-  };
-
   const handleProfileAvatarFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file || !userProfile?.id) return;
@@ -1008,12 +988,7 @@ export default function MapScreen() {
         const json = await res.json().catch(() => null);
         const payload = (json as { data?: Record<string, unknown> } | null)?.data ?? (json as Record<string, unknown> | null) ?? {};
 
-        resolvedAvatar =
-          normalizeAvatarValue(payload.avatar_url) ||
-          normalizeAvatarValue(payload.avatar) ||
-          normalizeAvatarValue(payload.filename) ||
-          normalizeAvatarValue(payload.file) ||
-          null;
+        resolvedAvatar = normalizeAvatarPath(typeof payload.avatar_url === 'string' ? payload.avatar_url : null);
 
         if (resolvedAvatar || uploadedOnServer) break;
       } catch {
@@ -1041,16 +1016,7 @@ export default function MapScreen() {
             Array.isArray(json) ? json[0] : (json as { data?: unknown }).data ?? json;
 
           if (raw && typeof raw === 'object') {
-            setUserProfile(
-              raw as {
-                id?: number;
-                first_name?: string;
-                last_name?: string;
-                email?: string;
-                avatar_url?: string | null;
-                role?: string;
-              },
-            );
+            setUserProfile(normalizeMapUserProfile(raw as MapUserProfile));
           }
         }
       } catch {
@@ -1122,7 +1088,7 @@ export default function MapScreen() {
     if (!userId) return;
 
     void Promise.all([
-      api.getUser(Number(userId)).then(setUserProfile),
+      api.getUser(Number(userId)).then((profile) => setUserProfile(normalizeMapUserProfile(profile))),
       api.listMyIncidents({ status: 'all' }).then(setMyIncidents),
     ]).catch(() => undefined);
   }, [isAuthenticated]);
@@ -2105,17 +2071,10 @@ export default function MapScreen() {
     inputRef.current?.focus();
   }, []);
 
-  const handleAuthenticated = useCallback((payload: {
-    id?: number;
-    first_name?: string;
-    last_name?: string;
-    email?: string;
-    avatar_url?: string | null;
-    role?: string;
-  } | null) => {
+  const handleAuthenticated = useCallback((payload: MapUserProfile | null) => {
     if (!payload) return;
     setIsAuthenticated(true);
-    setUserProfile(payload);
+    setUserProfile(normalizeMapUserProfile(payload));
     setActiveTab('home');
     setSheetMode(null);
   }, []);

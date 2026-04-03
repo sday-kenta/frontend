@@ -236,21 +236,6 @@ function unwrapData<T>(payload: unknown): T {
 function readSessionFromStorage(): Session {
   if (typeof window === 'undefined') return {};
 
-  try {
-    const rawUser = window.localStorage.getItem('auth:user');
-    if (rawUser) {
-      const user = JSON.parse(rawUser) as Partial<User>;
-      if (user.id) {
-        return {
-          userId: user.id,
-          role: user.role,
-        };
-      }
-    }
-  } catch {
-    // ignore malformed localStorage
-  }
-
   const fallbackUserId = window.localStorage.getItem('userId');
   if (fallbackUserId) {
     return { userId: Number(fallbackUserId), role: 'user' };
@@ -587,7 +572,6 @@ export const api = new ApiClient({
   getSession: readSessionFromStorage,
   onUnauthorized: () => {
     if (typeof window === 'undefined') return;
-    window.localStorage.removeItem('auth:user');
     window.localStorage.removeItem('userId');
   },
 });
