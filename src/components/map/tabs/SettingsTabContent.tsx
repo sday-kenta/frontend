@@ -4,6 +4,7 @@ import { AboutProjectSection } from '@/components/map/AboutProjectSection';
 import { FeedbackSection } from '@/components/map/FeedbackSection';
 import { cn } from '@/lib/utils';
 import type { ProfileTabComponent, SettingsView, UserProfile } from '@/components/map/tabs/types';
+import { persistAuthUserContact } from '@/lib/authUserStorage';
 
 const settingsSheetIconButtonClass =
   'flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 shadow-sm border border-slate-300 hover:bg-slate-300 hover:text-slate-800 dark:bg-black/40 dark:text-[#9ca3af] dark:border-transparent dark:hover:bg-black/60';
@@ -167,6 +168,7 @@ export function SettingsTabContent({
                 onClick={() => {
                   window.localStorage.removeItem('userId');
                   window.localStorage.removeItem('authToken');
+                  persistAuthUserContact(null);
                   setIsAuthenticated(false);
                   setUserProfile(null);
                   openTab('auth');
@@ -264,7 +266,7 @@ export function SettingsTabContent({
               </>
             }
           />
-          <FeedbackSection />
+          <FeedbackSection profileContact={userProfile} />
         </div>
       )}
     </div>

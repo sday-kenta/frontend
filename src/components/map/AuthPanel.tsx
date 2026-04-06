@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import { cn, normalizeAvatarPath } from '@/lib/utils';
 import { withApiBase } from '@/lib/api';
+import { persistAuthUserContact } from '@/lib/authUserStorage';
 
 export type AuthResponseUser = {
   id?: number;
@@ -167,6 +168,11 @@ export function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
           if (typeof token === 'string' && token.trim()) {
             window.localStorage.setItem('authToken', token.trim());
           }
+          persistAuthUserContact({
+            email: normalizedUser.email,
+            first_name: normalizedUser.first_name,
+            last_name: normalizedUser.last_name,
+          });
         }
 
         onAuthenticated(normalizedUser as AuthResponseUser | null);
