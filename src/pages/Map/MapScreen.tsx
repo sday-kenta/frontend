@@ -961,64 +961,18 @@ export default function MapScreen() {
 
     setIsAvatarUploading(true);
 
-    const uploadCandidates = [
-      withApiBase(`/v1/users/${userProfile.id}/avatar`),
-      withApiBase('/v1/avatars/upload'),
-      withApiBase('/v1/avatars'),
-    ];
-
-    let resolvedAvatar: string | null = null;
     let uploadedOnServer = false;
-
-    for (const endpoint of uploadCandidates) {
-      try {
-        const formData = new FormData();
-        formData.append('avatar', file);
-        formData.append('file', file);
-        formData.append('image', file);
-
-        const res = await fetch(endpoint, {
-          method: 'POST',
-          body: formData,
-        });
-
-        if (!res.ok) continue;
-        uploadedOnServer = true;
-
-        const json = await res.json().catch(() => null);
-        const payload = (json as { data?: Record<string, unknown> } | null)?.data ?? (json as Record<string, unknown> | null) ?? {};
-
-        resolvedAvatar = normalizeAvatarPath(typeof payload.avatar_url === 'string' ? payload.avatar_url : null);
-
-        if (resolvedAvatar || uploadedOnServer) break;
-      } catch {
-        continue;
-      }
-    }
-
-    if (uploadedOnServer && resolvedAvatar) {
-      try {
-        await fetch(withApiBase(`/v1/users/${userProfile.id}`), {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ avatar_url: resolvedAvatar }),
-        });
-      } catch {
-      }
+    try {
+      await api.uploadAvatar(userProfile.id, file);
+      uploadedOnServer = true;
+    } catch {
+      uploadedOnServer = false;
     }
 
     if (uploadedOnServer) {
       try {
-        const profileRes = await fetch(withApiBase(`/v1/users/${userProfile.id}`));
-        if (profileRes.ok) {
-          const json = await profileRes.json();
-          const raw =
-            Array.isArray(json) ? json[0] : (json as { data?: unknown }).data ?? json;
-
-          if (raw && typeof raw === 'object') {
-            setUserProfile(normalizeMapUserProfile(raw as MapUserProfile));
-          }
-        }
+        const refreshedUser = await api.getUser(userProfile.id);
+        setUserProfile(normalizeMapUserProfile(refreshedUser as MapUserProfile));
       } catch {
       }
     }
