@@ -145,6 +145,7 @@ export type UpdateIncidentRequest = Partial<CreateIncidentRequest>;
 export interface Session {
   userId?: number;
   role?: UserRole;
+  authToken?: string;
 }
 
 export interface ApiClientOptions {
@@ -237,8 +238,13 @@ function readSessionFromStorage(): Session {
   if (typeof window === 'undefined') return {};
 
   const fallbackUserId = window.localStorage.getItem('userId');
+  const authToken = window.localStorage.getItem('authToken') ?? undefined;
   if (fallbackUserId) {
-    return { userId: Number(fallbackUserId), role: 'user' };
+    return { userId: Number(fallbackUserId), role: 'user', authToken };
+  }
+
+  if (authToken) {
+    return { authToken };
   }
 
   return {};
@@ -265,6 +271,9 @@ export class ApiClient {
       headers.set('Content-Type', 'application/json');
     }
 
+    if (session.authToken) {
+      headers.set('Authorization', `Bearer ${session.authToken}`);
+    }
     if (session.userId) headers.set('X-User-ID', String(session.userId));
     if (session.role) headers.set('X-User-Role', session.role);
 
@@ -573,5 +582,6 @@ export const api = new ApiClient({
   onUnauthorized: () => {
     if (typeof window === 'undefined') return;
     window.localStorage.removeItem('userId');
+    window.localStorage.removeItem('authToken');
   },
 });

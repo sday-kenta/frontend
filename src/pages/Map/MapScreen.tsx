@@ -1577,25 +1577,8 @@ export default function MapScreen() {
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const root = document.documentElement;
-    const storedPrimary = window.localStorage.getItem('theme-mode');
-    const storedLegacy = window.localStorage.getItem('theme-simple');
-    const stored = storedPrimary || storedLegacy;
-    const prefersDark =
-      window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-    const initial: 'light' | 'dark' =
-      stored === 'light' || stored === 'dark'
-        ? (stored as 'light' | 'dark')
-        : prefersDark
-          ? 'dark'
-          : 'light';
-
-    window.localStorage.setItem('theme-mode', initial);
-
-    if (initial === 'dark') {
-      root.classList.add('dark');
-    } else {
-      root.classList.remove('dark');
-    }
+    root.classList.add('dark');
+    window.localStorage.setItem('theme-mode', 'dark');
   }, []);
 
   useEffect(() => {
