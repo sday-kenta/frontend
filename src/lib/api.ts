@@ -126,6 +126,12 @@ export interface SendPasswordResetCodeRequest {
   email: string;
 }
 
+export interface ResetPasswordWithCodeRequest {
+  email: string;
+  code: string;
+  new_password: string;
+}
+
 export interface CreateIncidentRequest {
   category_id: number;
   title: string;
@@ -430,6 +436,13 @@ export class ApiClient {
 
   sendPasswordResetCode(payload: SendPasswordResetCodeRequest) {
     return this.request<void>('/users/password-reset/send-code', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  resetPasswordWithCode(payload: ResetPasswordWithCodeRequest) {
+    return this.request<void>('/users/password-reset/reset', {
       method: 'POST',
       body: JSON.stringify(payload),
     });

@@ -5,7 +5,7 @@ import { Lock, KeyRound, Check, X, User, Mail, Phone, House } from 'lucide-react
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { cn, normalizeAvatarPath } from '@/lib/utils';
-import { withApiBase } from '@/lib/api';
+import { ApiError, api, type UpdateUserRequest, type User as ApiUser, type UserRole } from '@/lib/api';
 
 type UserProfile = {
   id: number;
@@ -67,14 +67,50 @@ function formatPhone(input: string): string {
   return result;
 }
 
+function mapApiUserToProfile(u: ApiUser): UserProfile {
+  return {
+    id: u.id,
+    login: u.login,
+    email: u.email,
+    last_name: u.last_name,
+    first_name: u.first_name,
+    middle_name: u.middle_name ?? '',
+    phone: u.phone,
+    city: u.city,
+    street: u.street,
+    house: u.house,
+    apartment: u.apartment ?? '',
+    is_blocked: u.is_blocked,
+    role: u.role,
+    created_at: u.created_at ?? '',
+    updated_at: u.updated_at ?? '',
+    avatar_url: normalizeAvatarPath(u.avatar_url ?? null),
+  };
+}
+
+function profileToUpdatePayload(p: UserProfile): UpdateUserRequest {
+  return {
+    login: p.login,
+    email: p.email,
+    phone: p.phone,
+    first_name: p.first_name,
+    last_name: p.last_name,
+    middle_name: p.middle_name || undefined,
+    city: p.city,
+    street: p.street,
+    house: p.house,
+    apartment: p.apartment || undefined,
+    is_blocked: p.is_blocked,
+    role: p.role as UserRole,
+  };
+}
+
 const ProfileTab: FC<ProfileTabProps> = ({
   userId,
   onAvatarChange,
   onOpenMyReports: _onOpenMyReports,
   onOpenSettings: _onOpenSettings,
 }) => {
-  // В dev работает через proxy, в production через VITE_API_BASE_URL.
-  const API_PREFIX = withApiBase('/v1');
 
   const [initialProfile, setInitialProfile] = useState<UserProfile | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
@@ -101,46 +137,34 @@ const ProfileTab: FC<ProfileTabProps> = ({
   const hasSensitiveChange = hasEmailChanged || hasPhoneChanged;
 
   useEffect(() => {
-    let isMounted = true;
+    let cancelled = false;
     setIsLoading(true);
     setStatus('idle');
     setStatusMessage(null);
 
-    fetch(`${API_PREFIX}/users/${userId}`)
-      .then(async (res) => {
-        if (!res.ok) {
-          throw new Error('Не удалось загрузить профиль.');
-        }
-        const json = await res.json();
-        console.log('PROFILE RESPONSE', json);
-        // Бэк может вернуть объект, массив или обёртку { data: {...} }
-        const raw: any = Array.isArray(json) ? json[0] : (json?.data ?? json);
-        const user: UserProfile = {
-          ...raw,
-          avatar_url: normalizeAvatarPath(raw?.avatar_url ?? null),
-        };
-        return user;
-      })
-      .then((user: UserProfile) => {
-        if (!isMounted) return;
+    void (async () => {
+      try {
+        const u = await api.getUser(userId);
+        if (cancelled) return;
+        const user = mapApiUserToProfile(u);
         setInitialProfile(user);
         setProfile(user);
         onAvatarChange?.(user.avatar_url ?? null);
-      })
-      .catch(() => {
-        if (!isMounted) return;
-        setStatus('error');
-        setStatusMessage('Не удалось загрузить профиль пользователя.');
-      })
-      .finally(() => {
-        if (!isMounted) return;
-        setIsLoading(false);
-      });
+      } catch {
+        if (!cancelled) {
+          setStatus('error');
+          setStatusMessage('Не удалось загрузить профиль пользователя.');
+        }
+      } finally {
+        if (!cancelled) setIsLoading(false);
+      }
+    })();
 
     return () => {
-      isMounted = false;
+      cancelled = true;
     };
-  }, [API_PREFIX, userId]);
+    // onAvatarChange намеренно не в зависимостях — иначе при нестабильном колбэке родителя будет лишняя перезагрузка.
+  }, [userId]);
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -156,20 +180,14 @@ const ProfileTab: FC<ProfileTabProps> = ({
       if (hasEmailChanged) {
         const currentEmail = initialProfile?.email;
         if (!currentEmail) return;
-        void fetch(`${API_PREFIX}/users/email-code/send`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: currentEmail, purpose: 'change_email' }),
-        }).then(async (res) => {
-          if (!res.ok) {
-            const json = await res.json().catch(() => null);
-            const msg =
-              (json && (json as { error?: string }).error) ||
-              'Не удалось отправить код на почту.';
+        void (async () => {
+          try {
+            await api.sendEmailCode({ email: currentEmail, purpose: 'change_email' });
+          } catch {
             setStatus('error');
-            setStatusMessage(msg);
+            setStatusMessage('Не удалось отправить код на почту.');
           }
-        });
+        })();
       }
     } else {
       void handleSaveProfile();
@@ -182,23 +200,8 @@ const ProfileTab: FC<ProfileTabProps> = ({
     try {
       setIsSaving(true);
 
-      const res = await fetch(`${API_PREFIX}/users/${profile.id}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(profile),
-      });
-
-      if (!res.ok) {
-        throw new Error('Не удалось сохранить изменения.');
-      }
-
-      const updated = (await res.json()) as UserProfile;
-      const normalizedUpdated: UserProfile = {
-        ...updated,
-        avatar_url: normalizeAvatarPath(updated.avatar_url),
-      };
+      const updated = await api.updateUser(profile.id, profileToUpdatePayload(profile));
+      const normalizedUpdated = mapApiUserToProfile(updated);
       setInitialProfile(normalizedUpdated);
       setProfile(normalizedUpdated);
       onAvatarChange?.(normalizedUpdated.avatar_url ?? null);
@@ -237,18 +240,16 @@ const ProfileTab: FC<ProfileTabProps> = ({
     setPwdMessage(null);
     setPwdStatus('sending');
     try {
-      const res = await fetch(`${API_PREFIX}/users/password-reset/send-code`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: profile.email }),
-      });
-      if (!res.ok) {
-        const json = await res.json().catch(() => null);
-        throw new Error(translateApiError(json, 'Не удалось отправить код на почту.'));
-      }
+      await api.sendPasswordResetCode({ email: profile.email });
       setPwdMessage('Код отправлен на вашу почту.');
     } catch (e) {
-      setPwdMessage(e instanceof Error ? e.message : 'Не удалось отправить код на почту.');
+      const msg =
+        e instanceof ApiError
+          ? translateApiError(e.payload, e.message)
+          : e instanceof Error
+            ? e.message
+            : 'Не удалось отправить код на почту.';
+      setPwdMessage(msg);
     } finally {
       setPwdStatus('idle');
     }
@@ -273,26 +274,24 @@ const ProfileTab: FC<ProfileTabProps> = ({
 
     setPwdStatus('saving');
     try {
-      const res = await fetch(`${API_PREFIX}/users/password-reset/reset`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email: profile.email,
-          code,
-          new_password: pwdNew,
-        }),
+      await api.resetPasswordWithCode({
+        email: profile.email,
+        code,
+        new_password: pwdNew,
       });
-      if (!res.ok) {
-        const json = await res.json().catch(() => null);
-        throw new Error(translateApiError(json, 'Не удалось сменить пароль. Проверьте код.'));
-      }
       setPwdCode('');
       setPwdNew('');
       setPwdNew2('');
       setPwdMessage('Пароль успешно изменён.');
       setActiveProfileTab('profile');
     } catch (e) {
-      setPwdMessage(e instanceof Error ? e.message : 'Не удалось сменить пароль.');
+      const msg =
+        e instanceof ApiError
+          ? translateApiError(e.payload, e.message)
+          : e instanceof Error
+            ? e.message
+            : 'Не удалось сменить пароль.';
+      setPwdMessage(msg);
     } finally {
       setPwdStatus('idle');
     }
@@ -311,18 +310,15 @@ const ProfileTab: FC<ProfileTabProps> = ({
         setConfirmError('Не удалось определить текущую почту для подтверждения.');
         return;
       }
-      const verifyRes = await fetch(`${API_PREFIX}/users/email-code/verify`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      try {
+        await api.verifyEmailCode({
           email: currentEmail,
           purpose: 'change_email',
           code: confirmCode.trim(),
-        }),
-      });
-      if (!verifyRes.ok) {
-        const json = await verifyRes.json().catch(() => null);
-        setConfirmError(translateApiError(json, 'Неверный код.'));
+        });
+      } catch (e) {
+        const payload = e instanceof ApiError ? e.payload : null;
+        setConfirmError(translateApiError(payload, 'Неверный код.'));
         return;
       }
     }
