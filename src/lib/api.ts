@@ -273,9 +273,10 @@ export class ApiClient {
 
     if (session.authToken) {
       headers.set('Authorization', `Bearer ${session.authToken}`);
+    } else {
+      if (session.userId) headers.set('X-User-ID', String(session.userId));
+      if (session.role) headers.set('X-User-Role', session.role);
     }
-    if (session.userId) headers.set('X-User-ID', String(session.userId));
-    if (session.role) headers.set('X-User-Role', session.role);
 
     return headers;
   }
