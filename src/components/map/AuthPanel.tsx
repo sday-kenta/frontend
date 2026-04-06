@@ -11,6 +11,15 @@ export type AuthResponseUser = {
   role?: string;
 };
 
+type AuthLoginPayload = {
+  user?: AuthResponseUser | null;
+  access_token?: string;
+  token?: string;
+  auth_token?: string;
+  jwt?: string;
+  accessToken?: string;
+};
+
 type AuthPanelProps = {
   onAuthenticated: (user: AuthResponseUser | null) => void;
   closeSheet: () => void;
@@ -119,10 +128,31 @@ export function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
           throw new Error(msg);
         }
 
-        const user = (await res.json()) as AuthResponseUser | null;
+        const payload = (await res.json().catch(() => null)) as
+          | AuthLoginPayload
+          | AuthResponseUser
+          | { data?: AuthLoginPayload | AuthResponseUser | null }
+          | null;
+        const data = payload && typeof payload === 'object' && 'data' in payload
+          ? payload.data
+          : payload;
+        const loginData = data as AuthLoginPayload | AuthResponseUser | null;
+        const user =
+          loginData && typeof loginData === 'object' && 'user' in loginData
+            ? (loginData.user as AuthResponseUser | null)
+            : (loginData as AuthResponseUser | null);
         if (!user?.id) {
           throw new Error('Не удалось получить пользователя после входа.');
         }
+        const loginEnvelope = (loginData ?? {}) as Partial<AuthLoginPayload>;
+        const token =
+          loginData && typeof loginData === 'object'
+            ? loginEnvelope.access_token ||
+              loginEnvelope.token ||
+              loginEnvelope.auth_token ||
+              loginEnvelope.jwt ||
+              loginEnvelope.accessToken
+            : undefined;
 
         const roleResolved =
           typeof user.role === 'string' && user.role.trim() !== '' ? user.role.trim() : 'user';
@@ -134,6 +164,9 @@ export function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
 
         if (typeof window !== 'undefined') {
           window.localStorage.setItem('userId', String(user.id));
+          if (typeof token === 'string' && token.trim()) {
+            window.localStorage.setItem('authToken', token.trim());
+          }
         }
 
         onAuthenticated(normalizedUser as AuthResponseUser | null);
