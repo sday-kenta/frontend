@@ -48,7 +48,7 @@ jobs:
           CI: false # Отключаем CI режим чтобы предупреждения не останавливали сборку
           VITE_BASE_URL: '/frontend'
           VITE_API_PROXY_TARGET: 'https://api.theaesthetics.ru/'
-          VITE_API_BASE_URL: 'https://api.theaesthetics.ru'
+          VITE_API_BASE_URL: 'https://api.theaesthetics.ru/v1'
       
       # Загрузка артефакта для деплоя
       - name: Upload artifact
