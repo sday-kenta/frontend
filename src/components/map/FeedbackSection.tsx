@@ -1,4 +1,4 @@
-import { type FormEvent, useEffect, useState } from 'react';
+import { type FormEvent, useEffect, useRef, useState } from 'react';
 import { MessageSquare } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -47,6 +47,7 @@ export type FeedbackSectionProps = {
 };
 
 export function FeedbackSection({ profileContact = null }: FeedbackSectionProps) {
+  const formRef = useRef<HTMLFormElement | null>(null);
   const [subject, setSubject] = useState('');
   const [body, setBody] = useState('');
   const [contactEmail, setContactEmail] = useState('');
@@ -156,7 +157,7 @@ export function FeedbackSection({ profileContact = null }: FeedbackSectionProps)
           </div>
         </div>
 
-        <form onSubmit={handleSubmit} className={cn(cardClass, 'space-y-4')}>
+        <form ref={formRef} onSubmit={handleSubmit} className={cn(cardClass, 'space-y-4')}>
           {notice && (
             <p
               role="status"
@@ -250,7 +251,8 @@ export function FeedbackSection({ profileContact = null }: FeedbackSectionProps)
           </div>
 
           <Button
-            type="submit"
+            type="button"
+            onClick={() => formRef.current?.requestSubmit()}
             disabled={loading}
             className="w-full rounded-2xl bg-sky-500 py-3 text-sm font-semibold text-white shadow-lg shadow-sky-500/25 hover:bg-sky-600 focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:outline-none disabled:opacity-70"
           >

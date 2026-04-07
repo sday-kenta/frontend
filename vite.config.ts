@@ -8,7 +8,12 @@ import { VitePWA } from "vite-plugin-pwa"
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "")
-  const apiTarget = env.VITE_API_PROXY_TARGET || "http://localhost:8080"
+  const appBase = env.VITE_APP_BASE || "/frontend/"
+  const normalizedBase = appBase.endsWith("/") ? appBase : `${appBase}/`
+  const apiTarget =
+    env.VITE_API_PROXY_TARGET ||
+    env.VITE_API_BASE_URL?.replace(/\/v1\/?$/, "") ||
+    "http://localhost:8080"
 
   return {
     plugins: [
@@ -21,20 +26,20 @@ export default defineConfig(({ mode }) => {
           name: "Сдай Кента",
           short_name: "Сдай Кента",
           description: "Сдай Кента",
-          start_url: "/frontend/",
-          scope: "/frontend/",
+          start_url: normalizedBase,
+          scope: normalizedBase,
           display: "standalone",
           background_color: "#0b0f1a",
           theme_color: "#0b0f1a",
           icons: [
             {
-              src: "/frontend/avatar.svg",
+              src: `${normalizedBase}avatar.svg`,
               sizes: "192x192",
               type: "image/svg+xml",
               purpose: "any",
             },
             {
-              src: "/frontend/avatar.svg",
+              src: `${normalizedBase}avatar.svg`,
               sizes: "512x512",
               type: "image/svg+xml",
               purpose: "any",
@@ -42,7 +47,7 @@ export default defineConfig(({ mode }) => {
           ],
         },
         workbox: {
-          navigateFallback: "/frontend/index.html",
+          navigateFallback: `${normalizedBase}index.html`,
         },
         devOptions: {
           enabled: true,
@@ -50,7 +55,7 @@ export default defineConfig(({ mode }) => {
         },
       }),
     ],
-    base: "/frontend/",
+    base: normalizedBase,
     resolve: {
       alias: {
         "@": path.resolve(__dirname, "./src"),
