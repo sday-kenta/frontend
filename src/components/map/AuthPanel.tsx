@@ -638,12 +638,18 @@ export function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
           <button
             type="button"
             onClick={() => {
-              if (!confirmEmail) return;
+              const targetEmail = confirmEmail.trim() || email.trim();
+              if (!targetEmail) {
+                setError('Не удалось определить почту для повторной отправки кода.');
+                return;
+              }
+              setError(null);
+              setSuccess(null);
               setConfirmEmailStatus('sending');
               void fetch(`${API_PREFIX}/users/email-code/send`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ email: confirmEmail, purpose: 'register' }),
+                body: JSON.stringify({ email: targetEmail, purpose: 'register' }),
               })
                 .then(async (res) => {
                   if (!res.ok) {
