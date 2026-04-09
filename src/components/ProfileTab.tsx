@@ -5,7 +5,7 @@ import { Lock, KeyRound, Check, X, User, Mail, Phone, House } from 'lucide-react
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { cn, normalizeAvatarPath } from '@/lib/utils';
-import { withApiBase } from '@/lib/api';
+import { ApiError, api, withApiBase } from '@/lib/api';
 
 type UserProfile = {
   id: number;
@@ -231,24 +231,21 @@ const ProfileTab: FC<ProfileTabProps> = ({
     }
     return msg;
   };
+  const getErrorText = (err: unknown, fallback: string) =>
+    err instanceof ApiError || err instanceof Error ? err.message : fallback;
 
   const handleSendPasswordCode = async () => {
-    if (!profile?.email) return;
+    if (!profile?.email) {
+      setPwdMessage('Не удалось определить почту для отправки кода.');
+      return;
+    }
     setPwdMessage(null);
     setPwdStatus('sending');
     try {
-      const res = await fetch(`${API_PREFIX}/users/password-reset/send-code`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: profile.email }),
-      });
-      if (!res.ok) {
-        const json = await res.json().catch(() => null);
-        throw new Error(translateApiError(json, 'Не удалось отправить код на почту.'));
-      }
+      await api.sendPasswordResetCode({ email: profile.email });
       setPwdMessage('Код отправлен на вашу почту.');
     } catch (e) {
-      setPwdMessage(e instanceof Error ? e.message : 'Не удалось отправить код на почту.');
+      setPwdMessage(getErrorText(e, 'Не удалось отправить код на почту.'));
     } finally {
       setPwdStatus('idle');
     }

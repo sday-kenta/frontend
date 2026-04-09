@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { cn, normalizeAvatarPath } from '@/lib/utils';
-import { withApiBase } from '@/lib/api';
+import { ApiError, api, withApiBase } from '@/lib/api';
 
 export type AuthResponseUser = {
   id?: number;
@@ -17,6 +17,9 @@ type AuthPanelProps = {
 };
 
 export function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
+  const errorText = (err: unknown, fallback: string) =>
+    err instanceof ApiError || err instanceof Error ? err.message : fallback;
+
   const translateAuthError = (raw: unknown, fallback: string) => {
     const msg =
       (typeof raw === 'string' && raw) ||
@@ -184,37 +187,19 @@ export function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
           setConfirmEmailCode('');
           setConfirmEmailStatus('sending');
 
-          void fetch(`${API_PREFIX}/users/email-code/send`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email: targetEmail, purpose: 'register' }),
-          })
-            .then(async (sendRes) => {
-              if (!sendRes.ok) {
-                const json = await sendRes.json().catch(() => null);
-                const raw =
-                  (json &&
-                    (json as { error?: string; message?: string; detail?: string }).error) ||
-                  (json &&
-                    (json as { error?: string; message?: string; detail?: string }).message) ||
-                  (json &&
-                    (json as { error?: string; message?: string; detail?: string }).detail) ||
-                  null;
-                const msg = translateAuthError(
-                  raw,
-                  'Не удалось отправить код для подтверждения почты.'
-                );
-                setError(msg);
-                setConfirmEmailStatus('idle');
-                setConfirmEmailOpen(false);
-                return;
-              }
+          void api
+            .sendEmailCode({ email: targetEmail, purpose: 'register' })
+            .then(() => {
               setConfirmEmailStatus('idle');
               setSuccess('Мы отправили код на вашу почту. Введите его для подтверждения аккаунта.');
             })
-            .catch(() => {
+            .catch((err) => {
               setConfirmEmailStatus('idle');
-              setError('Не удалось отправить код для подтверждения почты.');
+              const raw = errorText(err, 'Не удалось отправить код для подтверждения почты.');
+              const msg = translateAuthError(raw, 'Не удалось отправить код для подтверждения почты.');
+              setError(`${msg} Аккаунт уже создан — попробуйте войти с указанной почтой.`);
+              setMode('login');
+              setIdentifier(targetEmail);
               setConfirmEmailOpen(false);
             });
         } else {
@@ -246,25 +231,7 @@ export function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
     setSuccess(null);
     setForgotStatus('sending');
     try {
-      const res = await fetch(`${API_PREFIX}/users/password-reset/send-code`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: target }),
-      });
-
-      if (!res.ok) {
-        const json = await res.json().catch(() => null);
-        const raw =
-          (json && (json as { error?: string; message?: string; detail?: string }).error) ||
-          (json && (json as { error?: string; message?: string; detail?: string }).message) ||
-          (json && (json as { error?: string; message?: string; detail?: string }).detail) ||
-          null;
-        const msg = translateAuthError(
-          raw,
-          'Не удалось отправить код. Проверьте почту и попробуйте ещё раз.'
-        );
-        throw new Error(msg);
-      }
+      await api.sendPasswordResetCode({ email: target });
 
       setForgotStatus('sent');
       setSuccess('Код отправлен на почту. Проверьте входящие.');
@@ -365,26 +332,11 @@ export function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
     setConfirmEmailStatus('verifying');
 
     try {
-      const res = await fetch(`${API_PREFIX}/users/email-code/verify`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email: emailValue,
-          purpose: 'register',
-          code,
-        }),
+      await api.verifyEmailCode({
+        email: emailValue,
+        purpose: 'register',
+        code,
       });
-
-      if (!res.ok) {
-        const json = await res.json().catch(() => null);
-        const raw =
-          (json && (json as { error?: string; message?: string; detail?: string }).error) ||
-          (json && (json as { error?: string; message?: string; detail?: string }).message) ||
-          (json && (json as { error?: string; message?: string; detail?: string }).detail) ||
-          null;
-        const msg = translateAuthError(raw, 'Неверный или просроченный код.');
-        throw new Error(msg);
-      }
 
       setConfirmEmailStatus('idle');
       setConfirmEmailOpen(false);
@@ -601,33 +553,18 @@ export function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
             onClick={() => {
               if (!confirmEmail) return;
               setConfirmEmailStatus('sending');
-              void fetch(`${API_PREFIX}/users/email-code/send`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ email: confirmEmail, purpose: 'register' }),
-              })
-                .then(async (res) => {
-                  if (!res.ok) {
-                    const json = await res.json().catch(() => null);
-                    const raw =
-                      (json &&
-                        (json as { error?: string; message?: string; detail?: string }).error) ||
-                      (json &&
-                        (json as { error?: string; message?: string; detail?: string }).message) ||
-                      (json &&
-                        (json as { error?: string; message?: string; detail?: string }).detail) ||
-                      null;
-                    const msg = translateAuthError(
-                      raw,
-                      'Не удалось отправить код. Проверьте почту и попробуйте ещё раз.'
-                    );
-                    setError(msg);
-                  } else {
-                    setSuccess('Код повторно отправлен на почту.');
-                  }
+              void api
+                .sendEmailCode({ email: confirmEmail, purpose: 'register' })
+                .then(() => {
+                  setSuccess('Код повторно отправлен на почту.');
                 })
-                .catch(() => {
-                  setError('Не удалось отправить код. Попробуйте ещё раз.');
+                .catch((err) => {
+                  setError(
+                    translateAuthError(
+                      errorText(err, 'Не удалось отправить код. Попробуйте ещё раз.'),
+                      'Не удалось отправить код. Попробуйте ещё раз.'
+                    )
+                  );
                 })
                 .finally(() => {
                   setConfirmEmailStatus('idle');
