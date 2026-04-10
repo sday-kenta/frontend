@@ -178,7 +178,7 @@ export function AuthPanel({ onAuthenticated, closeSheet }: AuthPanelProps) {
         onAuthenticated(normalizedUser as AuthResponseUser | null);
         closeSheet();
       } else {
-        const res = await fetch(`${API_PREFIX}/users`, {
+        const res = await fetch(`${API_PREFIX}/auth/register`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
