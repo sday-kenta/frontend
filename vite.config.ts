@@ -1,4 +1,3 @@
-
 import path from "path"
 import react from "@vitejs/plugin-react"
 import tailwindcss from "@tailwindcss/vite"
@@ -20,8 +19,11 @@ export default defineConfig(({ mode }) => {
       react(),
       tailwindcss(),
       VitePWA({
+        strategies: "injectManifest",
+        srcDir: "src",
+        filename: "sw.ts",
         registerType: "autoUpdate",
-        includeAssets: ["avatar.svg"],
+        includeAssets: ["192.png", "512.png"],
         manifest: {
           name: "Сдай Кента",
           short_name: "Сдай Кента",
@@ -33,21 +35,16 @@ export default defineConfig(({ mode }) => {
           theme_color: "#0b0f1a",
           icons: [
             {
-              src: `${normalizedBase}avatar.svg`,
+              src: "192.png",
               sizes: "192x192",
-              type: "image/svg+xml",
-              purpose: "any",
+              type: "image/png",
             },
             {
-              src: `${normalizedBase}avatar.svg`,
+              src: "512.png",
               sizes: "512x512",
-              type: "image/svg+xml",
-              purpose: "any",
+              type: "image/png",
             },
           ],
-        },
-        workbox: {
-          navigateFallback: `${normalizedBase}index.html`,
         },
         devOptions: {
           enabled: true,

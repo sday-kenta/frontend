@@ -32,7 +32,9 @@ type SettingsTabContentProps = {
   isAuthenticated: boolean;
   onLogout: () => void;
   pushNotificationsEnabled: boolean;
-  setPushNotificationsEnabled: React.Dispatch<React.SetStateAction<boolean>>;
+  pushNotificationsBusy: boolean;
+  pushNotificationsStatusMessage: string | null;
+  onTogglePushNotifications: () => void;
   emailNotificationsEnabled: boolean;
   setEmailNotificationsEnabled: React.Dispatch<React.SetStateAction<boolean>>;
   biometricEnabled: boolean;
@@ -55,7 +57,9 @@ export function SettingsTabContent({
   isAuthenticated,
   onLogout,
   pushNotificationsEnabled,
-  setPushNotificationsEnabled,
+  pushNotificationsBusy,
+  pushNotificationsStatusMessage,
+  onTogglePushNotifications,
   emailNotificationsEnabled,
   setEmailNotificationsEnabled,
   biometricEnabled,
@@ -97,14 +101,24 @@ export function SettingsTabContent({
 
             <div className="mt-2 divide-y divide-slate-200/80 dark:divide-white/10">
               <div className="flex items-center justify-between py-2">
-                <span className="text-sm font-medium text-slate-700 dark:text-slate-200">Push</span>
+                <div className="min-w-0 pr-3">
+                  <p className="text-sm font-medium text-slate-700 dark:text-slate-200">Push</p>
+                  {pushNotificationsStatusMessage && (
+                    <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+                      {pushNotificationsStatusMessage}
+                    </p>
+                  )}
+                </div>
                 <button
                   type="button"
                   aria-pressed={pushNotificationsEnabled}
-                  onClick={() => setPushNotificationsEnabled((prev) => !prev)}
+                  aria-busy={pushNotificationsBusy}
+                  disabled={pushNotificationsBusy}
+                  onClick={onTogglePushNotifications}
                   className={cn(
-                    'relative inline-flex h-6 w-11 items-center rounded-full transition-colors',
-                    pushNotificationsEnabled ? 'bg-slate-900 dark:bg-white' : 'bg-slate-300 dark:bg-white/20'
+                    'relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors',
+                    pushNotificationsEnabled ? 'bg-slate-900 dark:bg-white' : 'bg-slate-300 dark:bg-white/20',
+                    pushNotificationsBusy && 'cursor-not-allowed opacity-60'
                   )}
                 >
                   <span
@@ -140,11 +154,8 @@ export function SettingsTabContent({
 
           <div className="rounded-2xl bg-white p-3 dark:bg-transparent">
             <div className="flex items-start justify-between gap-3">
-              <div className="space-y-1">
+              <div>
                 <p className="text-sm font-medium text-slate-900 dark:text-white">Быстрый вход</p>
-                <p className="text-xs leading-5 text-[#64748b] dark:text-[#94a3b8]">
-                  Локальная разблокировка приложения через {biometricLabel}. Работает только на этом устройстве и не меняет серверную авторизацию.
-                </p>
               </div>
               <span
                 className={cn(
