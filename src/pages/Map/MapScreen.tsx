@@ -1669,6 +1669,24 @@ export default function MapScreen() {
   }, [handlePlaceMarker, isAuthenticated]);
 
   useEffect(() => {
+    if (biometricUnlockRequired) return;
+
+    const map = mapInstanceRef.current;
+    if (!map) return;
+
+    const { lat, lng } = centerRef.current;
+    const resizeMap = () => {
+      map.resize();
+      map.flyTo({ center: [lng, lat], zoom, essential: true });
+    };
+
+    resizeMap();
+
+    const timeoutId = window.setTimeout(resizeMap, 120);
+    return () => window.clearTimeout(timeoutId);
+  }, [biometricUnlockRequired, zoom]);
+
+  useEffect(() => {
     const map = mapInstanceRef.current;
     if (!map) return;
 
@@ -2195,18 +2213,6 @@ export default function MapScreen() {
     );
   }
 
-  if (biometricUnlockRequired) {
-    return (
-      <BiometricEntryGate
-        busy={biometricUnlocking}
-        error={biometricUnlockError}
-        label={biometricLabel}
-        onUnlock={handleBiometricUnlock}
-        onUseAnotherAccount={handleLogout}
-      />
-    );
-  }
-
   return (
     <div className="fixed inset-0 z-0">
       {topMapMessage && (
@@ -2267,6 +2273,15 @@ export default function MapScreen() {
             </div>
           </div>
         </div>
+      )}
+      {biometricUnlockRequired && (
+        <BiometricEntryGate
+          busy={biometricUnlocking}
+          error={biometricUnlockError}
+          label={biometricLabel}
+          onUnlock={handleBiometricUnlock}
+          onUseAnotherAccount={handleLogout}
+        />
       )}
       <div
         ref={mapRef}
