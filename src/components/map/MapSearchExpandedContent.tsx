@@ -2,7 +2,6 @@ import { memo, type ChangeEvent, type ReactNode, type RefObject } from 'react';
 import { cn } from '@/lib/utils';
 import { NearbyIncidentsSection } from '@/components/map/NearbyIncidentsSection';
 import { SelectedIncidentPanel } from '@/components/map/SelectedIncidentPanel';
-import { CreateReportCard } from '@/components/map/CreateReportCard';
 import { MapRubricSheetContent } from '@/components/map/MapRubricSheetContent';
 
 type SearchPanelSnap = 'collapsed' | 'half' | 'full';
@@ -12,6 +11,7 @@ type IncidentForPanel = {
   title: string;
   category: string;
   status: string;
+  address?: string;
 };
 
 type IncidentDetailsForPanel = {
@@ -25,6 +25,7 @@ type NearbyIncident = {
   title: string;
   category: string;
   status: string;
+  address?: string;
   distanceLabel: string;
   lat: number;
   lng: number;
@@ -56,7 +57,9 @@ type MapSearchExpandedContentProps = {
   selectedMapIncidentDetails: IncidentDetailsForPanel | null;
   selectedMapIncidentDistanceLabel: string | null;
   getTagIcon: (tag: string) => string;
-  openCreateReportFromSearch: () => void;
+  canPublishSelectedIncident: boolean;
+  publishSelectedIncidentPending: boolean;
+  handlePublishSelectedIncident: () => void;
   filteredNearbyIncidents: NearbyIncident[];
   focusIncidentOnMap: (incident: NearbyIncident) => void;
   reportFlowOpen: boolean;
@@ -91,7 +94,9 @@ export const MapSearchExpandedContent = memo(function MapSearchExpandedContent({
   selectedMapIncidentDetails,
   selectedMapIncidentDistanceLabel,
   getTagIcon,
-  openCreateReportFromSearch,
+  canPublishSelectedIncident,
+  publishSelectedIncidentPending,
+  handlePublishSelectedIncident,
   filteredNearbyIncidents,
   focusIncidentOnMap,
   reportFlowOpen,
@@ -137,6 +142,9 @@ export const MapSearchExpandedContent = memo(function MapSearchExpandedContent({
           incidentDetails={selectedMapIncidentDetails}
           incidentDistanceLabel={selectedMapIncidentDistanceLabel}
           getTagIcon={getTagIcon}
+          canPublishIncident={canPublishSelectedIncident}
+          publishPending={publishSelectedIncidentPending}
+          onPublishIncident={handlePublishSelectedIncident}
         />
       )}
 
@@ -168,18 +176,14 @@ export const MapSearchExpandedContent = memo(function MapSearchExpandedContent({
       )}
 
       {!selectedMapIncident && !reportFlowOpen && (
-        <>
-          <CreateReportCard onCreate={openCreateReportFromSearch} />
-
-          <div>
-            <NearbyIncidentsSection
-              incidents={filteredNearbyIncidents}
-              isFullHeight={searchPanelSnap === 'full'}
-              autoFocusScroll={false}
-              onSelectIncident={focusIncidentOnMap}
-            />
-          </div>
-        </>
+        <div>
+          <NearbyIncidentsSection
+            incidents={filteredNearbyIncidents}
+            isFullHeight={searchPanelSnap === 'full'}
+            autoFocusScroll={false}
+            onSelectIncident={focusIncidentOnMap}
+          />
+        </div>
       )}
     </div>
   );
