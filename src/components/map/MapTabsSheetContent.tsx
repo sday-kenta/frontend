@@ -24,10 +24,9 @@ type MapTabsSheetContentProps = {
   closeSheet: () => void;
   openTab: (tab: Tab) => void;
   setSettingsView: (view: SettingsView) => void;
-  profileScrollRef: React.RefObject<HTMLDivElement | null>;
-  handleProfileWheel: (event: React.WheelEvent<HTMLDivElement>) => void;
-  handleProfileTouchStart: (event: React.TouchEvent<HTMLDivElement>) => void;
-  handleProfileTouchMove: (event: React.TouchEvent<HTMLDivElement>) => void;
+  handleSheetContentWheel: (event: React.WheelEvent<HTMLDivElement>) => void;
+  handleSheetContentTouchStart: (event: React.TouchEvent<HTMLDivElement>) => void;
+  handleSheetContentTouchMove: (event: React.TouchEvent<HTMLDivElement>) => void;
   profileAvatarInputRef: React.RefObject<HTMLInputElement | null>;
   userProfile: UserProfile | null;
   localAvatarPreviewUrl: string | null;
@@ -85,10 +84,9 @@ export const MapTabsSheetContent = memo(function MapTabsSheetContent({
   closeSheet,
   openTab,
   setSettingsView,
-  profileScrollRef,
-  handleProfileWheel,
-  handleProfileTouchStart,
-  handleProfileTouchMove,
+  handleSheetContentWheel,
+  handleSheetContentTouchStart,
+  handleSheetContentTouchMove,
   profileAvatarInputRef,
   userProfile,
   localAvatarPreviewUrl,
@@ -131,16 +129,15 @@ export const MapTabsSheetContent = memo(function MapTabsSheetContent({
   onDisableBiometric,
   ProfileTab,
 }: MapTabsSheetContentProps) {
-  const sheetScrollManaged = activeTab === 'profile' || activeTab === 'settings';
+  const sheetScrollManaged = activeTab !== 'auth';
 
   return (
     <div
       className={cn('flex-1 overflow-y-auto overscroll-contain space-y-4 pb-2', isAuthFullscreen && 'pb-0')}
       data-sheet-scrollable="true"
-      ref={sheetScrollManaged ? profileScrollRef : null}
-      onWheel={sheetScrollManaged ? handleProfileWheel : undefined}
-      onTouchStart={sheetScrollManaged ? handleProfileTouchStart : undefined}
-      onTouchMove={sheetScrollManaged ? handleProfileTouchMove : undefined}
+      onWheel={sheetScrollManaged ? handleSheetContentWheel : undefined}
+      onTouchStart={sheetScrollManaged ? handleSheetContentTouchStart : undefined}
+      onTouchMove={sheetScrollManaged ? handleSheetContentTouchMove : undefined}
     >
       {activeTab === 'home' && <HomeTabContent closeSheet={closeSheet} />}
 
