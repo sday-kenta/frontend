@@ -2073,20 +2073,26 @@ export default function MapScreen() {
 
     const touchTarget = event.target as HTMLElement | null;
     const isFromHandle = Boolean(touchTarget?.closest('[data-search-drag-handle="true"]'));
+    const scrollableTarget = touchTarget?.closest('[data-search-scrollable="true"]') as HTMLElement | null;
     const isInteractiveTarget = Boolean(
       touchTarget?.closest('input, textarea, button, a, select, label, [role="button"]')
     );
     const panelTop = event.currentTarget.getBoundingClientRect().top;
     const touchY = event.touches[0]?.clientY ?? panelTop;
     const isFromTopZone = touchY - panelTop <= 88;
-    const canStartDrag = isFromHandle || (!isInteractiveTarget && isFromTopZone);
+    const isScrollableStartAtTop = Boolean(
+      !reportFlowOpen &&
+      scrollableTarget &&
+      scrollableTarget.scrollTop <= 0
+    );
+    const canStartDrag = isFromHandle || (!isInteractiveTarget && isFromTopZone) || isScrollableStartAtTop;
 
     searchPanelTouchTargetRef.current = touchTarget;
     searchPanelStartSnapRef.current = searchPanelSnap;
     searchPanelTouchStartYRef.current = canStartDrag ? touchY : null;
     searchPanelDragEligibleRef.current = canStartDrag;
     searchPanelCanDragRef.current = false;
-  }, [searchPanelSnap]);
+  }, [reportFlowOpen, searchPanelSnap]);
 
   const handleSearchPanelTouchMove = useCallback((event: React.TouchEvent<HTMLDivElement>) => {
     const startY = searchPanelTouchStartYRef.current;
@@ -2095,9 +2101,22 @@ export default function MapScreen() {
     const currentY = event.touches[0]?.clientY ?? startY;
     const delta = currentY - startY;
     const absDelta = Math.abs(delta);
+    const touchTarget = searchPanelTouchTargetRef.current;
+    const scrollableTarget = touchTarget?.closest('[data-search-scrollable="true"]') as HTMLElement | null;
+    const startedFromScrollable = Boolean(scrollableTarget);
 
     if (!searchPanelDragEligibleRef.current) {
       return;
+    }
+
+    if (startedFromScrollable) {
+      if (reportFlowOpen) {
+        return;
+      }
+      const canDragScrollable = scrollableTarget != null && scrollableTarget.scrollTop <= 0 && delta > 0;
+      if (!canDragScrollable) {
+        return;
+      }
     }
 
     if (!isSearchPanelDragging) {
@@ -2131,7 +2150,7 @@ export default function MapScreen() {
     }
 
     scheduleSearchPanelHeight(nextHeight);
-  }, [getSearchPanelSnapHeightPx, isSearchPanelDragging, scheduleSearchPanelHeight, selectedMapIncidentId]);
+  }, [getSearchPanelSnapHeightPx, isSearchPanelDragging, reportFlowOpen, scheduleSearchPanelHeight, selectedMapIncidentId]);
 
   const handleSearchPanelTouchEnd = useCallback((event: React.TouchEvent<HTMLDivElement>) => {
     const startY = searchPanelTouchStartYRef.current;
