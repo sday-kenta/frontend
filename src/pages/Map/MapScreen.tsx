@@ -2659,7 +2659,7 @@ export default function MapScreen() {
 
     const ownIncident = myIncidents.find((incident) => incident.id === pendingPushIncidentId);
     const incidentPreview =
-      incidentPreviews.find((incident) => incident.id === pendingPushIncidentId) ??
+      markerIncidentPreviews.find((incident) => incident.id === pendingPushIncidentId) ??
       (ownIncident ? mapIncidentToPreview(ownIncident) : null);
 
     if (!incidentPreview) {
@@ -2668,7 +2668,7 @@ export default function MapScreen() {
 
     focusIncidentOnMap(incidentPreview);
     setPendingPushIncidentId(null);
-  }, [focusIncidentOnMap, incidentPreviews, myIncidents, pendingPushIncidentId]);
+  }, [focusIncidentOnMap, markerIncidentPreviews, myIncidents, pendingPushIncidentId]);
 
   const noopCloseSheet = useCallback(() => {}, []);
   const topMapMessage = reportFeedback || dataError;
