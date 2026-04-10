@@ -241,6 +241,9 @@ export function ProfileTabContent({
                 </span>
               </div>
               <p className="line-clamp-1 text-xs font-medium text-foreground">{incident.title}</p>
+              {incident.address ? (
+                <p className="mt-1 line-clamp-1 text-[11px] text-muted-foreground">{incident.address}</p>
+              ) : null}
               {incidentDetails[incident.id]?.tags?.length ? (
                 <div className="mt-1 flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
                   {incidentDetails[incident.id].tags.slice(0, 2).map((tag: string) => (

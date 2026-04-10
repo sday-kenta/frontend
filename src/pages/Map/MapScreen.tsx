@@ -5,7 +5,7 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import { cn, normalizeAvatarPath, resolveAvatarUrl } from '@/lib/utils';
-import { api, withApiBase, type Category, type Incident } from '@/lib/api';
+import { api, withApiBase, type Category, type GeoAddress, type Incident } from '@/lib/api';
 import ProfileTabComponent from '@/components/ProfileTab';
 import { MapControls } from '@/components/map/MapControls';
 import { SearchInputBar } from '@/components/map/SearchInputBar';
@@ -30,6 +30,9 @@ interface GeocodingResult {
   lng: number;
   display_name: string;
   place_id?: number;
+  city?: string;
+  street?: string;
+  house?: string;
 }
 
 type IncidentPreview = {
@@ -47,6 +50,7 @@ type IncidentPreview = {
 };
 
 const DEBOUNCE_MS = 400;
+const REVERSE_GEOCODE_HOUSE_MAX_DISTANCE_METERS = 35;
 
 const MAP_TILES_URL =
   import.meta.env.VITE_MAP_TILES_URL ?? 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
@@ -100,20 +104,80 @@ function getCategoryEmoji(title: string) {
   return '📍';
 }
 
-function buildIncidentTags(incident: import('@/lib/api').Incident) {
-  const tags = new Set<string>();
-  if (incident.category_title) tags.add(incident.category_title);
-  if (incident.city) tags.add(incident.city);
-  if (incident.street) tags.add(incident.street);
-  if (incident.house) tags.add(`дом ${incident.house}`);
-  if (incident.description) {
-    incident.description
-      .split(/[^\p{L}\p{N}]+/u)
-      .filter((part) => part.length >= 5)
-      .slice(0, 4)
-      .forEach((part) => tags.add(part.toLowerCase()));
+const STREET_PART_RE = /(улиц|ул\.?|просп(?:ект)?|пр-кт|шоссе|ш\.?|переул|пер\.?|бул(?:ьвар)?|б-р|наб(?:ережная)?|проезд|пр-д|тракт|площадь|пл\.?|аллея|тупик|линия|дорога)/i;
+const NON_ADDRESS_PART_RE = /(район|область|город|округ|федераль|россия|республика|край|посел|деревн|село|территор)/i;
+const HOUSE_NUMBER_RE = /(?:^|\b)(?:д(?:ом)?\.?\s*)?(\d+[A-Za-zА-Яа-я]?(?:[/-]\d+[A-Za-zА-Яа-я]?)?)/i;
+const POSTAL_CODE_RE = /^\d{6}$/;
+
+function splitAddressParts(addressText?: string) {
+  return (addressText || '')
+    .split(',')
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+function normalizeStreetPart(value?: string) {
+  const normalized = value?.trim();
+  if (!normalized || NON_ADDRESS_PART_RE.test(normalized)) return undefined;
+  return normalized;
+}
+
+function extractHouseNumber(value?: string) {
+  const normalized = value?.trim();
+  if (!normalized || NON_ADDRESS_PART_RE.test(normalized)) return undefined;
+  if (POSTAL_CODE_RE.test(normalized)) return undefined;
+
+  const match = normalized.match(HOUSE_NUMBER_RE);
+  const candidate = match?.[1];
+  if (!candidate || POSTAL_CODE_RE.test(candidate)) return undefined;
+  return candidate;
+}
+
+function findStreetPart(addressText?: string) {
+  const parts = splitAddressParts(addressText);
+  const index = parts.findIndex((part) => STREET_PART_RE.test(part));
+
+  if (index === -1) {
+    return { parts, street: undefined, streetIndex: -1 };
   }
-  return Array.from(tags).slice(0, 6);
+
+  return { parts, street: parts[index], streetIndex: index };
+}
+
+function extractStreetFromAddress(addressText?: string) {
+  const { parts, street } = findStreetPart(addressText);
+  if (street) return street;
+
+  if (
+    parts[0] &&
+    extractHouseNumber(parts[0]) &&
+    parts[1] &&
+    /[\p{L}]/u.test(parts[1]) &&
+    !NON_ADDRESS_PART_RE.test(parts[1]) &&
+    !POSTAL_CODE_RE.test(parts[1])
+  ) {
+    return parts[1];
+  }
+
+  return undefined;
+}
+
+function extractHouseFromAddress(addressText?: string) {
+  const { parts, streetIndex } = findStreetPart(addressText);
+
+  if (streetIndex !== -1) {
+    const previous = parts[streetIndex - 1];
+    const next = parts[streetIndex + 1];
+
+    return extractHouseNumber(previous) ?? extractHouseNumber(next);
+  }
+
+  return undefined;
+}
+
+function buildIncidentTags(incident: import('@/lib/api').Incident) {
+  const rubric = incident.category_title?.trim();
+  return rubric ? [rubric] : [];
 }
 
 function normalizeIncidentPhotoUrl(url: string) {
@@ -121,6 +185,83 @@ function normalizeIncidentPhotoUrl(url: string) {
   return /^https?:\/\//i.test(url) || url.startsWith('blob:') || url.startsWith('data:')
     ? url
     : withApiBase(url);
+}
+
+function formatIncidentPreviewAddress(incident: Pick<import('@/lib/api').Incident, 'street' | 'house' | 'address_text'>) {
+  const street = normalizeStreetPart(incident.street) ?? extractStreetFromAddress(incident.address_text);
+  const house = extractHouseNumber(incident.house) ?? extractHouseFromAddress(incident.address_text);
+
+  if (street && house) return `${street}, ${house}`;
+  if (street) return street;
+  if (house) return `дом ${house}`;
+  return splitAddressParts(incident.address_text)[0];
+}
+
+function getMarkerLocationFields(marker: {
+  address?: string;
+  city?: string;
+  street?: string;
+  house?: string;
+  addressPrecision?: 'exact' | 'approximate';
+}) {
+  return {
+    city: marker.city?.trim() || undefined,
+    street: marker.addressPrecision === 'exact'
+      ? (normalizeStreetPart(marker.street) ?? extractStreetFromAddress(marker.address))
+      : undefined,
+    house: marker.addressPrecision === 'exact'
+      ? (extractHouseNumber(marker.house) ?? extractHouseFromAddress(marker.address))
+      : undefined,
+  };
+}
+
+function buildMarkerAddress(fields: {
+  city?: string;
+  street?: string;
+  house?: string;
+  addressText?: string;
+}, options?: { includeHouse?: boolean }) {
+  const street = normalizeStreetPart(fields.street) ?? extractStreetFromAddress(fields.addressText);
+  const house = options?.includeHouse === false
+    ? undefined
+    : extractHouseNumber(fields.house) ?? extractHouseFromAddress(fields.addressText);
+
+  if (street && house) return `${street}, ${house}`;
+  if (street) return street;
+  if (house) return `дом ${house}`;
+
+  const fallback = splitAddressParts(fields.addressText).find((part) => !POSTAL_CODE_RE.test(part) && !NON_ADDRESS_PART_RE.test(part));
+  return fallback || fields.city || fields.addressText || 'Выбранная точка';
+}
+
+function getReverseGeocodeCoordinates(address: GeoAddress) {
+  const lat = typeof address.latitude === 'number'
+    ? address.latitude
+    : typeof address.lat === 'number'
+      ? address.lat
+      : undefined;
+  const lng = typeof address.longitude === 'number'
+    ? address.longitude
+    : typeof address.lon === 'number'
+      ? address.lon
+      : undefined;
+
+  if (typeof lat !== 'number' || typeof lng !== 'number') {
+    return null;
+  }
+
+  return { lat, lng };
+}
+
+function shouldUseReverseGeocodeHouse(clickPoint: { lat: number; lng: number }, address: GeoAddress) {
+  const house = extractHouseNumber(address.house || address.house_number);
+  if (!house) return false;
+
+  const resolvedPoint = getReverseGeocodeCoordinates(address);
+  if (!resolvedPoint) return false;
+
+  const distanceMeters = calculateDistanceKm(clickPoint, resolvedPoint) * 1000;
+  return distanceMeters <= REVERSE_GEOCODE_HOUSE_MAX_DISTANCE_METERS;
 }
 
 function mapIncidentToPreview(incident: import('@/lib/api').Incident): IncidentPreview | null {
@@ -134,7 +275,7 @@ function mapIncidentToPreview(incident: import('@/lib/api').Incident): IncidentP
     lat: incident.latitude,
     lng: incident.longitude,
     description: incident.description,
-    address: incident.address_text || [incident.city, incident.street, incident.house].filter(Boolean).join(', '),
+    address: formatIncidentPreviewAddress(incident),
     photoUrls: (incident.photos || []).map((photo) => normalizeIncidentPhotoUrl(photo.file_url)),
     tags: buildIncidentTags(incident),
     createdAt: incident.created_at,
@@ -346,6 +487,9 @@ async function searchAddress(q: string): Promise<GeocodingResult[]> {
         item.full_address ||
         item.address_text ||
         [item.city, item.street || item.road, item.house || item.house_number].filter(Boolean).join(', '),
+      city: item.city,
+      street: item.street || item.road,
+      house: item.house || item.house_number,
       place_id: index,
     }));
 }
@@ -394,6 +538,10 @@ export default function MapScreen() {
     lat: number;
     lng: number;
     address?: string;
+    city?: string;
+    street?: string;
+    house?: string;
+    addressPrecision?: 'exact' | 'approximate';
     district?: string;
   } | null>(null);
   const [query, setQuery] = useState('');
@@ -418,6 +566,7 @@ export default function MapScreen() {
   const [myIncidents, setMyIncidents] = useState<Incident[]>([]);
   const [dataError, setDataError] = useState<string | null>(null);
   const [reportSubmitting, setReportSubmitting] = useState(false);
+  const [publishingSelectedIncidentId, setPublishingSelectedIncidentId] = useState<number | null>(null);
   const [reportFeedback, setReportFeedback] = useState<string | null>(null);
   const [selectedRubric, setSelectedRubric] = useState<Rubric | null>(null);
   const [rubricStep, setRubricStep] = useState<'select' | 'create' | 'preview'>('select');
@@ -453,10 +602,10 @@ export default function MapScreen() {
   const [selectedProfileCategoryFilter, setSelectedProfileCategoryFilter] = useState<string>('Все');
   const [renderExpandedSearchContent, setRenderExpandedSearchContent] = useState(false);
   const reportFlowOpen = sheetMode === 'rubric';
-  const profileScrollRef = useRef<HTMLDivElement | null>(null);
-  const profileTouchStartYRef = useRef<number | null>(null);
+  const sheetContentTouchStartYRef = useRef<number | null>(null);
   const searchPanelTouchStartYRef = useRef<number | null>(null);
   const searchPanelStartSnapRef = useRef<SearchPanelSnap>('collapsed');
+  const searchPanelDragEligibleRef = useRef(false);
   const searchPanelTouchTargetRef = useRef<HTMLElement | null>(null);
   const searchPanelCanDragRef = useRef(false);
   const searchPanelSettleTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -584,7 +733,20 @@ export default function MapScreen() {
 
   const handleSelectSuggestion = useCallback((s: GeocodingResult) => {
     setCenter({ lat: s.lat, lng: s.lng });
-    setMarker({ lat: s.lat, lng: s.lng, address: s.display_name });
+    setMarker({
+      lat: s.lat,
+      lng: s.lng,
+      address: buildMarkerAddress({
+        city: s.city,
+        street: s.street,
+        house: s.house,
+        addressText: s.display_name,
+      }, { includeHouse: true }),
+      city: s.city,
+      street: s.street,
+      house: s.house,
+      addressPrecision: 'exact',
+    });
     setSelectedMapIncidentId(null);
     setQuery(s.display_name);
     setShowSuggestions(false);
@@ -594,18 +756,24 @@ export default function MapScreen() {
     try {
       const data = await api.reverseGeocode(lat, lng);
       const district = data.street || data.road || data.city;
-      const address =
-        data.display_name ||
-        data.full_address ||
-        data.address_text ||
-        [data.city, data.street || data.road, data.house || data.house_number].filter(Boolean).join(', ') ||
-        'Выбранная точка';
+      const shouldUseHouse = shouldUseReverseGeocodeHouse({ lat, lng }, data);
+      const house = shouldUseHouse ? (data.house || data.house_number) : undefined;
+      const address = buildMarkerAddress({
+        city: data.city,
+        street: data.street || data.road,
+        house,
+        addressText: data.display_name || data.full_address || data.address_text,
+      }, { includeHouse: shouldUseHouse });
 
       setMarker((prev) =>
         prev && Math.abs(prev.lat - lat) < 0.000001 && Math.abs(prev.lng - lng) < 0.000001
           ? {
               ...prev,
               address,
+              city: data.city,
+              street: data.street || data.road,
+              house,
+              addressPrecision: shouldUseHouse ? 'exact' : 'approximate',
               district: district || undefined,
             }
           : prev
@@ -617,6 +785,7 @@ export default function MapScreen() {
           ? {
               ...prev,
               address: prev.address || (isOutOfZone ? 'Точка вне зоны работы сервиса' : 'Выбранная точка'),
+              addressPrecision: 'approximate',
             }
           : prev
       );
@@ -624,7 +793,7 @@ export default function MapScreen() {
   }, []);
 
   const openReportFlowForPoint = useCallback((lat: number, lng: number, options?: { address?: string }) => {
-    setMarker({ lat, lng, address: options?.address });
+    setMarker({ lat, lng, address: options?.address, addressPrecision: 'approximate' });
     setCenter({ lat, lng });
     setSelectedMapIncidentId(null);
     setSelectedRubric(null);
@@ -923,7 +1092,7 @@ export default function MapScreen() {
     return { confirmed, useful, reputationScore, level };
   }, [userActiveIncidents]);
 
-  const profileStatusFilters = useMemo(() => ['Все', 'Черновик', 'Опубликовано'], []);
+  const profileStatusFilters = useMemo(() => ['Все', 'Черновик', 'На рассмотрении', 'Опубликовано'], []);
 
   const profileCategoryFilters = useMemo(
     () => ['Все', ...Array.from(new Set(userActiveIncidents.map((incident) => incident.category)))],
@@ -936,6 +1105,7 @@ export default function MapScreen() {
       const statusMatch =
         selectedProfileStatusFilter === 'Все' ||
         (selectedProfileStatusFilter === 'Черновик' && lowStatus.includes('чернов')) ||
+        (selectedProfileStatusFilter === 'На рассмотрении' && isReviewStatus(incident.status)) ||
         (selectedProfileStatusFilter === 'Опубликовано' && lowStatus.includes('опублик'));
 
       const categoryMatch =
@@ -950,6 +1120,7 @@ export default function MapScreen() {
     return fromCategories.length > 0 ? fromCategories : QUICK_SEARCH_CHIPS_FALLBACK;
   }, [categories]);
 
+  /*
   const openCreateReportFromSearch = useCallback(() => {
     if (marker) {
       setSelectedMapIncidentId(null);
@@ -967,6 +1138,7 @@ export default function MapScreen() {
 
     openReportFlowForPoint(center.lat, center.lng, { address: 'Точка в центре карты' });
   }, [center.lat, center.lng, marker, openReportFlowForPoint, resolveMarkerAddress]);
+  */
 
   const handleQuickSearch = useCallback((value: string) => {
     setSelectedMapTagFilter((prev) => (prev === value ? null : value));
@@ -1130,16 +1302,13 @@ export default function MapScreen() {
     setReportFeedback(null);
 
     try {
-      const addressParts = (marker.address || '').split(',').map((part) => part.trim()).filter(Boolean);
       const payload = {
         category_id: selectedRubric.id,
         title: reportTitle.trim(),
         description: reportText.trim(),
         status,
         address_text: marker.address,
-        city: addressParts[0],
-        street: addressParts[1],
-        house: addressParts[2],
+        ...getMarkerLocationFields(marker),
         latitude: marker.lat,
         longitude: marker.lng,
       } as const;
@@ -1163,17 +1332,25 @@ export default function MapScreen() {
       }
 
       await refreshIncidents();
+      const savedStatus = (savedIncident.status || '').toLowerCase();
       setReportFeedback(
         uploadWarning || (
           editingIncidentId != null
-            ? status === 'published'
+            ? savedStatus === 'published'
               ? 'Обращение обновлено и опубликовано.'
               : 'Черновик обновлён.'
-            : status === 'published'
+            : savedStatus === 'published'
               ? 'Обращение опубликовано и отображается на карте.'
               : 'Черновик сохранён.'
         )
       );
+      if (!uploadWarning && savedStatus === 'review') {
+        setReportFeedback(
+          editingIncidentId != null
+            ? '\u041E\u0431\u0440\u0430\u0449\u0435\u043D\u0438\u0435 \u043E\u0431\u043D\u043E\u0432\u043B\u0435\u043D\u043E \u0438 \u043E\u0442\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u043E \u043D\u0430 \u0440\u0430\u0441\u0441\u043C\u043E\u0442\u0440\u0435\u043D\u0438\u0435.'
+            : '\u041E\u0431\u0440\u0430\u0449\u0435\u043D\u0438\u0435 \u043E\u0442\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u043E \u043D\u0430 \u0440\u0430\u0441\u0441\u043C\u043E\u0442\u0440\u0435\u043D\u0438\u0435.'
+        );
+      }
       setReportTitle('');
       setReportText('');
       setReportPhotos([]);
@@ -1196,17 +1373,51 @@ export default function MapScreen() {
     void submitReport('published');
   };
 
+  const handlePublishSelectedIncident = useCallback(async () => {
+    if (!isAdmin || selectedMapIncidentId == null || !selectedMapIncident || !isReviewStatus(selectedMapIncident.status)) {
+      return;
+    }
+
+    setPublishingSelectedIncidentId(selectedMapIncidentId);
+    setReportFeedback(null);
+
+    try {
+      const updatedIncident = await api.updateIncident(selectedMapIncidentId, { status: 'published' });
+      await refreshIncidents();
+
+      const updatedStatus = (updatedIncident.status || '').toLowerCase();
+      setReportFeedback(updatedStatus === 'published' ? 'Обращение опубликовано.' : 'Не удалось опубликовать обращение.');
+    } catch (error) {
+      setReportFeedback(error instanceof Error ? error.message : 'Не удалось опубликовать обращение.');
+    } finally {
+      setPublishingSelectedIncidentId(null);
+    }
+  }, [isAdmin, refreshIncidents, selectedMapIncident, selectedMapIncidentId]);
+
   const openDraftForEditing = useCallback(async (incidentId: number) => {
     try {
       const sourceIncident = myIncidents.find((incident) => incident.id === incidentId) ?? await api.getIncident(incidentId);
       const incidentCategory = categories.find((category) => category.id === sourceIncident.category_id) ?? null;
       const lat = sourceIncident.latitude ?? center.lat;
       const lng = sourceIncident.longitude ?? center.lng;
-      const address = sourceIncident.address_text || [sourceIncident.city, sourceIncident.street, sourceIncident.house].filter(Boolean).join(', ') || 'Адрес уточняется';
+      const address = buildMarkerAddress({
+        city: sourceIncident.city,
+        street: sourceIncident.street,
+        house: sourceIncident.house,
+        addressText: sourceIncident.address_text,
+      }, { includeHouse: true }) || 'Адрес уточняется';
 
       setSelectedMapIncidentId(null);
       setCenter({ lat, lng });
-      setMarker({ lat, lng, address });
+      setMarker({
+        lat,
+        lng,
+        address,
+        city: sourceIncident.city,
+        street: sourceIncident.street,
+        house: sourceIncident.house,
+        addressPrecision: 'exact',
+      });
       setSelectedRubric(incidentCategory ? {
         id: incidentCategory.id,
         title: incidentCategory.title,
@@ -1240,16 +1451,13 @@ export default function MapScreen() {
       throw new Error('Заполните тему, описание и выберите рубрику.');
     }
 
-    const addressParts = (marker.address || '').split(',').map((part) => part.trim()).filter(Boolean);
     const payload = {
       category_id: selectedRubric.id,
       title: reportTitle.trim(),
       description: reportText.trim(),
       status: 'draft' as const,
       address_text: marker.address,
-      city: addressParts[0],
-      street: addressParts[1],
-      house: addressParts[2],
+      ...getMarkerLocationFields(marker),
       latitude: marker.lat,
       longitude: marker.lng,
     };
@@ -1807,7 +2015,7 @@ export default function MapScreen() {
     };
   }, [marker]);
 
-  const handleProfileWheel = useCallback((event: React.WheelEvent<HTMLDivElement>) => {
+  const handleSheetContentWheel = useCallback((event: React.WheelEvent<HTMLDivElement>) => {
     const el = event.currentTarget;
     if (el.scrollTop <= 0 && event.deltaY < 0) {
       event.preventDefault();
@@ -1815,16 +2023,16 @@ export default function MapScreen() {
     }
   }, [softCloseSheet]);
 
-  const handleProfileTouchStart = useCallback((event: React.TouchEvent<HTMLDivElement>) => {
-    profileTouchStartYRef.current = event.touches[0]?.clientY ?? null;
+  const handleSheetContentTouchStart = useCallback((event: React.TouchEvent<HTMLDivElement>) => {
+    sheetContentTouchStartYRef.current = event.touches[0]?.clientY ?? null;
     setSheetDragY(0);
     setIsSheetDragging(false);
   }, []);
 
-  const handleProfileTouchMove = useCallback((event: React.TouchEvent<HTMLDivElement>) => {
-    const startY = profileTouchStartYRef.current;
-    const el = profileScrollRef.current;
-    if (startY == null || !el) return;
+  const handleSheetContentTouchMove = useCallback((event: React.TouchEvent<HTMLDivElement>) => {
+    const startY = sheetContentTouchStartYRef.current;
+    const el = event.currentTarget;
+    if (startY == null) return;
 
     const currentY = event.touches[0]?.clientY ?? startY;
     const delta = currentY - startY;
@@ -1865,10 +2073,18 @@ export default function MapScreen() {
 
     const touchTarget = event.target as HTMLElement | null;
     const isFromHandle = Boolean(touchTarget?.closest('[data-search-drag-handle="true"]'));
+    const isInteractiveTarget = Boolean(
+      touchTarget?.closest('input, textarea, button, a, select, label, [role="button"]')
+    );
+    const panelTop = event.currentTarget.getBoundingClientRect().top;
+    const touchY = event.touches[0]?.clientY ?? panelTop;
+    const isFromTopZone = touchY - panelTop <= 88;
+    const canStartDrag = isFromHandle || (!isInteractiveTarget && isFromTopZone);
 
     searchPanelTouchTargetRef.current = touchTarget;
     searchPanelStartSnapRef.current = searchPanelSnap;
-    searchPanelTouchStartYRef.current = isFromHandle ? event.touches[0]?.clientY ?? null : null;
+    searchPanelTouchStartYRef.current = canStartDrag ? touchY : null;
+    searchPanelDragEligibleRef.current = canStartDrag;
     searchPanelCanDragRef.current = false;
   }, [searchPanelSnap]);
 
@@ -1880,15 +2096,12 @@ export default function MapScreen() {
     const delta = currentY - startY;
     const absDelta = Math.abs(delta);
 
-    const touchTarget = searchPanelTouchTargetRef.current;
-    const isFromHandle = Boolean(touchTarget?.closest('[data-search-drag-handle="true"]'));
-
-    if (!isFromHandle) {
+    if (!searchPanelDragEligibleRef.current) {
       return;
     }
 
     if (!isSearchPanelDragging) {
-      if (absDelta < 6) return;
+      if (absDelta < 4) return;
 
       searchPanelCanDragRef.current = true;
       setIsSearchPanelDragging(true);
@@ -1926,6 +2139,7 @@ export default function MapScreen() {
 
     if (!searchPanelCanDragRef.current) {
       searchPanelTouchStartYRef.current = null;
+      searchPanelDragEligibleRef.current = false;
       searchPanelTouchTargetRef.current = null;
       setSearchPanelDragHeight(null);
       setIsSearchPanelDragging(false);
@@ -1980,6 +2194,7 @@ export default function MapScreen() {
     setSearchPanelSnap(targetSnap);
 
     searchPanelTouchStartYRef.current = null;
+    searchPanelDragEligibleRef.current = false;
     searchPanelTouchTargetRef.current = null;
     searchPanelCanDragRef.current = false;
     setIsSearchPanelDragging(false);
@@ -2213,7 +2428,9 @@ export default function MapScreen() {
             selectedMapIncidentDetails={selectedMapIncidentDetails}
             selectedMapIncidentDistanceLabel={selectedMapIncidentDistanceLabel}
             getTagIcon={getTagIcon}
-            openCreateReportFromSearch={openCreateReportFromSearch}
+            canPublishSelectedIncident={Boolean(isAdmin && selectedMapIncident && isReviewStatus(selectedMapIncident.status))}
+            publishSelectedIncidentPending={publishingSelectedIncidentId === selectedMapIncident?.id}
+            handlePublishSelectedIncident={handlePublishSelectedIncident}
             filteredNearbyIncidents={filteredNearbyIncidents}
             focusIncidentOnMap={focusIncidentOnMap}
             reportFlowOpen={reportFlowOpen}
@@ -2297,7 +2514,14 @@ export default function MapScreen() {
             )}
 
             {sheetMode === 'marker' && marker ? (
-              <MapMarkerSheetContent marker={marker} onCopyCoords={copyCoords} onCreateReport={handleCreateReport} />
+              <MapMarkerSheetContent
+                marker={marker}
+                onCopyCoords={copyCoords}
+                onCreateReport={handleCreateReport}
+                onContentWheel={handleSheetContentWheel}
+                onContentTouchStart={handleSheetContentTouchStart}
+                onContentTouchMove={handleSheetContentTouchMove}
+              />
             ) : (
               <MapTabsSheetContent
                 isAuthFullscreen={isAuthFullscreen}
@@ -2306,10 +2530,9 @@ export default function MapScreen() {
                 closeSheet={closeSheet}
                 openTab={openTab}
                 setSettingsView={setSettingsView}
-                profileScrollRef={profileScrollRef}
-                handleProfileWheel={handleProfileWheel}
-                handleProfileTouchStart={handleProfileTouchStart}
-                handleProfileTouchMove={handleProfileTouchMove}
+                handleSheetContentWheel={handleSheetContentWheel}
+                handleSheetContentTouchStart={handleSheetContentTouchStart}
+                handleSheetContentTouchMove={handleSheetContentTouchMove}
                 profileAvatarInputRef={profileAvatarInputRef}
                 userProfile={userProfile}
                 localAvatarPreviewUrl={localAvatarPreviewUrl}

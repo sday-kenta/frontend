@@ -19,7 +19,10 @@ export const SearchInputBar = memo(function SearchInputBar({
   onClear,
 }: SearchInputBarProps) {
   return (
-    <div className="flex items-center gap-2 rounded-full border border-border/70 bg-muted/35 px-4 py-3">
+    <div
+      className="flex items-center gap-2 rounded-full border border-border/70 bg-muted/35 px-4 py-3"
+      data-search-input-shell="true"
+    >
       <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
       <input
         ref={inputRef}

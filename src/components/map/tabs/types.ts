@@ -26,6 +26,7 @@ export type IncidentSummary = {
   title: string;
   category: string;
   status: string;
+  address?: string;
 };
 
 export type IncidentForMapAction = IncidentSummary & {

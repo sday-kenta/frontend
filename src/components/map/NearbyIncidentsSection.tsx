@@ -7,6 +7,7 @@ type BaseIncident = {
   title: string;
   category: string;
   status: string;
+  address?: string;
   distanceLabel: string;
 };
 
@@ -132,6 +133,9 @@ export function NearbyIncidentsSection<T extends BaseIncident>({
                 </span>
               </div>
               <p className="line-clamp-1 text-xs font-medium text-foreground">{incident.title}</p>
+              {incident.address ? (
+                <p className="mt-1 line-clamp-1 text-[11px] text-muted-foreground">{incident.address}</p>
+              ) : null}
             </div>
             <span className="shrink-0 text-[11px] font-semibold text-muted-foreground">
               {incident.distanceLabel}

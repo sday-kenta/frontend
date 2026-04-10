@@ -11,11 +11,27 @@ type MapMarkerSheetContentProps = {
   marker: MarkerPoint;
   onCopyCoords: () => void;
   onCreateReport: () => void;
+  onContentWheel: (event: React.WheelEvent<HTMLDivElement>) => void;
+  onContentTouchStart: (event: React.TouchEvent<HTMLDivElement>) => void;
+  onContentTouchMove: (event: React.TouchEvent<HTMLDivElement>) => void;
 };
 
-export const MapMarkerSheetContent = memo(function MapMarkerSheetContent({ marker, onCopyCoords, onCreateReport }: MapMarkerSheetContentProps) {
+export const MapMarkerSheetContent = memo(function MapMarkerSheetContent({
+  marker,
+  onCopyCoords,
+  onCreateReport,
+  onContentWheel,
+  onContentTouchStart,
+  onContentTouchMove,
+}: MapMarkerSheetContentProps) {
   return (
-    <div className="flex-1 overflow-y-auto overscroll-contain pb-2 text-white" data-sheet-scrollable="true">
+    <div
+      className="flex-1 overflow-y-auto overscroll-contain pb-2 text-white"
+      data-sheet-scrollable="true"
+      onWheel={onContentWheel}
+      onTouchStart={onContentTouchStart}
+      onTouchMove={onContentTouchMove}
+    >
       <div className="space-y-4">
         <div className="overflow-hidden rounded-[30px] border border-white/10 bg-[linear-gradient(180deg,rgba(15,23,42,0.96),rgba(2,6,23,0.98))] shadow-[0_18px_38px_rgba(0,0,0,0.34)]">
           <div className="relative p-5">
