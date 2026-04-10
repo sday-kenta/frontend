@@ -48,14 +48,18 @@ type IncidentPreview = {
 
 const DEBOUNCE_MS = 400;
 
+const MAP_TILES_URL =
+  import.meta.env.VITE_MAP_TILES_URL ?? 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+const MAP_ATTRIBUTION = import.meta.env.VITE_MAP_ATTRIBUTION ?? '© OpenStreetMap';
+
 const OSM_STYLE_LIGHT: maplibregl.StyleSpecification = {
   version: 8,
   sources: {
     osm: {
       type: 'raster',
-      tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
+      tiles: [MAP_TILES_URL],
       tileSize: 256,
-      attribution: '© OpenStreetMap',
+      attribution: MAP_ATTRIBUTION,
     },
   },
   layers: [{ id: 'osm', type: 'raster', source: 'osm' }],
@@ -1489,6 +1493,7 @@ export default function MapScreen() {
   // Блокируем зум страницы (pinch, ctrl+wheel) вне области карты,
   // чтобы зум оставался только на самой карте.
   useEffect(() => {
+    if (!isAuthenticated) return;
     if (typeof window === 'undefined') return;
 
     const mapElement = mapRef.current;
@@ -1526,7 +1531,7 @@ export default function MapScreen() {
       window.removeEventListener('gesturechange', handleGesture as EventListener);
       window.removeEventListener('gestureend', handleGesture as EventListener);
     };
-  }, []);
+  }, [isAuthenticated]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -1542,6 +1547,8 @@ export default function MapScreen() {
   }, [emailNotificationsEnabled, pushNotificationsEnabled]);
 
   useEffect(() => {
+    if (!isAuthenticated) return;
+
     const container = mapRef.current;
     if (!container) return;
 
@@ -1581,7 +1588,7 @@ export default function MapScreen() {
         closeSheetTimeoutRef.current = null;
       }
     };
-  }, [handlePlaceMarker]);
+  }, [handlePlaceMarker, isAuthenticated]);
 
   useEffect(() => {
     const map = mapInstanceRef.current;
