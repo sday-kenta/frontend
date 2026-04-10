@@ -1,5 +1,5 @@
 export type UserRole = 'user' | 'admin' | 'premium';
-export type IncidentStatus = 'draft' | 'published' | 'all';
+export type IncidentStatus = 'draft' | 'review' | 'published' | 'all';
 export type EmailCodePurpose = 'register' | 'change_email';
 
 export interface User {
@@ -52,7 +52,7 @@ export interface Incident {
   house?: string;
   latitude?: number;
   longitude?: number;
-  status: 'draft' | 'published';
+  status: 'draft' | 'review' | 'published';
   photos: IncidentPhoto[];
   published_at?: string;
   created_at?: string;
@@ -136,7 +136,7 @@ export interface CreateIncidentRequest {
   category_id: number;
   title: string;
   description: string;
-  status?: 'draft' | 'published';
+  status?: 'draft' | 'review' | 'published';
   department_name?: string;
   address_text?: string;
   city?: string;
@@ -504,8 +504,8 @@ export class ApiClient {
     return this.request<GeoAddress>(`/maps/reverse${buildQuery({ lat, lon })}`);
   }
 
-  listIncidents(categoryId?: number) {
-    return this.request<Incident[]>(`/incidents${buildQuery({ category_id: categoryId })}`);
+  listIncidents(categoryId?: number, status?: Exclude<IncidentStatus, 'draft' | 'all'>) {
+    return this.request<Incident[]>(`/incidents${buildQuery({ category_id: categoryId, status })}`);
   }
 
   listMyIncidents(filters?: { status?: IncidentStatus; categoryId?: number }) {

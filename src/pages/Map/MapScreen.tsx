@@ -70,8 +70,14 @@ const QUICK_SEARCH_CHIPS_FALLBACK = ['Нарушение правил парко
 function getStatusLabel(status: string) {
   const normalized = status.toLowerCase();
   if (normalized === 'published') return 'Опубликовано';
+  if (normalized === 'review') return 'На рассмотрении';
   if (normalized === 'draft') return 'Черновик';
   return status;
+}
+
+function isReviewStatus(status: string) {
+  const normalized = status.toLowerCase();
+  return normalized === 'review' || normalized.includes('рассмотр') || normalized.includes('провер');
 }
 
 function getCategoryColorClass(title: string) {
@@ -133,6 +139,10 @@ function mapIncidentToPreview(incident: import('@/lib/api').Incident): IncidentP
     tags: buildIncidentTags(incident),
     createdAt: incident.created_at,
   };
+}
+
+function uniqIncidentPreviews(items: IncidentPreview[]) {
+  return Array.from(new Map(items.map((item) => [item.id, item])).values());
 }
 
 async function blobToDataUrl(blob: Blob): Promise<string> {
@@ -277,6 +287,9 @@ function getProfileIncidentStatusTagClass(status: string) {
   if (normalized.includes('нов') || normalized.includes('опублик')) {
     return 'border-sky-300/60 bg-sky-100/70 text-sky-700 dark:border-sky-400/40 dark:bg-sky-500/20 dark:text-sky-200';
   }
+  if (isReviewStatus(status)) {
+    return 'border-violet-300/60 bg-violet-100/70 text-violet-700 dark:border-violet-400/40 dark:bg-violet-500/20 dark:text-violet-200';
+  }
   if (normalized.includes('работ') || normalized.includes('чернов')) {
     return 'border-orange-300/60 bg-orange-100/70 text-orange-700 dark:border-orange-400/40 dark:bg-orange-500/20 dark:text-orange-200';
   }
@@ -314,8 +327,8 @@ function matchesIncidentByTagFilter(incident: IncidentPreview, normalizedFilter:
 function getStatusIcon(status: string) {
   const normalized = status.toLowerCase();
   if (normalized.includes('нов') || normalized.includes('опублик')) return '🆕';
+  if (isReviewStatus(status)) return '👁️';
   if (normalized.includes('работ') || normalized.includes('чернов')) return '📝';
-  if (normalized.includes('провер')) return '🔎';
   return 'ℹ️';
 }
 
@@ -401,6 +414,7 @@ export default function MapScreen() {
   });
   const [categories, setCategories] = useState<Category[]>([]);
   const [publishedIncidents, setPublishedIncidents] = useState<Incident[]>([]);
+  const [reviewIncidents, setReviewIncidents] = useState<Incident[]>([]);
   const [myIncidents, setMyIncidents] = useState<Incident[]>([]);
   const [dataError, setDataError] = useState<string | null>(null);
   const [reportSubmitting, setReportSubmitting] = useState(false);
@@ -420,6 +434,7 @@ export default function MapScreen() {
   });
   const [isAvatarUploading, setIsAvatarUploading] = useState(false);
   const [localAvatarPreviewUrl, setLocalAvatarPreviewUrl] = useState<string | null>(null);
+  const isAdmin = userProfile?.role === 'admin';
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const profileAvatarInputRef = useRef<HTMLInputElement | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -508,21 +523,24 @@ export default function MapScreen() {
 
     const loadInitialData = async () => {
       try {
-        const [loadedCategories, loadedIncidents] = await Promise.all([
+        const [loadedCategories, loadedIncidents, loadedReviewIncidents] = await Promise.all([
           api.listCategories(),
           api.listIncidents(),
+          isAdmin ? api.listIncidents(undefined, 'review') : Promise.resolve([] as Incident[]),
         ]);
 
         if (cancelled) return;
 
         setCategories(loadedCategories);
         setPublishedIncidents(loadedIncidents);
+        setReviewIncidents(loadedReviewIncidents);
         setDataError(null);
       } catch (error) {
         if (cancelled) return;
         setDataError(error instanceof Error ? error.message : 'Не удалось загрузить данные карты.');
         setCategories([]);
         setPublishedIncidents([]);
+        setReviewIncidents([]);
       }
 
       if (typeof window === 'undefined') return;
@@ -545,7 +563,7 @@ export default function MapScreen() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [isAdmin]);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -742,16 +760,45 @@ export default function MapScreen() {
     }
   }, [marker, resolveMarkerAddress]);
 
-  const incidentPreviews = useMemo(
+  const publicIncidentPreviews = useMemo(
     () => publishedIncidents.map(mapIncidentToPreview).filter((item): item is IncidentPreview => Boolean(item)),
     [publishedIncidents]
   );
 
-  
+  const adminReviewIncidentPreviews = useMemo(
+    () =>
+      reviewIncidents
+        .map(mapIncidentToPreview)
+        .filter((item): item is IncidentPreview => Boolean(item)),
+    [reviewIncidents]
+  );
+
+  const ownReviewIncidentPreviews = useMemo(
+    () =>
+      myIncidents
+        .filter((incident) => isReviewStatus(incident.status))
+        .map(mapIncidentToPreview)
+        .filter((item): item is IncidentPreview => Boolean(item)),
+    [myIncidents]
+  );
+
+  const generalIncidentPreviews = useMemo(
+    () => uniqIncidentPreviews([...publicIncidentPreviews, ...(isAdmin ? adminReviewIncidentPreviews : [])]),
+    [adminReviewIncidentPreviews, isAdmin, publicIncidentPreviews]
+  );
+
+  const markerIncidentPreviews = useMemo(
+    () =>
+      uniqIncidentPreviews([
+        ...generalIncidentPreviews,
+        ...(!isAdmin ? ownReviewIncidentPreviews : []),
+      ]),
+    [generalIncidentPreviews, isAdmin, ownReviewIncidentPreviews]
+  );
 
   const nearbyIncidents = useMemo(
     () =>
-      incidentPreviews
+      generalIncidentPreviews
         .map((incident) => {
           const distanceKm = calculateDistanceKm(center, {
             lat: incident.lat,
@@ -765,12 +812,31 @@ export default function MapScreen() {
           };
         })
         .sort((a, b) => a.distanceKm - b.distanceKm),
-    [center, incidentPreviews]
+    [center, generalIncidentPreviews]
+  );
+
+  const markerIncidentsWithDistance = useMemo(
+    () =>
+      markerIncidentPreviews
+        .map((incident) => {
+          const distanceKm = calculateDistanceKm(center, {
+            lat: incident.lat,
+            lng: incident.lng,
+          });
+
+          return {
+            ...incident,
+            distanceKm,
+            distanceLabel: distanceKm < 1 ? `${Math.round(distanceKm * 1000)} м` : `${distanceKm.toFixed(1)} км`,
+          };
+        })
+        .sort((a, b) => a.distanceKm - b.distanceKm),
+    [center, markerIncidentPreviews]
   );
 
   const nearbyIncidentsById = useMemo(
-    () => new Map(nearbyIncidents.map((incident) => [incident.id, incident])),
-    [nearbyIncidents]
+    () => new Map(markerIncidentsWithDistance.map((incident) => [incident.id, incident])),
+    [markerIncidentsWithDistance]
   );
 
   const normalizedSelectedMapTagFilter = useMemo(
@@ -793,11 +859,11 @@ export default function MapScreen() {
     const ownIncident = myIncidents.find((incident) => incident.id === selectedMapIncidentId);
 
     return (
-      incidentPreviews.find((incident) => incident.id === selectedMapIncidentId) ??
+      markerIncidentPreviews.find((incident) => incident.id === selectedMapIncidentId) ??
       (ownIncident ? mapIncidentToPreview(ownIncident) : null) ??
       null
     );
-  }, [incidentPreviews, myIncidents, nearbyIncidentsById, selectedMapIncidentId]);
+  }, [markerIncidentPreviews, myIncidents, nearbyIncidentsById, selectedMapIncidentId]);
 
   const selectedMapIncidentDistanceLabel = useMemo(() => {
     if (selectedMapIncidentId == null) return null;
@@ -827,8 +893,8 @@ export default function MapScreen() {
 
   const mapVisibleIncidents = useMemo(
     () =>
-      incidentPreviews.filter((incident) => matchesIncidentByTagFilter(incident, normalizedSelectedMapTagFilter)),
-    [incidentPreviews, normalizedSelectedMapTagFilter]
+      markerIncidentPreviews.filter((incident) => matchesIncidentByTagFilter(incident, normalizedSelectedMapTagFilter)),
+    [markerIncidentPreviews, normalizedSelectedMapTagFilter]
   );
 
   const userActiveIncidents = useMemo(
@@ -1027,18 +1093,21 @@ export default function MapScreen() {
   }, [reportFeedback]);
 
   const refreshIncidents = useCallback(async () => {
-    const [allIncidents, mine] = await Promise.all([
+    const [allIncidents, allReviewIncidents, mine] = await Promise.all([
       api.listIncidents(),
+      isAdmin ? api.listIncidents(undefined, 'review') : Promise.resolve([] as Incident[]),
       isAuthenticated ? api.listMyIncidents({ status: 'all' }) : Promise.resolve([] as Incident[]),
     ]);
 
     setPublishedIncidents(allIncidents);
+    setReviewIncidents(allReviewIncidents);
     setMyIncidents(mine);
-  }, [isAuthenticated]);
+  }, [isAdmin, isAuthenticated]);
 
   useEffect(() => {
     if (!isAuthenticated) {
       setMyIncidents([]);
+      setReviewIncidents([]);
       return;
     }
 
@@ -1597,7 +1666,8 @@ export default function MapScreen() {
     incidentMarkersRef.current.forEach((incidentMarker) => incidentMarker.remove());
     incidentMarkersRef.current = [];
 
-    const getIncidentColor = (category: string) => {
+    const getIncidentColor = (category: string, status: string) => {
+      if (isReviewStatus(status)) return '#7c3aed';
       const normalizedCategory = category.toLowerCase();
       if (normalizedCategory.includes('жкх') || normalizedCategory.includes('благо')) return '#10b981';
       if (normalizedCategory.includes('дорог')) return '#f59e0b';
@@ -1607,7 +1677,10 @@ export default function MapScreen() {
       return '#ef4444';
     };
 
-    const getCategoryIcon = (category: string, tags?: string[]) => {
+    const getCategoryIcon = (category: string, status: string, tags?: string[]) => {
+      if (isReviewStatus(status)) {
+        return '👁️';
+      }
       const normalizedTags = (tags ?? []).map((tag) => tag.toLowerCase().replace(/^#/, ''));
 
       if (normalizedTags.some((tag) => tag.includes('жкх') || tag.includes('благо') || tag.includes('двор'))) {
@@ -1637,6 +1710,7 @@ export default function MapScreen() {
 
     const getStatusText = (status: string) => {
       const normalizedStatus = status.toLowerCase();
+      if (isReviewStatus(status)) return 'На рассмотрении';
       if (normalizedStatus.includes('опублик')) return 'Опубликовано';
       if (normalizedStatus.includes('чернов')) return 'Черновик';
       if (normalizedStatus.includes('нов')) return 'Новая';
@@ -1646,9 +1720,9 @@ export default function MapScreen() {
     };
 
     const markers = mapVisibleIncidents.map((incident) => {
-      const pinColor = getIncidentColor(incident.category);
+      const pinColor = getIncidentColor(incident.category, incident.status);
       const incidentTags = incident.tags;
-      const categoryIcon = getCategoryIcon(incident.category, incidentTags);
+      const categoryIcon = getCategoryIcon(incident.category, incident.status, incidentTags);
       const statusText = getStatusText(incident.status);
       const el = document.createElement('button');
       el.type = 'button';
