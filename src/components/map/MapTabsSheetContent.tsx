@@ -51,7 +51,8 @@ type MapTabsSheetContentProps = {
   getStatusIcon: (status: string) => string;
   incidentDetails: IncidentDetailsMap;
   nearbyIncidentsById: Map<number, { distanceLabel: string }>;
-  setIsAuthenticated: (value: boolean) => void;
+  onAuthenticated: (payload: UserProfile | null) => void;
+  onLogout: () => void;
   setUserProfile: React.Dispatch<React.SetStateAction<{
     id?: number;
     first_name?: string;
@@ -65,6 +66,13 @@ type MapTabsSheetContentProps = {
   setPushNotificationsEnabled: React.Dispatch<React.SetStateAction<boolean>>;
   emailNotificationsEnabled: boolean;
   setEmailNotificationsEnabled: React.Dispatch<React.SetStateAction<boolean>>;
+  biometricEnabled: boolean;
+  biometricAvailable: boolean;
+  biometricBusy: boolean;
+  biometricLabel: string;
+  biometricError: string | null;
+  onEnableBiometric: () => void;
+  onDisableBiometric: () => void;
   ProfileTab: ProfileTabComponent;
 };
 
@@ -102,13 +110,21 @@ export const MapTabsSheetContent = memo(function MapTabsSheetContent({
   getStatusIcon,
   incidentDetails,
   nearbyIncidentsById,
-  setIsAuthenticated,
+  onAuthenticated,
+  onLogout,
   setUserProfile,
   isAuthenticated,
   pushNotificationsEnabled,
   setPushNotificationsEnabled,
   emailNotificationsEnabled,
   setEmailNotificationsEnabled,
+  biometricEnabled,
+  biometricAvailable,
+  biometricBusy,
+  biometricLabel,
+  biometricError,
+  onEnableBiometric,
+  onDisableBiometric,
   ProfileTab,
 }: MapTabsSheetContentProps) {
   const sheetScrollManaged = activeTab === 'profile' || activeTab === 'settings';
@@ -161,11 +177,7 @@ export const MapTabsSheetContent = memo(function MapTabsSheetContent({
 
       {activeTab === 'auth' && (
         <AuthPanel
-          onAuthenticated={(payload) => {
-            setIsAuthenticated(true);
-            setUserProfile(payload);
-            openTab('profile');
-          }}
+          onAuthenticated={onAuthenticated}
           closeSheet={closeSheet}
         />
       )}
@@ -179,11 +191,18 @@ export const MapTabsSheetContent = memo(function MapTabsSheetContent({
           userProfile={userProfile}
           setUserProfile={setUserProfile}
           isAuthenticated={isAuthenticated}
-          setIsAuthenticated={setIsAuthenticated}
+          onLogout={onLogout}
           pushNotificationsEnabled={pushNotificationsEnabled}
           setPushNotificationsEnabled={setPushNotificationsEnabled}
           emailNotificationsEnabled={emailNotificationsEnabled}
           setEmailNotificationsEnabled={setEmailNotificationsEnabled}
+          biometricEnabled={biometricEnabled}
+          biometricAvailable={biometricAvailable}
+          biometricBusy={biometricBusy}
+          biometricLabel={biometricLabel}
+          biometricError={biometricError}
+          onEnableBiometric={onEnableBiometric}
+          onDisableBiometric={onDisableBiometric}
           ProfileTab={ProfileTab}
         />
       )}
