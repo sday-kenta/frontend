@@ -1,3 +1,5 @@
+import { clearStoredAuthSession } from '@/lib/authSession';
+
 export type UserRole = 'user' | 'admin' | 'premium';
 export type IncidentStatus = 'draft' | 'published' | 'all';
 export type EmailCodePurpose = 'register' | 'change_email';
@@ -595,7 +597,6 @@ export const api = new ApiClient({
   getSession: readSessionFromStorage,
   onUnauthorized: () => {
     if (typeof window === 'undefined') return;
-    window.localStorage.removeItem('userId');
-    window.localStorage.removeItem('authToken');
+    clearStoredAuthSession();
   },
 });

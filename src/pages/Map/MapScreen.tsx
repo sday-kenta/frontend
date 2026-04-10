@@ -14,9 +14,22 @@ import { SearchSuggestionsList } from '@/components/map/SearchSuggestionsList';
 import { MapSearchPanel } from '@/components/map/MapSearchPanel';
 import { MapSearchExpandedContent } from '@/components/map/MapSearchExpandedContent';
 import { AuthPanel } from '@/components/map/AuthPanel';
+import { BiometricEntryGate } from '@/components/BiometricEntryGate';
 import { MapProfileFab } from '@/components/map/MapProfileFab';
 import { MapMarkerSheetContent } from '@/components/map/MapMarkerSheetContent';
 import { MapTabsSheetContent } from '@/components/map/MapTabsSheetContent';
+import { persistAuthUserContact } from '@/lib/authUserStorage';
+import {
+  disableBiometricQuickUnlock,
+  enableBiometricQuickUnlock,
+  getBiometricSupport,
+  getPreferredBiometricLabel,
+  isBiometricQuickUnlockEnabledForCurrentSession,
+  shouldRequireBiometricUnlockOnLaunch,
+  unlockWithBiometricQuickUnlock,
+  type BiometricSupport,
+} from '@/lib/biometricAuth';
+import { AUTH_SESSION_CLEARED_EVENT, clearStoredAuthSession } from '@/lib/authSession';
 
 const ProfileTab = ProfileTabComponent as ComponentType<{
   userId: number;
@@ -418,6 +431,15 @@ export default function MapScreen() {
     if (typeof window === 'undefined') return false;
     return !!window.localStorage.getItem('userId');
   });
+  const [biometricSupport, setBiometricSupport] = useState<BiometricSupport | null>(null);
+  const [biometricEnabled, setBiometricEnabled] = useState(() => isBiometricQuickUnlockEnabledForCurrentSession());
+  const [biometricUnlockRequired, setBiometricUnlockRequired] = useState(() => shouldRequireBiometricUnlockOnLaunch());
+  const [biometricUnlocking, setBiometricUnlocking] = useState(false);
+  const [biometricUnlockError, setBiometricUnlockError] = useState<string | null>(null);
+  const [biometricPromptOpen, setBiometricPromptOpen] = useState(false);
+  const [biometricSetupBusy, setBiometricSetupBusy] = useState(false);
+  const [biometricSetupError, setBiometricSetupError] = useState<string | null>(null);
+  const [offerBiometricAfterLogin, setOfferBiometricAfterLogin] = useState(false);
   const [isAvatarUploading, setIsAvatarUploading] = useState(false);
   const [localAvatarPreviewUrl, setLocalAvatarPreviewUrl] = useState<string | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -454,6 +476,61 @@ export default function MapScreen() {
   useEffect(() => {
     centerRef.current = center;
   }, [center]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void getBiometricSupport().then((support) => {
+      if (!cancelled) {
+        setBiometricSupport(support);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+
+    const handleSessionCleared = () => {
+      setIsAuthenticated(false);
+      setUserProfile(null);
+      setBiometricEnabled(false);
+      setBiometricUnlockRequired(false);
+      setBiometricUnlockError(null);
+      setBiometricPromptOpen(false);
+      setBiometricSetupError(null);
+      setOfferBiometricAfterLogin(false);
+    };
+
+    window.addEventListener(AUTH_SESSION_CLEARED_EVENT, handleSessionCleared);
+    return () => {
+      window.removeEventListener(AUTH_SESSION_CLEARED_EVENT, handleSessionCleared);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!offerBiometricAfterLogin) return;
+    if (!isAuthenticated) {
+      setOfferBiometricAfterLogin(false);
+      return;
+    }
+    if (!biometricSupport) return;
+
+    if (!biometricSupport.canUsePlatformAuthenticator || isBiometricQuickUnlockEnabledForCurrentSession()) {
+      setBiometricEnabled(isBiometricQuickUnlockEnabledForCurrentSession());
+      setOfferBiometricAfterLogin(false);
+      return;
+    }
+
+    setBiometricPromptOpen(true);
+    setOfferBiometricAfterLogin(false);
+  }, [biometricSupport, isAuthenticated, offerBiometricAfterLogin]);
+
+  const biometricLabel = biometricSupport?.label ?? getPreferredBiometricLabel();
+  const biometricAvailable = biometricSupport?.canUsePlatformAuthenticator === true;
 
   const rubrics: Rubric[] = categories.map((category) => ({
     id: category.id,
@@ -2015,10 +2092,76 @@ export default function MapScreen() {
     inputRef.current?.focus();
   }, []);
 
+  const handleLogout = useCallback(() => {
+    disableBiometricQuickUnlock();
+    persistAuthUserContact(null);
+    clearStoredAuthSession();
+    setIsAuthenticated(false);
+    setUserProfile(null);
+    setBiometricEnabled(false);
+    setBiometricUnlockRequired(false);
+    setBiometricUnlockError(null);
+    setBiometricPromptOpen(false);
+    setBiometricSetupError(null);
+    setOfferBiometricAfterLogin(false);
+    setSettingsView('main');
+    setActiveTab('auth');
+    setSheetMode('tabs');
+  }, []);
+
+  const handleEnableBiometric = useCallback(async () => {
+    setBiometricSetupBusy(true);
+    setBiometricSetupError(null);
+    setBiometricUnlockError(null);
+
+    try {
+      const enrolled = await enableBiometricQuickUnlock();
+      setBiometricEnabled(true);
+      setBiometricPromptOpen(false);
+      setReportFeedback(`Быстрый вход через ${enrolled.label} включён.`);
+    } catch (error) {
+      setBiometricSetupError(
+        error instanceof Error ? error.message : 'Не удалось включить быстрый вход на этом устройстве.',
+      );
+    } finally {
+      setBiometricSetupBusy(false);
+    }
+  }, []);
+
+  const handleDisableBiometric = useCallback(() => {
+    disableBiometricQuickUnlock();
+    setBiometricEnabled(false);
+    setBiometricPromptOpen(false);
+    setBiometricSetupError(null);
+    setBiometricUnlockError(null);
+    setReportFeedback('Быстрый вход отключён.');
+  }, []);
+
+  const handleBiometricUnlock = useCallback(async () => {
+    setBiometricUnlocking(true);
+    setBiometricUnlockError(null);
+
+    try {
+      await unlockWithBiometricQuickUnlock();
+      setBiometricUnlockRequired(false);
+    } catch (error) {
+      setBiometricUnlockError(
+        error instanceof Error ? error.message : 'Не удалось разблокировать приложение через биометрию.',
+      );
+    } finally {
+      setBiometricUnlocking(false);
+    }
+  }, []);
+
   const handleAuthenticated = useCallback((payload: MapUserProfile | null) => {
     if (!payload) return;
     setIsAuthenticated(true);
     setUserProfile(normalizeMapUserProfile(payload));
+    setBiometricEnabled(isBiometricQuickUnlockEnabledForCurrentSession());
+    setBiometricUnlockRequired(false);
+    setBiometricUnlockError(null);
+    setBiometricSetupError(null);
+    setOfferBiometricAfterLogin(true);
     setActiveTab('home');
     setSheetMode(null);
   }, []);
@@ -2037,6 +2180,18 @@ export default function MapScreen() {
     );
   }
 
+  if (biometricUnlockRequired) {
+    return (
+      <BiometricEntryGate
+        busy={biometricUnlocking}
+        error={biometricUnlockError}
+        label={biometricLabel}
+        onUnlock={handleBiometricUnlock}
+        onUseAnotherAccount={handleLogout}
+      />
+    );
+  }
+
   return (
     <div className="fixed inset-0 z-0">
       {topMapMessage && (
@@ -2047,6 +2202,55 @@ export default function MapScreen() {
       {reportSubmitting && (
         <div className="pointer-events-none absolute left-1/2 top-16 z-[1300] -translate-x-1/2 rounded-full border border-border/70 bg-background/90 px-4 py-2 text-xs text-foreground shadow-lg backdrop-blur">
           Сохраняем обращение...
+        </div>
+      )}
+      {biometricPromptOpen && (
+        <div className="absolute inset-0 z-[1450] flex items-end justify-center bg-slate-950/35 px-4 pb-[max(env(safe-area-inset-bottom),24px)] pt-20 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-[30px] border border-white/60 bg-white/90 p-5 shadow-[0_24px_80px_rgba(15,23,42,0.2)] backdrop-blur-xl dark:border-white/10 dark:bg-slate-950/85 dark:shadow-[0_28px_90px_rgba(2,6,23,0.55)]">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-sky-700 dark:text-sky-300">
+              Быстрый вход
+            </p>
+            <h2 className="mt-2 text-xl font-semibold text-slate-950 dark:text-white">
+              Включить вход через {biometricLabel}?
+            </h2>
+            <p className="mt-2 text-sm leading-6 text-slate-600 dark:text-slate-300">
+              После обычного входа приложение сможет запрашивать системную биометрию устройства при следующем запуске. Это локальная разблокировка сохранённой сессии на этом устройстве.
+            </p>
+
+            {biometricSetupError && (
+              <div className="mt-4 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:border-rose-500/20 dark:bg-rose-500/10 dark:text-rose-200">
+                {biometricSetupError}
+              </div>
+            )}
+
+            <div className="mt-5 space-y-3">
+              <button
+                type="button"
+                onClick={handleEnableBiometric}
+                disabled={biometricSetupBusy || !biometricAvailable}
+                className={cn(
+                  'w-full rounded-2xl px-4 py-3 text-sm font-medium transition-colors',
+                  biometricAvailable
+                    ? 'bg-slate-950 text-white hover:bg-slate-800 dark:bg-white dark:text-slate-950 dark:hover:bg-slate-100'
+                    : 'bg-slate-200 text-slate-500 dark:bg-white/10 dark:text-slate-400',
+                  (biometricSetupBusy || !biometricAvailable) && 'cursor-not-allowed opacity-60',
+                )}
+              >
+                {biometricSetupBusy ? 'Подключаем биометрию...' : `Включить ${biometricLabel}`}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setBiometricPromptOpen(false);
+                  setBiometricSetupError(null);
+                }}
+                className="w-full rounded-2xl border border-slate-300 bg-white/80 px-4 py-3 text-sm font-medium text-slate-700 transition-colors hover:bg-white dark:border-white/10 dark:bg-white/5 dark:text-slate-200 dark:hover:bg-white/10"
+              >
+                Позже
+              </button>
+            </div>
+          </div>
         </div>
       )}
       <div
@@ -2259,13 +2463,21 @@ export default function MapScreen() {
                 getStatusIcon={getStatusIcon}
                 incidentDetails={INCIDENT_DETAILS}
                 nearbyIncidentsById={nearbyIncidentsById}
-                setIsAuthenticated={setIsAuthenticated}
+                onAuthenticated={handleAuthenticated}
+                onLogout={handleLogout}
                 setUserProfile={setUserProfile}
                 isAuthenticated={isAuthenticated}
                 pushNotificationsEnabled={pushNotificationsEnabled}
                 setPushNotificationsEnabled={setPushNotificationsEnabled}
                 emailNotificationsEnabled={emailNotificationsEnabled}
                 setEmailNotificationsEnabled={setEmailNotificationsEnabled}
+                biometricEnabled={biometricEnabled}
+                biometricAvailable={biometricAvailable}
+                biometricBusy={biometricSetupBusy}
+                biometricLabel={biometricLabel}
+                biometricError={biometricSetupError}
+                onEnableBiometric={handleEnableBiometric}
+                onDisableBiometric={handleDisableBiometric}
                 ProfileTab={ProfileTab}
               />
             )}

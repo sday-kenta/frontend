@@ -4,7 +4,6 @@ import { AboutProjectSection } from '@/components/map/AboutProjectSection';
 import { FeedbackSection } from '@/components/map/FeedbackSection';
 import { cn } from '@/lib/utils';
 import type { ProfileTabComponent, SettingsView, UserProfile } from '@/components/map/tabs/types';
-import { persistAuthUserContact } from '@/lib/authUserStorage';
 
 const settingsSheetIconButtonClass =
   'flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 shadow-sm border border-slate-300 hover:bg-slate-300 hover:text-slate-800 dark:bg-black/40 dark:text-[#9ca3af] dark:border-transparent dark:hover:bg-black/60';
@@ -31,11 +30,18 @@ type SettingsTabContentProps = {
   userProfile: UserProfile | null;
   setUserProfile: React.Dispatch<React.SetStateAction<UserProfile | null>>;
   isAuthenticated: boolean;
-  setIsAuthenticated: (value: boolean) => void;
+  onLogout: () => void;
   pushNotificationsEnabled: boolean;
   setPushNotificationsEnabled: React.Dispatch<React.SetStateAction<boolean>>;
   emailNotificationsEnabled: boolean;
   setEmailNotificationsEnabled: React.Dispatch<React.SetStateAction<boolean>>;
+  biometricEnabled: boolean;
+  biometricAvailable: boolean;
+  biometricBusy: boolean;
+  biometricLabel: string;
+  biometricError: string | null;
+  onEnableBiometric: () => void;
+  onDisableBiometric: () => void;
   ProfileTab: ProfileTabComponent;
 };
 
@@ -47,11 +53,18 @@ export function SettingsTabContent({
   userProfile,
   setUserProfile,
   isAuthenticated,
-  setIsAuthenticated,
+  onLogout,
   pushNotificationsEnabled,
   setPushNotificationsEnabled,
   emailNotificationsEnabled,
   setEmailNotificationsEnabled,
+  biometricEnabled,
+  biometricAvailable,
+  biometricBusy,
+  biometricLabel,
+  biometricError,
+  onEnableBiometric,
+  onDisableBiometric,
   ProfileTab,
 }: SettingsTabContentProps) {
   return (
@@ -125,6 +138,58 @@ export function SettingsTabContent({
             </div>
           </div>
 
+          <div className="rounded-2xl bg-white p-3 dark:bg-transparent">
+            <div className="flex items-start justify-between gap-3">
+              <div className="space-y-1">
+                <p className="text-sm font-medium text-slate-900 dark:text-white">Быстрый вход</p>
+                <p className="text-xs leading-5 text-[#64748b] dark:text-[#94a3b8]">
+                  Локальная разблокировка приложения через {biometricLabel}. Работает только на этом устройстве и не меняет серверную авторизацию.
+                </p>
+              </div>
+              <span
+                className={cn(
+                  'shrink-0 rounded-full px-2.5 py-1 text-[11px] font-medium',
+                  biometricEnabled
+                    ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300'
+                    : 'bg-slate-100 text-slate-600 dark:bg-white/10 dark:text-slate-300'
+                )}
+              >
+                {biometricEnabled ? 'Включено' : 'Выключено'}
+              </span>
+            </div>
+
+            {biometricError && (
+              <div className="mt-3 rounded-2xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700 dark:border-rose-500/20 dark:bg-rose-500/10 dark:text-rose-200">
+                {biometricError}
+              </div>
+            )}
+
+            {biometricAvailable ? (
+              <button
+                type="button"
+                onClick={biometricEnabled ? onDisableBiometric : onEnableBiometric}
+                disabled={biometricBusy}
+                className={cn(
+                  'mt-3 w-full rounded-2xl px-4 py-3 text-left text-sm font-medium transition-colors',
+                  biometricEnabled
+                    ? 'bg-slate-100 text-slate-700 hover:bg-slate-200 dark:bg-white/10 dark:text-slate-100 dark:hover:bg-white/15'
+                    : 'bg-slate-900 text-white hover:bg-slate-800 dark:bg-white dark:text-slate-950 dark:hover:bg-slate-100',
+                  biometricBusy && 'cursor-not-allowed opacity-60'
+                )}
+              >
+                {biometricBusy
+                  ? 'Подключаем системную биометрию...'
+                  : biometricEnabled
+                    ? 'Отключить быстрый вход'
+                    : `Включить вход через ${biometricLabel}`}
+              </button>
+            ) : (
+              <div className="mt-3 rounded-2xl border border-dashed border-slate-300 px-3 py-2 text-xs text-slate-500 dark:border-white/10 dark:text-slate-400">
+                На этом устройстве системная биометрия для PWA сейчас недоступна.
+              </div>
+            )}
+          </div>
+
           <div className="space-y-2">
             <button
               type="button"
@@ -165,14 +230,7 @@ export function SettingsTabContent({
             {isAuthenticated && (
               <button
                 type="button"
-                onClick={() => {
-                  window.localStorage.removeItem('userId');
-                  window.localStorage.removeItem('authToken');
-                  persistAuthUserContact(null);
-                  setIsAuthenticated(false);
-                  setUserProfile(null);
-                  openTab('auth');
-                }}
+                onClick={onLogout}
                 className="w-full rounded-2xl bg-white px-4 py-3 text-left text-sm font-medium text-red-600 transition-colors hover:bg-red-50 dark:bg-transparent dark:text-red-400 dark:hover:bg-transparent"
               >
                 Выйти
