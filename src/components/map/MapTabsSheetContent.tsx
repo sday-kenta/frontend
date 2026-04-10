@@ -63,7 +63,9 @@ type MapTabsSheetContentProps = {
   } | null>>;
   isAuthenticated: boolean;
   pushNotificationsEnabled: boolean;
-  setPushNotificationsEnabled: React.Dispatch<React.SetStateAction<boolean>>;
+  pushNotificationsBusy: boolean;
+  pushNotificationsStatusMessage: string | null;
+  onTogglePushNotifications: () => void;
   emailNotificationsEnabled: boolean;
   setEmailNotificationsEnabled: React.Dispatch<React.SetStateAction<boolean>>;
   biometricEnabled: boolean;
@@ -115,7 +117,9 @@ export const MapTabsSheetContent = memo(function MapTabsSheetContent({
   setUserProfile,
   isAuthenticated,
   pushNotificationsEnabled,
-  setPushNotificationsEnabled,
+  pushNotificationsBusy,
+  pushNotificationsStatusMessage,
+  onTogglePushNotifications,
   emailNotificationsEnabled,
   setEmailNotificationsEnabled,
   biometricEnabled,
@@ -193,7 +197,9 @@ export const MapTabsSheetContent = memo(function MapTabsSheetContent({
           isAuthenticated={isAuthenticated}
           onLogout={onLogout}
           pushNotificationsEnabled={pushNotificationsEnabled}
-          setPushNotificationsEnabled={setPushNotificationsEnabled}
+          pushNotificationsBusy={pushNotificationsBusy}
+          pushNotificationsStatusMessage={pushNotificationsStatusMessage}
+          onTogglePushNotifications={onTogglePushNotifications}
           emailNotificationsEnabled={emailNotificationsEnabled}
           setEmailNotificationsEnabled={setEmailNotificationsEnabled}
           biometricEnabled={biometricEnabled}

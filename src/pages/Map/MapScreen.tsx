@@ -30,6 +30,19 @@ import {
   type BiometricSupport,
 } from '@/lib/biometricAuth';
 import { AUTH_SESSION_CLEARED_EVENT, clearStoredAuthSession } from '@/lib/authSession';
+import {
+  detachPushDeviceForLogout,
+  disablePushNotifications,
+  subscribeToForegroundPushMessages,
+  syncPushNotifications,
+} from '@/lib/pushNotifications';
+import {
+  extractPushNotificationNavigation,
+  isPushNotificationClientMessage,
+  readPushNotificationNavigationFromSearch,
+  PUSH_DEEP_LINK_QUERY_PARAM,
+  PUSH_INCIDENT_QUERY_PARAM,
+} from '@/lib/pushNotificationsShared';
 
 const ProfileTab = ProfileTabComponent as ComponentType<{
   userId: number;
@@ -405,9 +418,11 @@ export default function MapScreen() {
   const [sheetMode, setSheetMode] = useState<SheetMode>(null);
   const [settingsView, setSettingsView] = useState<'main' | 'about' | 'feedback' | 'profile'>('main');
   const [pushNotificationsEnabled, setPushNotificationsEnabled] = useState(() => {
-    if (typeof window === 'undefined') return true;
-    return window.localStorage.getItem('notifications-push') !== 'false';
+    if (typeof window === 'undefined') return false;
+    return window.localStorage.getItem('notifications-push') === 'true';
   });
+  const [pushNotificationsBusy, setPushNotificationsBusy] = useState(false);
+  const [pushNotificationsStatusMessage, setPushNotificationsStatusMessage] = useState<string | null>(null);
   const [emailNotificationsEnabled, setEmailNotificationsEnabled] = useState(() => {
     if (typeof window === 'undefined') return true;
     return window.localStorage.getItem('notifications-email') !== 'false';
@@ -460,6 +475,10 @@ export default function MapScreen() {
   const [selectedProfileStatusFilter, setSelectedProfileStatusFilter] = useState<string>('Все');
   const [selectedProfileCategoryFilter, setSelectedProfileCategoryFilter] = useState<string>('Все');
   const [renderExpandedSearchContent, setRenderExpandedSearchContent] = useState(false);
+  const [pendingPushIncidentId, setPendingPushIncidentId] = useState<number | null>(() => {
+    if (typeof window === 'undefined') return null;
+    return readPushNotificationNavigationFromSearch(window.location.search)?.incidentId ?? null;
+  });
   const reportFlowOpen = sheetMode === 'rubric';
   const profileScrollRef = useRef<HTMLDivElement | null>(null);
   const profileTouchStartYRef = useRef<number | null>(null);
@@ -498,6 +517,8 @@ export default function MapScreen() {
     const handleSessionCleared = () => {
       setIsAuthenticated(false);
       setUserProfile(null);
+      setPushNotificationsBusy(false);
+      setPushNotificationsStatusMessage(null);
       setBiometricEnabled(false);
       setBiometricUnlockRequired(false);
       setBiometricUnlockError(null);
@@ -2111,21 +2132,52 @@ export default function MapScreen() {
     inputRef.current?.focus();
   }, []);
 
+  const handleTogglePushNotifications = useCallback(() => {
+    void (async () => {
+      setPushNotificationsBusy(true);
+
+      try {
+        if (pushNotificationsEnabled) {
+          const result = await disablePushNotifications();
+          setPushNotificationsEnabled(false);
+          setPushNotificationsStatusMessage(result.message);
+          return;
+        }
+
+        const result = await syncPushNotifications({ requestPermission: true });
+        setPushNotificationsEnabled(result.ok);
+        setPushNotificationsStatusMessage(result.message);
+      } finally {
+        setPushNotificationsBusy(false);
+      }
+    })();
+  }, [pushNotificationsEnabled]);
+
   const handleLogout = useCallback(() => {
-    disableBiometricQuickUnlock();
-    persistAuthUserContact(null);
-    clearStoredAuthSession();
-    setIsAuthenticated(false);
-    setUserProfile(null);
-    setBiometricEnabled(false);
-    setBiometricUnlockRequired(false);
-    setBiometricUnlockError(null);
-    setBiometricPromptOpen(false);
-    setBiometricSetupError(null);
-    setOfferBiometricAfterLogin(false);
-    setSettingsView('main');
-    setActiveTab('auth');
-    setSheetMode('tabs');
+    void (async () => {
+      try {
+        await detachPushDeviceForLogout();
+      } catch {
+        // Best effort: logout should continue even if push cleanup fails.
+      }
+
+      disableBiometricQuickUnlock();
+      persistAuthUserContact(null);
+      clearStoredAuthSession();
+      setPushNotificationsStatusMessage(null);
+      setPushNotificationsBusy(false);
+      setIsAuthenticated(false);
+      setUserProfile(null);
+      setBiometricEnabled(false);
+      setBiometricUnlockRequired(false);
+      setBiometricUnlockError(null);
+      setBiometricPromptOpen(false);
+      setBiometricSetupError(null);
+      setOfferBiometricAfterLogin(false);
+      setSettingsView('main');
+      setActiveTab('auth');
+      setSheetMode('tabs');
+    })();
   }, []);
 
   const handleEnableBiometric = useCallback(async () => {
@@ -2198,6 +2250,117 @@ export default function MapScreen() {
     setActiveTab('home');
     setSheetMode(null);
   }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const navigation = readPushNotificationNavigationFromSearch(window.location.search);
+    if (!navigation) {
+      return;
+    }
+
+    const url = new URL(window.location.href);
+    url.searchParams.delete(PUSH_INCIDENT_QUERY_PARAM);
+    url.searchParams.delete(PUSH_DEEP_LINK_QUERY_PARAM);
+    window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
+  }, []);
+
+  useEffect(() => {
+    if (!isAuthenticated || !pushNotificationsEnabled) {
+      return;
+    }
+
+    let cancelled = false;
+
+    void syncPushNotifications({ requestPermission: false }).then((result) => {
+      if (!cancelled) {
+        setPushNotificationsStatusMessage(result.message);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isAuthenticated, pushNotificationsEnabled]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !pushNotificationsEnabled) {
+      return;
+    }
+
+    let cancelled = false;
+    let unsubscribe: (() => void) | null = null;
+
+    void subscribeToForegroundPushMessages((message) => {
+      if (cancelled) return;
+
+      const summary = [message.title, message.body].filter(Boolean).join(': ');
+      if (summary) {
+        setReportFeedback(summary);
+      }
+    }).then((cleanup) => {
+      if (cancelled) {
+        cleanup?.();
+        return;
+      }
+
+      unsubscribe = cleanup;
+    });
+
+    return () => {
+      cancelled = true;
+      unsubscribe?.();
+    };
+  }, [isAuthenticated, pushNotificationsEnabled]);
+
+  useEffect(() => {
+    if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) {
+      return;
+    }
+
+    const handleServiceWorkerMessage = (event: MessageEvent<unknown>) => {
+      if (!isPushNotificationClientMessage(event.data)) {
+        return;
+      }
+
+      const navigation = extractPushNotificationNavigation(event.data.payload);
+      if (!navigation) {
+        return;
+      }
+
+      if (navigation.incidentId != null) {
+        setPendingPushIncidentId(navigation.incidentId);
+      }
+
+      const summary = [navigation.title, navigation.body].filter(Boolean).join(': ');
+      if (summary) {
+        setReportFeedback(summary);
+      }
+    };
+
+    navigator.serviceWorker.addEventListener('message', handleServiceWorkerMessage);
+    return () => {
+      navigator.serviceWorker.removeEventListener('message', handleServiceWorkerMessage);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (pendingPushIncidentId == null) {
+      return;
+    }
+
+    const ownIncident = myIncidents.find((incident) => incident.id === pendingPushIncidentId);
+    const incidentPreview =
+      incidentPreviews.find((incident) => incident.id === pendingPushIncidentId) ??
+      (ownIncident ? mapIncidentToPreview(ownIncident) : null);
+
+    if (!incidentPreview) {
+      return;
+    }
+
+    focusIncidentOnMap(incidentPreview);
+    setPendingPushIncidentId(null);
+  }, [focusIncidentOnMap, incidentPreviews, myIncidents, pendingPushIncidentId]);
 
   const noopCloseSheet = useCallback(() => {}, []);
   const topMapMessage = reportFeedback || dataError;
@@ -2498,7 +2661,9 @@ export default function MapScreen() {
                 setUserProfile={setUserProfile}
                 isAuthenticated={isAuthenticated}
                 pushNotificationsEnabled={pushNotificationsEnabled}
-                setPushNotificationsEnabled={setPushNotificationsEnabled}
+                pushNotificationsBusy={pushNotificationsBusy}
+                pushNotificationsStatusMessage={pushNotificationsStatusMessage}
+                onTogglePushNotifications={handleTogglePushNotifications}
                 emailNotificationsEnabled={emailNotificationsEnabled}
                 setEmailNotificationsEnabled={setEmailNotificationsEnabled}
                 biometricEnabled={biometricEnabled}

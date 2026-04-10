@@ -3,6 +3,7 @@ import { clearStoredAuthSession } from '@/lib/authSession';
 export type UserRole = 'user' | 'admin' | 'premium';
 export type IncidentStatus = 'draft' | 'published' | 'all';
 export type EmailCodePurpose = 'register' | 'change_email';
+export type PushDevicePlatform = 'android' | 'ios';
 
 export interface User {
   id: number;
@@ -149,6 +150,13 @@ export interface CreateIncidentRequest {
 }
 
 export type UpdateIncidentRequest = Partial<CreateIncidentRequest>;
+
+export interface RegisterPushDeviceRequest {
+  device_id: string;
+  platform: PushDevicePlatform;
+  fcm_token: string;
+  app_version?: string;
+}
 
 export interface Session {
   userId?: number;
@@ -589,6 +597,19 @@ export class ApiClient {
     return this.request<void>(`/incidents/${id}/document/email`, {
       method: 'POST',
       body: JSON.stringify(email ? { email } : {}),
+    });
+  }
+
+  registerPushDevice(payload: RegisterPushDeviceRequest) {
+    return this.request<void>('/push/devices', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  deletePushDevice(deviceId: string) {
+    return this.request<void>(`/push/devices/${encodeURIComponent(deviceId)}`, {
+      method: 'DELETE',
     });
   }
 }
