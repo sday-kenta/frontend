@@ -44,10 +44,10 @@ export function BiometricEntryGate({
               <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-sky-600 dark:text-sky-300" />
               <div className="space-y-1">
                 <p className="text-sm font-medium text-slate-900 dark:text-white">
-                  Вход через {label}
+                  Сканирование через {label}
                 </p>
                 <p className="text-sm leading-6 text-slate-600 dark:text-slate-300">
-                  Приложение попросит системную биометрию устройства и откроет сохранённую сессию на этом устройстве.
+                  Приложение сразу запускает системную биометрию устройства и открывает сохранённую сессию на этом устройстве.
                 </p>
               </div>
             </div>
@@ -66,7 +66,7 @@ export function BiometricEntryGate({
               disabled={busy}
               className="flex w-full items-center justify-center rounded-2xl bg-slate-950 px-4 py-3 text-sm font-medium text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-white dark:text-slate-950 dark:hover:bg-slate-100"
             >
-              {busy ? 'Проверяем биометрию...' : `Войти через ${label}`}
+              {busy ? 'Запускаем сканирование...' : 'Повторить сканирование'}
             </button>
 
             <button

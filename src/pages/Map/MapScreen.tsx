@@ -440,6 +440,7 @@ export default function MapScreen() {
   const [biometricSetupBusy, setBiometricSetupBusy] = useState(false);
   const [biometricSetupError, setBiometricSetupError] = useState<string | null>(null);
   const [offerBiometricAfterLogin, setOfferBiometricAfterLogin] = useState(false);
+  const biometricAutoUnlockStartedRef = useRef(false);
   const [isAvatarUploading, setIsAvatarUploading] = useState(false);
   const [localAvatarPreviewUrl, setLocalAvatarPreviewUrl] = useState<string | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -2152,6 +2153,20 @@ export default function MapScreen() {
       setBiometricUnlocking(false);
     }
   }, []);
+
+  useEffect(() => {
+    if (!biometricUnlockRequired) {
+      biometricAutoUnlockStartedRef.current = false;
+      return;
+    }
+
+    if (biometricAutoUnlockStartedRef.current || biometricUnlocking) {
+      return;
+    }
+
+    biometricAutoUnlockStartedRef.current = true;
+    void handleBiometricUnlock();
+  }, [biometricUnlockRequired, biometricUnlocking, handleBiometricUnlock]);
 
   const handleAuthenticated = useCallback((payload: MapUserProfile | null) => {
     if (!payload) return;
