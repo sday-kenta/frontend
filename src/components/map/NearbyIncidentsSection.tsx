@@ -1,5 +1,4 @@
 import { useEffect, useRef } from 'react';
-import { MapPin } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 type BaseIncident = {
@@ -17,6 +16,16 @@ type NearbyIncidentsSectionProps<T extends BaseIncident> = {
   isFullHeight: boolean;
   autoFocusScroll?: boolean;
 };
+
+function getNearbyIncidentCategoryIcon(category: string) {
+  const normalized = category.toLowerCase();
+
+  if (/\u0442\u043e\u0440\u0433\u043e\u0432|\u043c\u0430\u0433\u0430\u0437|\u043f\u0440\u043e\u0441\u0440\u043e\u0447/u.test(normalized)) {
+    return '\u{1F6D2}';
+  }
+
+  return getIncidentCategoryIcon(category);
+}
 
 function getIncidentCategoryTagClass(category: string) {
   const normalized = category.toLowerCase();
@@ -109,7 +118,7 @@ export function NearbyIncidentsSection<T extends BaseIncident>({
             className="flex w-full items-start gap-2.5 rounded-[12px] border border-border/70 bg-background/65 p-3 text-left transition-colors hover:bg-muted/40"
           >
             <div className="mt-0.5 rounded-full border border-border/70 p-1.5 text-muted-foreground">
-              <MapPin className="h-3.5 w-3.5" />
+              <span className="text-base leading-none">{getNearbyIncidentCategoryIcon(incident.category)}</span>
             </div>
             <div className="min-w-0 flex-1">
               <div className="mb-1 flex items-center gap-1.5">
@@ -119,7 +128,7 @@ export function NearbyIncidentsSection<T extends BaseIncident>({
                     getIncidentCategoryTagClass(incident.category)
                   )}
                 >
-                  <span>{getIncidentCategoryIcon(incident.category)}</span>
+                  <span>{getNearbyIncidentCategoryIcon(incident.category)}</span>
                   {incident.category}
                 </span>
                 <span
