@@ -78,6 +78,8 @@ type IncidentPreview = {
 
 const DEBOUNCE_MS = 400;
 const REVERSE_GEOCODE_HOUSE_MAX_DISTANCE_METERS = 35;
+const COLLAPSED_SEARCH_PANEL_HEIGHT_PX = 160;
+const HALF_SEARCH_PANEL_HEIGHT_RATIO = 0.44;
 
 const MAP_TILES_URL =
   import.meta.env.VITE_MAP_TILES_URL ?? 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
@@ -670,10 +672,70 @@ export default function MapScreen() {
   const searchPanelDragRafRef = useRef<number | null>(null);
   const searchPanelPendingHeightRef = useRef<number | null>(null);
   const expandedSearchContentRef = useRef<HTMLDivElement | null>(null);
+  const viewportSizeRef = useRef({
+    width: typeof window === 'undefined' ? 0 : window.innerWidth,
+    height: typeof window === 'undefined' ? COLLAPSED_SEARCH_PANEL_HEIGHT_PX : window.innerHeight,
+  });
+  const [viewportHeight, setViewportHeight] = useState(viewportSizeRef.current.height);
 
   useEffect(() => {
     centerRef.current = center;
   }, [center]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof document === 'undefined') {
+      return undefined;
+    }
+
+    const isKeyboardFocusableField = (element: Element | null) => {
+      if (element instanceof HTMLTextAreaElement || element instanceof HTMLSelectElement) {
+        return true;
+      }
+
+      if (element instanceof HTMLInputElement) {
+        return !['button', 'checkbox', 'file', 'hidden', 'radio', 'range', 'reset', 'submit'].includes(element.type);
+      }
+
+      return element instanceof HTMLElement && element.isContentEditable;
+    };
+
+    const syncViewportHeight = () => {
+      const nextWidth = window.innerWidth;
+      const nextHeight = window.innerHeight;
+      const currentViewport = viewportSizeRef.current;
+      const activeElement = document.activeElement;
+      const keyboardResizeLikely =
+        isKeyboardFocusableField(activeElement) &&
+        Math.abs(nextWidth - currentViewport.width) < 32 &&
+        nextHeight < currentViewport.height;
+
+      if (keyboardResizeLikely) {
+        return;
+      }
+
+      if (nextWidth === currentViewport.width && nextHeight === currentViewport.height) {
+        return;
+      }
+
+      viewportSizeRef.current = { width: nextWidth, height: nextHeight };
+      setViewportHeight(nextHeight);
+    };
+
+    const handleResize = () => {
+      window.requestAnimationFrame(syncViewportHeight);
+    };
+
+    syncViewportHeight();
+
+    const visualViewport = window.visualViewport;
+    window.addEventListener('resize', handleResize);
+    visualViewport?.addEventListener('resize', handleResize);
+
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      visualViewport?.removeEventListener('resize', handleResize);
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -2243,11 +2305,14 @@ export default function MapScreen() {
   }, []);
 
   const getSearchPanelSnapHeightPx = useCallback((snap: SearchPanelSnap) => {
-    if (typeof window === 'undefined') return 160;
-    if (snap === 'full') return window.innerHeight;
-    if (snap === 'half') return window.innerHeight * 0.44;
-    return 160;
-  }, []);
+    const baseViewportHeight =
+      viewportHeight ||
+      (typeof window === 'undefined' ? COLLAPSED_SEARCH_PANEL_HEIGHT_PX : window.innerHeight);
+
+    if (snap === 'full') return baseViewportHeight;
+    if (snap === 'half') return baseViewportHeight * HALF_SEARCH_PANEL_HEIGHT_RATIO;
+    return COLLAPSED_SEARCH_PANEL_HEIGHT_PX;
+  }, [viewportHeight]);
 
   const getNearestSearchPanelSnap = useCallback((heightPx: number): SearchPanelSnap => {
     const points = [
@@ -2495,9 +2560,12 @@ export default function MapScreen() {
   }, []);
 
   const isAuthFullscreen = sheetMode === 'tabs' && activeTab === 'auth';
+  const stableViewportHeight = Math.max(viewportHeight, COLLAPSED_SEARCH_PANEL_HEIGHT_PX);
   const collapsedSearchPanelHeight = getSearchPanelSnapHeightPx('collapsed');
   const currentSearchPanelHeight = searchPanelDragHeight ?? getSearchPanelSnapHeightPx(searchPanelSnap);
   const mapControlsLiftPx = Math.max(0, currentSearchPanelHeight - collapsedSearchPanelHeight);
+  const tabsSheetHeightPx = Math.max(stableViewportHeight - 80, COLLAPSED_SEARCH_PANEL_HEIGHT_PX);
+  const markerSheetMaxHeightPx = Math.max(Math.round(stableViewportHeight * 0.65), 320);
 
   const handleProfileFabClick = useCallback(() => {
     if (isAuthenticated) {
@@ -2756,7 +2824,10 @@ export default function MapScreen() {
 
   if (!isAuthenticated) {
     return (
-      <div className="fixed inset-0 z-[1200] bg-background">
+      <div
+        className="fixed inset-x-0 top-0 z-[1200] bg-background"
+        style={{ height: `${stableViewportHeight}px` }}
+      >
         <AuthPanel
           onAuthenticated={handleAuthenticated}
           closeSheet={noopCloseSheet}
@@ -2766,7 +2837,10 @@ export default function MapScreen() {
   }
 
   return (
-    <div className="fixed inset-0 z-0">
+    <div
+      className="fixed inset-x-0 top-0 z-0 overflow-hidden"
+      style={{ height: `${stableViewportHeight}px` }}
+    >
       {topMapMessage && (
         <div className="pointer-events-none absolute left-1/2 top-4 z-[1300] -translate-x-1/2 rounded-full border border-border/70 bg-background/90 px-4 py-2 text-xs text-foreground shadow-lg backdrop-blur">
           {topMapMessage}
@@ -2867,6 +2941,7 @@ export default function MapScreen() {
 
       {/* Нижняя панель: только поиск */}
       <MapSearchPanel
+        viewportHeightPx={stableViewportHeight}
         searchPanelDragHeight={searchPanelDragHeight}
         searchPanelSnap={searchPanelSnap}
         isSearchPanelDragging={isSearchPanelDragging}
@@ -2994,14 +3069,21 @@ export default function MapScreen() {
           <div
             className={cn(
               isAuthFullscreen
-                ? 'rounded-t-[28px] rounded-b-none h-screen px-0 pt-0 pb-[max(env(safe-area-inset-bottom),12px)] flex flex-col bg-transparent'
+                ? 'rounded-t-[28px] rounded-b-none px-0 pt-0 pb-[max(env(safe-area-inset-bottom),12px)] flex flex-col bg-transparent'
                 : 'glass-dock rounded-t-[32px] rounded-b-none px-4 pt-3 pb-6 flex flex-col',
               sheetMode === 'marker'
-                ? 'max-h-[65vh] overflow-hidden'
+                ? 'overflow-hidden'
                 : isAuthFullscreen
                   ? 'overflow-hidden'
-                  : 'h-[calc(100vh-80px)] overflow-hidden'
+                  : 'overflow-hidden'
             )}
+            style={
+              sheetMode === 'marker'
+                ? { maxHeight: `${markerSheetMaxHeightPx}px` }
+                : isAuthFullscreen
+                  ? { height: `${stableViewportHeight}px` }
+                  : { height: `${tabsSheetHeightPx}px` }
+            }
           >
             {/* Drag handle */}
             {!isAuthFullscreen && (
