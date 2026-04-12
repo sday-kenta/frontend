@@ -81,7 +81,7 @@ const REVERSE_GEOCODE_HOUSE_MAX_DISTANCE_METERS = 35;
 const COLLAPSED_SEARCH_PANEL_HEIGHT_PX = 160;
 const MAP_CONTROLS_BOTTOM_OFFSET_PX = 170;
 const MAP_CONTROLS_HEIGHT_PX = 164;
-const MAP_CONTROLS_TOP_SAFE_PX = 88;
+const MAP_CONTROLS_TOP_SAFE_PX = 72;
 
 const MAP_TILES_URL =
   import.meta.env.VITE_MAP_TILES_URL ?? 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
@@ -2527,11 +2527,7 @@ export default function MapScreen() {
         searchPanelContentShowTimeoutRef.current = null;
       }
 
-      const showDelayMs = isSearchPanelDragging ? 180 : 110;
-      searchPanelContentShowTimeoutRef.current = setTimeout(() => {
-        setRenderExpandedSearchContent(true);
-        searchPanelContentShowTimeoutRef.current = null;
-      }, showDelayMs);
+      setRenderExpandedSearchContent(true);
       return;
     }
 
