@@ -23,6 +23,7 @@ export type TrustProgress = {
 
 export type IncidentSummary = {
   id: number;
+  userId: number;
   title: string;
   category: string;
   status: string;
