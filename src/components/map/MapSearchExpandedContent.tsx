@@ -8,6 +8,7 @@ type SearchPanelSnap = 'collapsed' | 'half' | 'full';
 
 type IncidentForPanel = {
   id: number;
+  userId: number;
   title: string;
   category: string;
   status: string;
@@ -22,6 +23,7 @@ type IncidentDetailsForPanel = {
 
 type NearbyIncident = {
   id: number;
+  userId: number;
   title: string;
   category: string;
   status: string;
@@ -60,6 +62,9 @@ type MapSearchExpandedContentProps = {
   canPublishSelectedIncident: boolean;
   publishSelectedIncidentPending: boolean;
   handlePublishSelectedIncident: () => void;
+  canDeleteIncident: (incidentUserId?: number) => boolean;
+  deletingIncidentId: number | null;
+  handleDeleteIncident: (incident: Pick<NearbyIncident, 'id' | 'title' | 'userId'>) => void;
   filteredNearbyIncidents: NearbyIncident[];
   focusIncidentOnMap: (incident: NearbyIncident) => void;
   reportFlowOpen: boolean;
@@ -97,6 +102,9 @@ export const MapSearchExpandedContent = memo(function MapSearchExpandedContent({
   canPublishSelectedIncident,
   publishSelectedIncidentPending,
   handlePublishSelectedIncident,
+  canDeleteIncident,
+  deletingIncidentId,
+  handleDeleteIncident,
   filteredNearbyIncidents,
   focusIncidentOnMap,
   reportFlowOpen,
@@ -145,6 +153,9 @@ export const MapSearchExpandedContent = memo(function MapSearchExpandedContent({
           canPublishIncident={canPublishSelectedIncident}
           publishPending={publishSelectedIncidentPending}
           onPublishIncident={handlePublishSelectedIncident}
+          canDeleteIncident={canDeleteIncident(selectedMapIncident.userId)}
+          deletePending={deletingIncidentId === selectedMapIncident.id}
+          onDeleteIncident={() => handleDeleteIncident(selectedMapIncident)}
         />
       )}
 
@@ -182,6 +193,9 @@ export const MapSearchExpandedContent = memo(function MapSearchExpandedContent({
             isFullHeight={searchPanelSnap === 'full'}
             autoFocusScroll={false}
             onSelectIncident={focusIncidentOnMap}
+            canDeleteIncident={canDeleteIncident}
+            deletingIncidentId={deletingIncidentId}
+            onDeleteIncident={handleDeleteIncident}
           />
         </div>
       )}

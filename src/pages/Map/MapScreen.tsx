@@ -63,6 +63,7 @@ interface GeocodingResult {
 
 type IncidentPreview = {
   id: number;
+  userId: number;
   title: string;
   category: string;
   status: string;
@@ -295,6 +296,7 @@ function mapIncidentToPreview(incident: import('@/lib/api').Incident): IncidentP
 
   return {
     id: incident.id,
+    userId: incident.user_id,
     title: incident.title,
     category: incident.category_title || `Категория #${incident.category_id}`,
     status: getStatusLabel(incident.status),
@@ -595,6 +597,7 @@ export default function MapScreen() {
   const [dataError, setDataError] = useState<string | null>(null);
   const [reportSubmitting, setReportSubmitting] = useState(false);
   const [publishingSelectedIncidentId, setPublishingSelectedIncidentId] = useState<number | null>(null);
+  const [deletingIncidentId, setDeletingIncidentId] = useState<number | null>(null);
   const [reportFeedback, setReportFeedback] = useState<string | null>(null);
   const [selectedRubric, setSelectedRubric] = useState<Rubric | null>(null);
   const [rubricStep, setRubricStep] = useState<'select' | 'create' | 'preview'>('select');
@@ -622,6 +625,17 @@ export default function MapScreen() {
   const [isAvatarUploading, setIsAvatarUploading] = useState(false);
   const [localAvatarPreviewUrl, setLocalAvatarPreviewUrl] = useState<string | null>(null);
   const isAdmin = userProfile?.role === 'admin';
+  const currentUserId = useMemo(() => {
+    if (typeof userProfile?.id === 'number') {
+      return userProfile.id;
+    }
+    if (typeof window === 'undefined') {
+      return null;
+    }
+
+    const storedUserId = Number(window.localStorage.getItem('userId'));
+    return Number.isFinite(storedUserId) && storedUserId > 0 ? storedUserId : null;
+  }, [userProfile?.id]);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const profileAvatarInputRef = useRef<HTMLInputElement | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -1375,6 +1389,17 @@ export default function MapScreen() {
     setMyIncidents(mine);
   }, [isAdmin, isAuthenticated]);
 
+  const canDeleteIncident = useCallback((incidentUserId?: number) => {
+    if (!isAuthenticated) {
+      return false;
+    }
+    if (isAdmin) {
+      return true;
+    }
+
+    return typeof incidentUserId === 'number' && currentUserId != null && incidentUserId === currentUserId;
+  }, [currentUserId, isAdmin, isAuthenticated]);
+
   useEffect(() => {
     if (!isAuthenticated) {
       setMyIncidents([]);
@@ -1492,6 +1517,62 @@ export default function MapScreen() {
       setPublishingSelectedIncidentId(null);
     }
   }, [isAdmin, refreshIncidents, selectedMapIncident, selectedMapIncidentId]);
+
+  const handleDeleteIncident = useCallback(async (incident: Pick<IncidentPreview, 'id' | 'title' | 'userId'>) => {
+    if (deletingIncidentId != null || !canDeleteIncident(incident.userId)) {
+      return;
+    }
+
+    const title = incident.title.trim() || `#${incident.id}`;
+    const isForeignIncident = isAdmin && currentUserId != null && incident.userId !== currentUserId;
+    const confirmMessage = isForeignIncident
+      ? `Удалить чужое обращение «${title}»? Это действие нельзя отменить.`
+      : `Удалить обращение «${title}»? Это действие нельзя отменить.`;
+
+    if (typeof window !== 'undefined' && !window.confirm(confirmMessage)) {
+      return;
+    }
+
+    setDeletingIncidentId(incident.id);
+    setReportFeedback(null);
+
+    try {
+      await api.deleteIncident(incident.id);
+      delete INCIDENT_DETAILS[incident.id];
+
+      if (selectedMapIncidentId === incident.id) {
+        setSelectedMapIncidentId(null);
+      }
+      if (pendingPushIncidentId === incident.id) {
+        setPendingPushIncidentId(null);
+      }
+      if (editingIncidentId === incident.id) {
+        setEditingIncidentId(null);
+        setSelectedRubric(null);
+        setRubricStep('select');
+        setReportTitle('');
+        setReportText('');
+        setReportPhotos([]);
+        setExistingReportPhotoPreviews([]);
+      }
+
+      await refreshIncidents();
+      setReportFeedback('Обращение удалено.');
+    } catch (error) {
+      setReportFeedback(error instanceof Error ? error.message : 'Не удалось удалить обращение.');
+    } finally {
+      setDeletingIncidentId(null);
+    }
+  }, [
+    canDeleteIncident,
+    currentUserId,
+    deletingIncidentId,
+    editingIncidentId,
+    isAdmin,
+    pendingPushIncidentId,
+    refreshIncidents,
+    selectedMapIncidentId,
+  ]);
 
   const openDraftForEditing = useCallback(async (incidentId: number) => {
     try {
@@ -2847,6 +2928,9 @@ export default function MapScreen() {
             canPublishSelectedIncident={Boolean(isAdmin && selectedMapIncident && isReviewStatus(selectedMapIncident.status))}
             publishSelectedIncidentPending={publishingSelectedIncidentId === selectedMapIncident?.id}
             handlePublishSelectedIncident={handlePublishSelectedIncident}
+            canDeleteIncident={canDeleteIncident}
+            deletingIncidentId={deletingIncidentId}
+            handleDeleteIncident={handleDeleteIncident}
             filteredNearbyIncidents={filteredNearbyIncidents}
             focusIncidentOnMap={focusIncidentOnMap}
             reportFlowOpen={reportFlowOpen}
@@ -2970,6 +3054,9 @@ export default function MapScreen() {
                 getProfileIncidentCategoryTagClass={getProfileIncidentCategoryTagClass}
                 getProfileIncidentStatusTagClass={getProfileIncidentStatusTagClass}
                 getStatusIcon={getStatusIcon}
+                canDeleteIncident={canDeleteIncident}
+                deletingIncidentId={deletingIncidentId}
+                handleDeleteIncident={handleDeleteIncident}
                 incidentDetails={INCIDENT_DETAILS}
                 nearbyIncidentsById={nearbyIncidentsById}
                 onAuthenticated={handleAuthenticated}

@@ -1,7 +1,8 @@
-import { Loader2, MapPin, Send } from 'lucide-react';
+import { Loader2, MapPin, Send, Trash2 } from 'lucide-react';
 
 type SelectedIncident = {
   id: number;
+  userId: number;
   title: string;
   category: string;
   status: string;
@@ -22,6 +23,9 @@ type SelectedIncidentPanelProps = {
   canPublishIncident: boolean;
   publishPending: boolean;
   onPublishIncident: () => void;
+  canDeleteIncident: boolean;
+  deletePending: boolean;
+  onDeleteIncident: () => void;
 };
 
 export function SelectedIncidentPanel({
@@ -32,6 +36,9 @@ export function SelectedIncidentPanel({
   canPublishIncident,
   publishPending,
   onPublishIncident,
+  canDeleteIncident,
+  deletePending,
+  onDeleteIncident,
 }: SelectedIncidentPanelProps) {
   return (
     <div className="p-1">
@@ -82,9 +89,10 @@ export function SelectedIncidentPanel({
               ))}
             </div>
           ) : null}
-          {canPublishIncident ? (
-            <div className="mt-4">
-              <button
+          {canPublishIncident || canDeleteIncident ? (
+            <div className="mt-4 flex flex-wrap gap-2">
+              {canPublishIncident ? (
+                <button
                 type="button"
                 onClick={onPublishIncident}
                 disabled={publishPending}
@@ -101,7 +109,28 @@ export function SelectedIncidentPanel({
                     Опубликовать
                   </>
                 )}
-              </button>
+                </button>
+              ) : null}
+              {canDeleteIncident ? (
+                <button
+                  type="button"
+                  onClick={onDeleteIncident}
+                  disabled={deletePending}
+                  className="inline-flex items-center gap-2 rounded-[20px] border border-red-500/30 bg-red-500/10 px-4 py-2.5 text-sm font-semibold text-red-700 transition hover:bg-red-500/15 disabled:cursor-not-allowed disabled:opacity-60 dark:text-red-200"
+                >
+                  {deletePending ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Удаляем...
+                    </>
+                  ) : (
+                    <>
+                      <Trash2 className="h-4 w-4" />
+                      Удалить
+                    </>
+                  )}
+                </button>
+              ) : null}
             </div>
           ) : null}
         </div>
