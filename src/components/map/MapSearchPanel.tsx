@@ -6,6 +6,7 @@ type MapSearchPanelProps = {
   viewportHeightPx: number;
   searchPanelDragHeight: number | null;
   searchPanelSnap: SearchPanelSnap;
+  isInputFocused: boolean;
   isSearchPanelDragging: boolean;
   onTouchStart: TouchEventHandler<HTMLDivElement>;
   onTouchMove: TouchEventHandler<HTMLDivElement>;
@@ -17,6 +18,7 @@ export const MapSearchPanel = memo(function MapSearchPanel({
   viewportHeightPx,
   searchPanelDragHeight,
   searchPanelSnap,
+  isInputFocused,
   isSearchPanelDragging,
   onTouchStart,
   onTouchMove,
@@ -24,6 +26,7 @@ export const MapSearchPanel = memo(function MapSearchPanel({
   children,
 }: MapSearchPanelProps) {
   const stableViewportHeightPx = Math.max(viewportHeightPx, 160);
+  const focusedCompactHeightPx = Math.min(stableViewportHeightPx, 240);
 
   return (
     <div className="absolute inset-x-0 bottom-0 z-[900]">
@@ -35,7 +38,9 @@ export const MapSearchPanel = memo(function MapSearchPanel({
               ? `${searchPanelDragHeight}px`
               : searchPanelSnap === 'full'
                 ? `${stableViewportHeightPx}px`
-                : '160px',
+                : isInputFocused
+                  ? `${focusedCompactHeightPx}px`
+                  : '160px',
           paddingBottom:
             searchPanelSnap === 'collapsed'
               ? 'max(env(safe-area-inset-bottom),16px)'

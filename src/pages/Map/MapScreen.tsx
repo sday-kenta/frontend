@@ -2343,6 +2343,11 @@ export default function MapScreen() {
     isSearchInputFocused ? visibleViewportHeight : stableViewportHeight,
     COLLAPSED_SEARCH_PANEL_HEIGHT_PX
   );
+  const isCompactSearchMode =
+    isSearchInputFocused &&
+    searchPanelSnap === 'collapsed' &&
+    selectedMapIncidentId === null &&
+    !reportFlowOpen;
   const collapsedSearchPanelHeight = getSearchPanelSnapHeightPx('collapsed');
   const currentSearchPanelHeight = searchPanelDragHeight ?? getSearchPanelSnapHeightPx(searchPanelSnap);
 
@@ -2651,7 +2656,6 @@ export default function MapScreen() {
 
   const handleSearchInputFocus = useCallback(() => {
     setIsSearchInputFocused(true);
-    setSearchPanelSnap('full');
     if (suggestions.length > 0) {
       setShowSuggestions(true);
     }
@@ -3043,6 +3047,7 @@ export default function MapScreen() {
         viewportHeightPx={effectiveViewportHeight}
         searchPanelDragHeight={searchPanelDragHeight}
         searchPanelSnap={searchPanelSnap}
+        isInputFocused={isCompactSearchMode}
         isSearchPanelDragging={isSearchPanelDragging}
         onTouchStart={handleSearchPanelTouchStart}
         onTouchMove={handleSearchPanelTouchMove}
@@ -3062,14 +3067,14 @@ export default function MapScreen() {
             onCollapse={collapseSearchPanel}
           />
 
-          {!selectedMapIncident && !reportFlowOpen && (
+          {!selectedMapIncident && !reportFlowOpen && !isSearchInputFocused && (
             <div className="mt-1.5 flex items-center justify-between px-1 text-[11px] text-muted-foreground">
               <span className="line-clamp-1">Поиск по адресам, рубрикам и точкам рядом</span>
               <span className="shrink-0">{nearbyIncidents.length} рядом</span>
             </div>
           )}
 
-          {!selectedMapIncident && !reportFlowOpen && (
+          {!selectedMapIncident && !reportFlowOpen && !isSearchInputFocused && (
             <QuickSearchChips
               chips={quickSearchChips}
               selectedChip={selectedMapTagFilter}
@@ -3083,7 +3088,9 @@ export default function MapScreen() {
               suggestionsRef={suggestionsRef}
               suggestions={suggestions}
               maxHeightClassName={
-                searchPanelSnap === 'full'
+                isCompactSearchMode
+                  ? 'max-h-40'
+                  : searchPanelSnap === 'full'
                   ? 'max-h-96'
                   : 'max-h-60'
               }
