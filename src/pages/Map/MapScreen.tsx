@@ -79,7 +79,6 @@ type IncidentPreview = {
 const DEBOUNCE_MS = 400;
 const REVERSE_GEOCODE_HOUSE_MAX_DISTANCE_METERS = 35;
 const COLLAPSED_SEARCH_PANEL_HEIGHT_PX = 160;
-const HALF_SEARCH_PANEL_HEIGHT_RATIO = 0.44;
 
 const MAP_TILES_URL =
   import.meta.env.VITE_MAP_TILES_URL ?? 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
@@ -526,7 +525,7 @@ async function searchAddress(q: string): Promise<GeocodingResult[]> {
 
 type Tab = 'home' | 'my' | 'all' | 'profile' | 'settings' | 'auth';
 type SheetMode = 'tabs' | 'marker' | 'rubric' | null;
-type SearchPanelSnap = 'collapsed' | 'half' | 'full';
+type SearchPanelSnap = 'collapsed' | 'full';
 type Rubric = {
   id: number;
   title: string;
@@ -1317,7 +1316,7 @@ export default function MapScreen() {
 
   const handleQuickSearch = useCallback((value: string) => {
     setSelectedMapTagFilter((prev) => (prev === value ? null : value));
-    setSearchPanelSnap((prev) => (prev === 'collapsed' ? 'half' : prev));
+    setSearchPanelSnap('full');
     setShowSuggestions(false);
   }, []);
 
@@ -2310,22 +2309,14 @@ export default function MapScreen() {
       (typeof window === 'undefined' ? COLLAPSED_SEARCH_PANEL_HEIGHT_PX : window.innerHeight);
 
     if (snap === 'full') return baseViewportHeight;
-    if (snap === 'half') return baseViewportHeight * HALF_SEARCH_PANEL_HEIGHT_RATIO;
     return COLLAPSED_SEARCH_PANEL_HEIGHT_PX;
   }, [viewportHeight]);
 
   const getNearestSearchPanelSnap = useCallback((heightPx: number): SearchPanelSnap => {
-    const points = [
-      { snap: 'collapsed' as SearchPanelSnap, height: getSearchPanelSnapHeightPx('collapsed') },
-      { snap: 'half' as SearchPanelSnap, height: getSearchPanelSnapHeightPx('half') },
-      { snap: 'full' as SearchPanelSnap, height: getSearchPanelSnapHeightPx('full') },
-    ];
-
-    return points.reduce((best, point) => {
-      const bestDiff = Math.abs(best.height - heightPx);
-      const currentDiff = Math.abs(point.height - heightPx);
-      return currentDiff < bestDiff ? point : best;
-    }).snap;
+    const collapsedHeight = getSearchPanelSnapHeightPx('collapsed');
+    const fullHeight = getSearchPanelSnapHeightPx('full');
+    const midpoint = collapsedHeight + (fullHeight - collapsedHeight) * 0.42;
+    return heightPx >= midpoint ? 'full' : 'collapsed';
   }, [getSearchPanelSnapHeightPx]);
 
   const handleSearchPanelTouchStart = useCallback((event: React.TouchEvent<HTMLDivElement>) => {
@@ -2592,7 +2583,7 @@ export default function MapScreen() {
   }, [isAuthenticated, openTab]);
 
   const handleSearchInputFocus = useCallback(() => {
-    setSearchPanelSnap((prev) => (prev === 'collapsed' ? 'half' : prev));
+    setSearchPanelSnap('full');
     if (suggestions.length > 0) {
       setShowSuggestions(true);
     }
@@ -3056,9 +3047,7 @@ export default function MapScreen() {
               maxHeightClassName={
                 searchPanelSnap === 'full'
                   ? 'max-h-96'
-                  : searchPanelSnap === 'half'
-                    ? 'max-h-72'
-                    : 'max-h-60'
+                  : 'max-h-60'
               }
               onSelectSuggestion={handleSelectSuggestion}
             />
