@@ -82,6 +82,13 @@ const COLLAPSED_SEARCH_PANEL_HEIGHT_PX = 160;
 const SEARCH_PANEL_TRANSITION_MS = 380;
 const SEARCH_PANEL_CLOSE_THRESHOLD_PX = 32;
 const SEARCH_PANEL_DRAG_START_THRESHOLD_PX = 6;
+const SEARCH_PANEL_FULL_TOP_GAP_PX = 18;
+const SEARCH_PANEL_COMPACT_MIN_HEIGHT_PX = 104;
+const SEARCH_PANEL_COMPACT_MAX_HEIGHT_PX = 320;
+const SEARCH_PANEL_COMPACT_CHROME_HEIGHT_PX = 104;
+const SEARCH_PANEL_SUGGESTION_ROW_HEIGHT_PX = 60;
+const SEARCH_PANEL_SUGGESTIONS_VISIBLE_LIMIT = 4;
+const SEARCH_PANEL_EXPANDED_SUGGESTIONS_MAX_HEIGHT_PX = 384;
 const MAP_CONTROLS_BOTTOM_OFFSET_PX = 170;
 const MAP_CONTROLS_HEIGHT_PX = 164;
 const MAP_CONTROLS_TOP_SAFE_PX = 48;
@@ -659,7 +666,6 @@ export default function MapScreen() {
   const [selectedMapIncidentId, setSelectedMapIncidentId] = useState<number | null>(null);
   const [selectedProfileStatusFilter, setSelectedProfileStatusFilter] = useState<string>('Все');
   const [selectedProfileCategoryFilter, setSelectedProfileCategoryFilter] = useState<string>('Все');
-  const [renderExpandedSearchContent, setRenderExpandedSearchContent] = useState(false);
   const [pendingPushIncidentId, setPendingPushIncidentId] = useState<number | null>(() => {
     if (typeof window === 'undefined') return null;
     return readPushNotificationNavigationFromSearch(window.location.search)?.incidentId ?? null;
@@ -672,9 +678,8 @@ export default function MapScreen() {
   const searchPanelTouchTargetRef = useRef<HTMLElement | null>(null);
   const searchPanelScrollableAtTopOnTouchStartRef = useRef(false);
   const searchPanelCanDragRef = useRef(false);
+  const searchPanelStartHeightRef = useRef(COLLAPSED_SEARCH_PANEL_HEIGHT_PX);
   const searchPanelSettleTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const searchPanelContentShowTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const searchPanelContentHideTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const searchPanelDragRafRef = useRef<number | null>(null);
   const searchPanelPendingHeightRef = useRef<number | null>(null);
   const expandedSearchContentRef = useRef<HTMLDivElement | null>(null);
@@ -687,6 +692,11 @@ export default function MapScreen() {
     typeof window === 'undefined'
       ? COLLAPSED_SEARCH_PANEL_HEIGHT_PX
       : Math.round(window.visualViewport?.height ?? window.innerHeight)
+  );
+  const [visibleViewportOffsetTop, setVisibleViewportOffsetTop] = useState(() =>
+    typeof window === 'undefined'
+      ? 0
+      : Math.round(window.visualViewport?.offsetTop ?? 0)
   );
   const [isSearchInputFocused, setIsSearchInputFocused] = useState(false);
 
@@ -715,6 +725,7 @@ export default function MapScreen() {
       const nextWidth = window.innerWidth;
       const nextHeight = window.innerHeight;
       const nextVisibleHeight = Math.round(window.visualViewport?.height ?? nextHeight);
+      const nextVisibleOffsetTop = Math.round(window.visualViewport?.offsetTop ?? 0);
       const currentViewport = viewportSizeRef.current;
       const activeElement = document.activeElement;
       const keyboardResizeLikely =
@@ -723,6 +734,7 @@ export default function MapScreen() {
         nextHeight < currentViewport.height;
 
       setVisibleViewportHeight((prev) => (prev === nextVisibleHeight ? prev : nextVisibleHeight));
+      setVisibleViewportOffsetTop((prev) => (prev === nextVisibleOffsetTop ? prev : nextVisibleOffsetTop));
 
       if (keyboardResizeLikely) {
         return;
@@ -745,10 +757,12 @@ export default function MapScreen() {
     const visualViewport = window.visualViewport;
     window.addEventListener('resize', handleResize);
     visualViewport?.addEventListener('resize', handleResize);
+    visualViewport?.addEventListener('scroll', handleResize);
 
     return () => {
       window.removeEventListener('resize', handleResize);
       visualViewport?.removeEventListener('resize', handleResize);
+      visualViewport?.removeEventListener('scroll', handleResize);
     };
   }, []);
 
@@ -2327,29 +2341,83 @@ export default function MapScreen() {
       COLLAPSED_SEARCH_PANEL_HEIGHT_PX
     );
 
-    if (snap === 'full') return baseViewportHeight;
+    if (snap === 'full') {
+      return Math.max(
+        COLLAPSED_SEARCH_PANEL_HEIGHT_PX,
+        baseViewportHeight - SEARCH_PANEL_FULL_TOP_GAP_PX
+      );
+    }
     return COLLAPSED_SEARCH_PANEL_HEIGHT_PX;
   }, [isSearchInputFocused, viewportHeight, visibleViewportHeight]);
 
-  const getNearestSearchPanelSnap = useCallback((heightPx: number): SearchPanelSnap => {
-    const collapsedHeight = getSearchPanelSnapHeightPx('collapsed');
-    const fullHeight = getSearchPanelSnapHeightPx('full');
-    const midpoint = collapsedHeight + (fullHeight - collapsedHeight) * 0.42;
-    return heightPx >= midpoint ? 'full' : 'collapsed';
-  }, [getSearchPanelSnapHeightPx]);
-
   const stableViewportHeight = Math.max(viewportHeight, COLLAPSED_SEARCH_PANEL_HEIGHT_PX);
-  const effectiveViewportHeight = Math.max(
-    isSearchInputFocused ? visibleViewportHeight : stableViewportHeight,
-    COLLAPSED_SEARCH_PANEL_HEIGHT_PX
+  const keyboardInsetHeight = Math.max(
+    0,
+    stableViewportHeight - (visibleViewportHeight + visibleViewportOffsetTop)
   );
+  const searchPanelBottomOffsetPx = isSearchInputFocused ? keyboardInsetHeight : 0;
   const isCompactSearchMode =
     isSearchInputFocused &&
     searchPanelSnap === 'collapsed' &&
     selectedMapIncidentId === null &&
     !reportFlowOpen;
-  const collapsedSearchPanelHeight = getSearchPanelSnapHeightPx('collapsed');
-  const currentSearchPanelHeight = searchPanelDragHeight ?? getSearchPanelSnapHeightPx(searchPanelSnap);
+  const searchSuggestionsVisible =
+    !selectedMapIncident &&
+    !reportFlowOpen &&
+    showSuggestions &&
+    suggestions.length > 0;
+  const compactSuggestionCount = Math.min(suggestions.length, SEARCH_PANEL_SUGGESTIONS_VISIBLE_LIMIT);
+  const compactSearchPanelHeight = isCompactSearchMode
+    ? (() => {
+        if (!searchSuggestionsVisible) {
+          return SEARCH_PANEL_COMPACT_MIN_HEIGHT_PX;
+        }
+
+        const desiredHeight =
+          SEARCH_PANEL_COMPACT_CHROME_HEIGHT_PX +
+          compactSuggestionCount * SEARCH_PANEL_SUGGESTION_ROW_HEIGHT_PX;
+        const maxAllowedHeight = Math.min(
+          SEARCH_PANEL_COMPACT_MAX_HEIGHT_PX,
+          Math.max(SEARCH_PANEL_COMPACT_MIN_HEIGHT_PX, visibleViewportHeight - 12)
+        );
+
+        return Math.max(
+          SEARCH_PANEL_COMPACT_MIN_HEIGHT_PX,
+          Math.min(desiredHeight, maxAllowedHeight)
+        );
+      })()
+    : COLLAPSED_SEARCH_PANEL_HEIGHT_PX;
+  const collapsedSearchPanelHeight = isCompactSearchMode
+    ? compactSearchPanelHeight
+    : COLLAPSED_SEARCH_PANEL_HEIGHT_PX;
+  const fullSearchPanelHeight = getSearchPanelSnapHeightPx('full');
+  const currentSearchPanelHeight =
+    searchPanelDragHeight ??
+    (searchPanelSnap === 'full'
+      ? fullSearchPanelHeight
+      : isCompactSearchMode
+        ? compactSearchPanelHeight
+        : COLLAPSED_SEARCH_PANEL_HEIGHT_PX);
+  const searchPanelVisibleCoveragePx = currentSearchPanelHeight + searchPanelBottomOffsetPx;
+  const searchPanelMode =
+    searchPanelSnap === 'full'
+      ? 'full'
+      : isCompactSearchMode
+        ? 'keyboard'
+        : 'collapsed';
+  const shouldRenderExpandedSearchContent =
+    searchPanelSnap === 'full' || isSearchPanelDragging || searchPanelDragHeight !== null;
+  const suggestionsListMaxHeightPx = isCompactSearchMode
+    ? Math.max(120, compactSearchPanelHeight - SEARCH_PANEL_COMPACT_CHROME_HEIGHT_PX)
+    : searchPanelSnap === 'full'
+      ? SEARCH_PANEL_EXPANDED_SUGGESTIONS_MAX_HEIGHT_PX
+      : 240;
+
+  const getNearestSearchPanelSnap = useCallback((heightPx: number, collapsedHeightPx: number): SearchPanelSnap => {
+    const fullHeight = getSearchPanelSnapHeightPx('full');
+    const midpoint = collapsedHeightPx + (fullHeight - collapsedHeightPx) * 0.42;
+    return heightPx >= midpoint ? 'full' : 'collapsed';
+  }, [getSearchPanelSnapHeightPx]);
 
   const collapseSearchPanel = useCallback((options?: {
     clearSelectedIncident?: boolean;
@@ -2371,6 +2439,7 @@ export default function MapScreen() {
     searchPanelDragEligibleRef.current = false;
     searchPanelScrollableAtTopOnTouchStartRef.current = false;
     searchPanelCanDragRef.current = false;
+    searchPanelStartHeightRef.current = currentSearchPanelHeight;
     const collapseStartHeight = searchPanelDragHeight ?? currentSearchPanelHeight;
     const shouldClearSelectedIncident = options?.clearSelectedIncident ?? selectedMapIncidentId !== null;
     const shouldClearReportFlow = options?.clearReportFlow ?? reportFlowOpen;
@@ -2421,11 +2490,12 @@ export default function MapScreen() {
 
     searchPanelTouchTargetRef.current = touchTarget;
     searchPanelStartSnapRef.current = searchPanelSnap;
+    searchPanelStartHeightRef.current = currentSearchPanelHeight;
     searchPanelScrollableAtTopOnTouchStartRef.current = isScrollableStartAtTop;
     searchPanelTouchStartYRef.current = canStartDrag ? touchY : null;
     searchPanelDragEligibleRef.current = canStartDrag;
     searchPanelCanDragRef.current = false;
-  }, [reportFlowOpen, searchPanelSnap]);
+  }, [currentSearchPanelHeight, reportFlowOpen, searchPanelSnap]);
 
   const handleSearchPanelTouchMove = useCallback((event: React.TouchEvent<HTMLDivElement>) => {
     const startY = searchPanelTouchStartYRef.current;
@@ -2460,16 +2530,16 @@ export default function MapScreen() {
 
       searchPanelCanDragRef.current = true;
       setIsSearchPanelDragging(true);
-      setSearchPanelDragHeight(getSearchPanelSnapHeightPx(searchPanelStartSnapRef.current));
+      setSearchPanelDragHeight(searchPanelStartHeightRef.current);
     }
 
     if (!searchPanelCanDragRef.current) return;
 
     event.preventDefault();
 
-    const minHeight = getSearchPanelSnapHeightPx('collapsed');
+    const minHeight = collapsedSearchPanelHeight;
     const maxHeight = getSearchPanelSnapHeightPx('full');
-    const baseHeight = getSearchPanelSnapHeightPx(searchPanelStartSnapRef.current);
+    const baseHeight = searchPanelStartHeightRef.current;
     let nextHeight = baseHeight - delta;
 
     if (nextHeight < minHeight) {
@@ -2479,7 +2549,7 @@ export default function MapScreen() {
     }
 
     scheduleSearchPanelHeight(nextHeight);
-  }, [getSearchPanelSnapHeightPx, isSearchPanelDragging, reportFlowOpen, scheduleSearchPanelHeight, selectedMapIncidentId]);
+  }, [collapsedSearchPanelHeight, getSearchPanelSnapHeightPx, isSearchPanelDragging, reportFlowOpen, scheduleSearchPanelHeight, selectedMapIncidentId]);
 
   const handleSearchPanelTouchEnd = useCallback((event: React.TouchEvent<HTMLDivElement>) => {
     const startY = searchPanelTouchStartYRef.current;
@@ -2497,12 +2567,12 @@ export default function MapScreen() {
 
     const endY = event.changedTouches[0]?.clientY ?? startY;
     const delta = endY - startY;
-    const minHeight = getSearchPanelSnapHeightPx('collapsed');
+    const minHeight = collapsedSearchPanelHeight;
     const maxHeight = getSearchPanelSnapHeightPx('full');
     const currentHeight =
       searchPanelPendingHeightRef.current ??
       searchPanelDragHeight ??
-      getSearchPanelSnapHeightPx(searchPanelStartSnapRef.current);
+      searchPanelStartHeightRef.current;
     const clampedHeight = Math.min(maxHeight, Math.max(minHeight, currentHeight));
     const threshold = SEARCH_PANEL_CLOSE_THRESHOLD_PX;
     let targetSnap = searchPanelStartSnapRef.current;
@@ -2541,10 +2611,10 @@ export default function MapScreen() {
       !isClosingReportFlowBySwipeDown &&
       !isClosingExpandedSearchBySwipeDown
     ) {
-      targetSnap = getNearestSearchPanelSnap(clampedHeight);
+      targetSnap = getNearestSearchPanelSnap(clampedHeight, minHeight);
     }
 
-    const targetHeight = getSearchPanelSnapHeightPx(targetSnap);
+    const targetHeight = targetSnap === 'full' ? maxHeight : minHeight;
     searchPanelPendingHeightRef.current = null;
     setSearchPanelDragHeight(targetHeight);
     setSearchPanelSnap(targetSnap);
@@ -2554,6 +2624,7 @@ export default function MapScreen() {
     searchPanelTouchTargetRef.current = null;
     searchPanelScrollableAtTopOnTouchStartRef.current = false;
     searchPanelCanDragRef.current = false;
+    searchPanelStartHeightRef.current = minHeight;
     setIsSearchPanelDragging(false);
 
     if (targetSnap === 'collapsed') {
@@ -2569,62 +2640,13 @@ export default function MapScreen() {
       setSearchPanelDragHeight(null);
       searchPanelSettleTimeoutRef.current = null;
     }, SEARCH_PANEL_TRANSITION_MS);
-  }, [collapseSearchPanel, getNearestSearchPanelSnap, getSearchPanelSnapHeightPx, reportFlowOpen, searchPanelDragHeight, selectedMapIncidentId]);
-
-  useEffect(() => {
-    const shouldShowExpandedContent =
-      searchPanelSnap !== 'collapsed' || isSearchPanelDragging || searchPanelDragHeight !== null;
-
-    if (shouldShowExpandedContent) {
-      if (searchPanelContentHideTimeoutRef.current) {
-        clearTimeout(searchPanelContentHideTimeoutRef.current);
-        searchPanelContentHideTimeoutRef.current = null;
-      }
-
-      if (renderExpandedSearchContent) {
-        return;
-      }
-
-      if (searchPanelContentShowTimeoutRef.current) {
-        clearTimeout(searchPanelContentShowTimeoutRef.current);
-        searchPanelContentShowTimeoutRef.current = null;
-      }
-
-      setRenderExpandedSearchContent(true);
-      return;
-    }
-
-    if (searchPanelContentShowTimeoutRef.current) {
-      clearTimeout(searchPanelContentShowTimeoutRef.current);
-      searchPanelContentShowTimeoutRef.current = null;
-    }
-
-    if (searchPanelContentHideTimeoutRef.current) {
-      clearTimeout(searchPanelContentHideTimeoutRef.current);
-      searchPanelContentHideTimeoutRef.current = null;
-    }
-
-    searchPanelContentHideTimeoutRef.current = setTimeout(() => {
-      setRenderExpandedSearchContent(false);
-      searchPanelContentHideTimeoutRef.current = null;
-    }, 260);
-  }, [searchPanelDragHeight, searchPanelSnap, isSearchPanelDragging, renderExpandedSearchContent]);
+  }, [collapseSearchPanel, collapsedSearchPanelHeight, getNearestSearchPanelSnap, getSearchPanelSnapHeightPx, reportFlowOpen, searchPanelDragHeight, selectedMapIncidentId]);
 
   useEffect(() => {
     return () => {
       if (searchPanelDragRafRef.current !== null) {
         cancelAnimationFrame(searchPanelDragRafRef.current);
         searchPanelDragRafRef.current = null;
-      }
-
-      if (searchPanelContentHideTimeoutRef.current) {
-        clearTimeout(searchPanelContentHideTimeoutRef.current);
-        searchPanelContentHideTimeoutRef.current = null;
-      }
-
-      if (searchPanelContentShowTimeoutRef.current) {
-        clearTimeout(searchPanelContentShowTimeoutRef.current);
-        searchPanelContentShowTimeoutRef.current = null;
       }
 
       if (searchPanelSettleTimeoutRef.current) {
@@ -2637,14 +2659,14 @@ export default function MapScreen() {
   const isAuthFullscreen = sheetMode === 'tabs' && activeTab === 'auth';
   const maxMapControlsLiftPx = Math.max(
     0,
-    effectiveViewportHeight - MAP_CONTROLS_BOTTOM_OFFSET_PX - MAP_CONTROLS_HEIGHT_PX - MAP_CONTROLS_TOP_SAFE_PX
+    stableViewportHeight - MAP_CONTROLS_BOTTOM_OFFSET_PX - MAP_CONTROLS_HEIGHT_PX - MAP_CONTROLS_TOP_SAFE_PX
   );
   const mapControlsLiftPx = Math.min(
     maxMapControlsLiftPx,
-    Math.max(0, currentSearchPanelHeight - collapsedSearchPanelHeight)
+    Math.max(0, searchPanelVisibleCoveragePx - COLLAPSED_SEARCH_PANEL_HEIGHT_PX)
   );
-  const tabsSheetHeightPx = Math.max(effectiveViewportHeight - 80, COLLAPSED_SEARCH_PANEL_HEIGHT_PX);
-  const markerSheetMaxHeightPx = Math.max(Math.round(effectiveViewportHeight * 0.65), 320);
+  const tabsSheetHeightPx = Math.max(stableViewportHeight - 80, COLLAPSED_SEARCH_PANEL_HEIGHT_PX);
+  const markerSheetMaxHeightPx = Math.max(Math.round(stableViewportHeight * 0.65), 320);
 
   const handleProfileFabClick = useCallback(() => {
     if (isAuthenticated) {
@@ -2929,7 +2951,7 @@ export default function MapScreen() {
     return (
       <div
         className="fixed inset-x-0 top-0 z-[1200] bg-background"
-        style={{ height: `${effectiveViewportHeight}px` }}
+        style={{ height: `${stableViewportHeight}px` }}
       >
         <AuthPanel
           onAuthenticated={handleAuthenticated}
@@ -2942,7 +2964,7 @@ export default function MapScreen() {
   return (
     <div
       className="fixed inset-x-0 top-0 z-0 overflow-hidden"
-      style={{ height: `${effectiveViewportHeight}px` }}
+      style={{ height: `${stableViewportHeight}px` }}
     >
       {topMapMessage && (
         <div className="pointer-events-none absolute left-1/2 top-4 z-[1300] -translate-x-1/2 rounded-full border border-border/70 bg-background/90 px-4 py-2 text-xs text-foreground shadow-lg backdrop-blur">
@@ -3044,10 +3066,9 @@ export default function MapScreen() {
 
       {/* Нижняя панель: только поиск */}
       <MapSearchPanel
-        viewportHeightPx={effectiveViewportHeight}
-        searchPanelDragHeight={searchPanelDragHeight}
-        searchPanelSnap={searchPanelSnap}
-        isInputFocused={isCompactSearchMode}
+        heightPx={currentSearchPanelHeight}
+        bottomOffsetPx={searchPanelBottomOffsetPx}
+        mode={searchPanelMode}
         isSearchPanelDragging={isSearchPanelDragging}
         onTouchStart={handleSearchPanelTouchStart}
         onTouchMove={handleSearchPanelTouchMove}
@@ -3083,23 +3104,17 @@ export default function MapScreen() {
             />
           )}
 
-          {!selectedMapIncident && !reportFlowOpen && showSuggestions && suggestions.length > 0 && (
+          {searchSuggestionsVisible && (
             <SearchSuggestionsList
               suggestionsRef={suggestionsRef}
               suggestions={suggestions}
-              maxHeightClassName={
-                isCompactSearchMode
-                  ? 'max-h-40'
-                  : searchPanelSnap === 'full'
-                  ? 'max-h-96'
-                  : 'max-h-60'
-              }
+              maxHeightPx={suggestionsListMaxHeightPx}
               onSelectSuggestion={handleSelectSuggestion}
             />
           )}
 
           <MapSearchExpandedContent
-            renderExpandedSearchContent={renderExpandedSearchContent}
+            renderExpandedSearchContent={shouldRenderExpandedSearchContent}
             expandedSearchContentRef={expandedSearchContentRef}
             searchPanelSnap={searchPanelSnap}
             isSearchPanelDragging={isSearchPanelDragging}
@@ -3188,7 +3203,7 @@ export default function MapScreen() {
               sheetMode === 'marker'
                 ? { maxHeight: `${markerSheetMaxHeightPx}px` }
                 : isAuthFullscreen
-                  ? { height: `${effectiveViewportHeight}px` }
+                  ? { height: `${stableViewportHeight}px` }
                   : { height: `${tabsSheetHeightPx}px` }
             }
           >

@@ -12,14 +12,14 @@ type SearchSuggestion = {
 type SearchSuggestionsListProps = {
   suggestionsRef: RefObject<HTMLDivElement | null>;
   suggestions: SearchSuggestion[];
-  maxHeightClassName: string;
+  maxHeightPx: number;
   onSelectSuggestion: (suggestion: SearchSuggestion) => void;
 };
 
 export function SearchSuggestionsList({
   suggestionsRef,
   suggestions,
-  maxHeightClassName,
+  maxHeightPx,
   onSelectSuggestion,
 }: SearchSuggestionsListProps) {
   return (
@@ -27,9 +27,9 @@ export function SearchSuggestionsList({
       ref={suggestionsRef}
       data-search-scrollable="true"
       className={cn(
-        'mt-2 overflow-hidden overflow-y-auto rounded-3xl border border-border/70 bg-background',
-        maxHeightClassName
+        'mt-2 shrink-0 overflow-hidden overflow-y-auto rounded-3xl border border-border/70 bg-background'
       )}
+      style={{ maxHeight: `${Math.max(96, Math.round(maxHeightPx))}px` }}
     >
       {suggestions.map((suggestion, idx) => (
         <button
