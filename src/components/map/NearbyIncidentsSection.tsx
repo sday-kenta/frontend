@@ -16,6 +16,7 @@ type NearbyIncidentsSectionProps<T extends BaseIncident> = {
   onSelectIncident: (incident: T) => void;
   isFullHeight: boolean;
   autoFocusScroll?: boolean;
+  hideSectionHeader?: boolean;
 };
 
 function getNearbyIncidentCategoryIcon(category: string) {
@@ -86,6 +87,7 @@ export function NearbyIncidentsSection<T extends BaseIncident>({
   onSelectIncident,
   isFullHeight,
   autoFocusScroll = false,
+  hideSectionHeader = false,
 }: NearbyIncidentsSectionProps<T>) {
   const incidentsScrollRef = useRef<HTMLDivElement | null>(null);
 
@@ -101,9 +103,16 @@ export function NearbyIncidentsSection<T extends BaseIncident>({
 
   return (
     <div className={cn('rounded-3xl', isFullHeight && 'flex min-h-0 flex-1 flex-col')} autoFocus>
-      <div className="mb-2 flex items-center justify-between">
+      <div
+        className={cn(
+          'overflow-hidden transition-all duration-180 ease-out',
+          hideSectionHeader ? 'mb-0 max-h-0 -translate-y-1 opacity-0' : 'mb-2 max-h-12 translate-y-0 opacity-100'
+        )}
+      >
+        <div className="flex items-center justify-between">
         <h3 className="text-sm font-semibold text-foreground">Ближайшие инциденты</h3>
         <span className="text-xs text-muted-foreground">Рядом с вами</span>
+        </div>
       </div>
       <div
         ref={incidentsScrollRef}

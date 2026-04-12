@@ -17,6 +17,7 @@ import { AuthPanel } from '@/components/map/AuthPanel';
 import { BiometricEntryGate } from '@/components/BiometricEntryGate';
 import { MapProfileFab } from '@/components/map/MapProfileFab';
 import { MapMarkerSheetContent } from '@/components/map/MapMarkerSheetContent';
+import { MapRubricSheetContent } from '@/components/map/MapRubricSheetContent';
 import { MapTabsSheetContent } from '@/components/map/MapTabsSheetContent';
 import { persistAuthUserContact } from '@/lib/authUserStorage';
 import {
@@ -1001,7 +1002,53 @@ export default function MapScreen() {
     }
   }, []);
 
+  const resetSearchPanelForOverlaySheet = useCallback(() => {
+    if (searchPanelSettleTimeoutRef.current) {
+      clearTimeout(searchPanelSettleTimeoutRef.current);
+      searchPanelSettleTimeoutRef.current = null;
+    }
+
+    if (searchPanelCollapseRafRef.current !== null) {
+      cancelAnimationFrame(searchPanelCollapseRafRef.current);
+      searchPanelCollapseRafRef.current = null;
+    }
+
+    if (searchPanelDragRafRef.current !== null) {
+      cancelAnimationFrame(searchPanelDragRafRef.current);
+      searchPanelDragRafRef.current = null;
+    }
+
+    searchPanelPendingHeightRef.current = null;
+    searchPanelTouchStartYRef.current = null;
+    searchPanelTouchTargetRef.current = null;
+    searchPanelDragEligibleRef.current = false;
+    searchPanelScrollableAtTopOnTouchStartRef.current = false;
+    searchPanelCanDragRef.current = false;
+    searchPanelStartHeightRef.current = COLLAPSED_SEARCH_PANEL_HEIGHT_PX;
+
+    setSearchPanelDragHeight(null);
+    setIsSearchPanelDragging(false);
+    setSearchPanelSnap('collapsed');
+    setIsSearchInputFocused(false);
+    setShowSuggestions(false);
+    inputRef.current?.blur();
+  }, []);
+
+  const prepareOverlaySheetOpen = useCallback(() => {
+    if (closeSheetTimeoutRef.current) {
+      clearTimeout(closeSheetTimeoutRef.current);
+      closeSheetTimeoutRef.current = null;
+    }
+
+    setIsSheetClosing(false);
+    setSheetDragY(0);
+    setIsSheetDragging(false);
+    sheetDragStartYRef.current = null;
+  }, []);
+
   const openReportFlowForPoint = useCallback((lat: number, lng: number, options?: { address?: string }) => {
+    resetSearchPanelForOverlaySheet();
+    prepareOverlaySheetOpen();
     setMarker({ lat, lng, address: options?.address, addressPrecision: 'approximate' });
     setCenter({ lat, lng });
     setSelectedMapIncidentId(null);
@@ -1015,9 +1062,8 @@ export default function MapScreen() {
     setEditingIncidentId(null);
     setShowSuggestions(false);
     setSheetMode('rubric');
-    setSearchPanelSnap('full');
     void resolveMarkerAddress(lat, lng);
-  }, [resolveMarkerAddress]);
+  }, [prepareOverlaySheetOpen, resetSearchPanelForOverlaySheet, resolveMarkerAddress]);
 
   const handlePlaceMarker = useCallback((lat: number, lng: number) => {
     openReportFlowForPoint(lat, lng);
@@ -1126,17 +1172,18 @@ export default function MapScreen() {
 
   const handleCreateReport = useCallback(() => {
     if (!marker) return;
+    resetSearchPanelForOverlaySheet();
+    prepareOverlaySheetOpen();
     setSelectedMapIncidentId(null);
     setSelectedRubric(null);
     setRubricStep('select');
     setReportFeedback(null);
     setShowSuggestions(false);
     setSheetMode('rubric');
-    setSearchPanelSnap('full');
     if (!marker.address || marker.address === 'Точка в центре карты') {
       void resolveMarkerAddress(marker.lat, marker.lng);
     }
-  }, [marker, resolveMarkerAddress]);
+  }, [marker, prepareOverlaySheetOpen, resetSearchPanelForOverlaySheet, resolveMarkerAddress]);
 
   const publicIncidentPreviews = useMemo(
     () => publishedIncidents.map(mapIncidentToPreview).filter((item): item is IncidentPreview => Boolean(item)),
@@ -1710,8 +1757,9 @@ export default function MapScreen() {
       setEditingIncidentId(sourceIncident.id);
       setReportFeedback(null);
       setShowSuggestions(false);
+      resetSearchPanelForOverlaySheet();
+      prepareOverlaySheetOpen();
       setSheetMode('rubric');
-      setSearchPanelSnap('full');
       if (!sourceIncident.address_text && sourceIncident.latitude != null && sourceIncident.longitude != null) {
         void resolveMarkerAddress(sourceIncident.latitude, sourceIncident.longitude);
       }
@@ -1720,7 +1768,7 @@ export default function MapScreen() {
       setActiveTab('profile');
       setSheetMode('tabs');
     }
-  }, [categories, center.lat, center.lng, myIncidents, resolveMarkerAddress]);
+  }, [categories, center.lat, center.lng, myIncidents, prepareOverlaySheetOpen, resetSearchPanelForOverlaySheet, resolveMarkerAddress]);
 
   const ensureIncidentForDocumentAction = useCallback(async () => {
     if (!selectedRubric || !marker || !reportTitle.trim() || !reportText.trim()) {
@@ -2029,7 +2077,7 @@ export default function MapScreen() {
     setSheetMode('tabs');
   }, [closeSheet]);
 
-  const isOverlaySheetOpen = sheetMode === 'tabs' || sheetMode === 'marker';
+  const isOverlaySheetOpen = sheetMode === 'tabs' || sheetMode === 'marker' || sheetMode === 'rubric';
   const isSheetVisible = isOverlaySheetOpen || isSheetClosing;
 
   // Мягкое закрытие: даём анимации контейнера плавно
@@ -2740,6 +2788,10 @@ export default function MapScreen() {
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
+      if (reportFlowOpen) {
+        closeSheet();
+        return;
+      }
       if (searchPanelSnap === 'collapsed' && searchPanelDragHeight === null && selectedMapIncidentId === null && !reportFlowOpen) {
         return;
       }
@@ -2751,7 +2803,7 @@ export default function MapScreen() {
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [collapseSearchPanel, reportFlowOpen, searchPanelDragHeight, searchPanelSnap, selectedMapIncidentId]);
+  }, [closeSheet, collapseSearchPanel, reportFlowOpen, searchPanelDragHeight, searchPanelSnap, selectedMapIncidentId]);
 
   const handleTogglePushNotifications = useCallback(() => {
     void (async () => {
@@ -3266,6 +3318,37 @@ export default function MapScreen() {
                 onContentTouchStart={handleSheetContentTouchStart}
                 onContentTouchMove={handleSheetContentTouchMove}
               />
+            ) : sheetMode === 'rubric' && marker ? (
+              <div
+                className="flex-1 overflow-y-auto overscroll-contain space-y-4 pb-2 text-white"
+                data-sheet-scrollable="true"
+                onWheel={handleSheetContentWheel}
+                onTouchStart={handleSheetContentTouchStart}
+                onTouchMove={handleSheetContentTouchMove}
+              >
+                <MapRubricSheetContent
+                  marker={marker}
+                  selectedRubric={selectedRubric}
+                  rubricStep={rubricStep}
+                  rubrics={rubrics}
+                  setSelectedRubric={setSelectedRubric}
+                  setRubricStep={setRubricStep}
+                  reportTitle={reportTitle}
+                  setReportTitle={setReportTitle}
+                  reportText={reportText}
+                  setReportText={setReportText}
+                  reportPhotos={reportPhotos}
+                  reportPhotoPreviews={reportPhotoPreviews}
+                  handleReportPhotosChange={handleReportPhotosChange}
+                  handlePublishReport={handlePublishReport}
+                  handleSaveDraft={handleSaveDraft}
+                  handleSaveToFiles={handleSaveToFiles}
+                  handleSendEmail={handleSendEmail}
+                  handlePrint={handlePrint}
+                  reportSubmitting={reportSubmitting}
+                  reportFeedback={reportFeedback}
+                />
+              </div>
             ) : (
               <MapTabsSheetContent
                 isAuthFullscreen={isAuthFullscreen}

@@ -195,6 +195,7 @@ export const MapSearchExpandedContent = memo(function MapSearchExpandedContent({
             incidents={filteredNearbyIncidents}
             isFullHeight={searchPanelSnap === 'full'}
             autoFocusScroll={false}
+            hideSectionHeader={isSearchPanelSettlingCollapsed}
             onSelectIncident={focusIncidentOnMap}
           />
         </div>
