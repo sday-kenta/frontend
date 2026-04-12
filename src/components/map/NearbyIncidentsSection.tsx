@@ -100,7 +100,7 @@ export function NearbyIncidentsSection<T extends BaseIncident>({
   }, [autoFocusScroll]);
 
   return (
-    <div className="rounded-3xl" autoFocus>
+    <div className={cn('rounded-3xl', isFullHeight && 'flex min-h-0 flex-1 flex-col')} autoFocus>
       <div className="mb-2 flex items-center justify-between">
         <h3 className="text-sm font-semibold text-foreground">Ближайшие инциденты</h3>
         <span className="text-xs text-muted-foreground">Рядом с вами</span>
@@ -109,7 +109,10 @@ export function NearbyIncidentsSection<T extends BaseIncident>({
         ref={incidentsScrollRef}
         data-search-scrollable="true"
         tabIndex={-1}
-        className={cn('space-y-2 overflow-y-auto pr-1', isFullHeight ? 'max-h-[46vh]' : 'max-h-56')}
+        className={cn(
+          'space-y-2 overflow-y-auto pr-1',
+          isFullHeight ? 'min-h-0 flex-1' : 'max-h-56'
+        )}
       >
         {incidents.map((incident) => (
           <button

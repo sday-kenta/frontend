@@ -82,7 +82,10 @@ const COLLAPSED_SEARCH_PANEL_HEIGHT_PX = 160;
 const SEARCH_PANEL_TRANSITION_MS = 380;
 const SEARCH_PANEL_CLOSE_THRESHOLD_PX = 32;
 const SEARCH_PANEL_DRAG_START_THRESHOLD_PX = 6;
-const SEARCH_PANEL_FULL_TOP_GAP_PX = 18;
+const SEARCH_PANEL_FULL_TOP_GAP_PX = 92;
+const SEARCH_PANEL_REPORT_TOP_GAP_PX = 112;
+const SEARCH_PANEL_FULL_HEIGHT_RATIO = 0.84;
+const SEARCH_PANEL_REPORT_HEIGHT_RATIO = 0.8;
 const SEARCH_PANEL_COMPACT_MIN_HEIGHT_PX = 104;
 const SEARCH_PANEL_COMPACT_MAX_HEIGHT_PX = 320;
 const SEARCH_PANEL_COMPACT_CHROME_HEIGHT_PX = 104;
@@ -92,6 +95,7 @@ const SEARCH_PANEL_EXPANDED_SUGGESTIONS_MAX_HEIGHT_PX = 384;
 const MAP_CONTROLS_BOTTOM_OFFSET_PX = 170;
 const MAP_CONTROLS_HEIGHT_PX = 164;
 const MAP_CONTROLS_TOP_SAFE_PX = 48;
+const MAP_CONTROLS_HIDE_BUFFER_PX = 12;
 
 const MAP_TILES_URL =
   import.meta.env.VITE_MAP_TILES_URL ?? 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
@@ -2342,13 +2346,19 @@ export default function MapScreen() {
     );
 
     if (snap === 'full') {
+      const minTopGapPx = reportFlowOpen ? SEARCH_PANEL_REPORT_TOP_GAP_PX : SEARCH_PANEL_FULL_TOP_GAP_PX;
+      const fullHeightRatio = reportFlowOpen ? SEARCH_PANEL_REPORT_HEIGHT_RATIO : SEARCH_PANEL_FULL_HEIGHT_RATIO;
+
       return Math.max(
         COLLAPSED_SEARCH_PANEL_HEIGHT_PX,
-        baseViewportHeight - SEARCH_PANEL_FULL_TOP_GAP_PX
+        Math.min(
+          baseViewportHeight - minTopGapPx,
+          Math.round(baseViewportHeight * fullHeightRatio)
+        )
       );
     }
     return COLLAPSED_SEARCH_PANEL_HEIGHT_PX;
-  }, [isSearchInputFocused, viewportHeight, visibleViewportHeight]);
+  }, [isSearchInputFocused, reportFlowOpen, viewportHeight, visibleViewportHeight]);
 
   const stableViewportHeight = Math.max(viewportHeight, COLLAPSED_SEARCH_PANEL_HEIGHT_PX);
   const keyboardInsetHeight = Math.max(
@@ -2661,10 +2671,12 @@ export default function MapScreen() {
     0,
     stableViewportHeight - MAP_CONTROLS_BOTTOM_OFFSET_PX - MAP_CONTROLS_HEIGHT_PX - MAP_CONTROLS_TOP_SAFE_PX
   );
-  const mapControlsLiftPx = Math.min(
-    maxMapControlsLiftPx,
-    Math.max(0, searchPanelVisibleCoveragePx - COLLAPSED_SEARCH_PANEL_HEIGHT_PX)
-  );
+  const requestedMapControlsLiftPx = Math.max(0, searchPanelVisibleCoveragePx - COLLAPSED_SEARCH_PANEL_HEIGHT_PX);
+  const shouldHideMapControls =
+    requestedMapControlsLiftPx > Math.max(0, maxMapControlsLiftPx - MAP_CONTROLS_HIDE_BUFFER_PX);
+  const mapControlsLiftPx = shouldHideMapControls
+    ? 0
+    : Math.min(maxMapControlsLiftPx, requestedMapControlsLiftPx);
   const tabsSheetHeightPx = Math.max(stableViewportHeight - 80, COLLAPSED_SEARCH_PANEL_HEIGHT_PX);
   const markerSheetMaxHeightPx = Math.max(Math.round(stableViewportHeight * 0.65), 320);
 
@@ -3055,7 +3067,7 @@ export default function MapScreen() {
 
       {/* Справа: zoom + фильтр доносов + геолокация */}
       <MapControls
-        isHidden={false}
+        isHidden={shouldHideMapControls}
         mapControlsLiftPx={mapControlsLiftPx}
         isSearchPanelDragging={isSearchPanelDragging}
         onZoomIn={zoomIn}
