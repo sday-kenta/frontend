@@ -55,6 +55,7 @@ type MapSearchExpandedContentProps = {
   expandedSearchContentRef: RefObject<HTMLDivElement | null>;
   searchPanelSnap: SearchPanelSnap;
   isSearchPanelDragging: boolean;
+  isSearchPanelSettlingCollapsed: boolean;
   selectedMapIncident: IncidentForPanel | null;
   selectedMapIncidentDetails: IncidentDetailsForPanel | null;
   selectedMapIncidentDistanceLabel: string | null;
@@ -95,6 +96,7 @@ export const MapSearchExpandedContent = memo(function MapSearchExpandedContent({
   expandedSearchContentRef,
   searchPanelSnap,
   isSearchPanelDragging,
+  isSearchPanelSettlingCollapsed,
   selectedMapIncident,
   selectedMapIncidentDetails,
   selectedMapIncidentDistanceLabel,
@@ -138,7 +140,7 @@ export const MapSearchExpandedContent = memo(function MapSearchExpandedContent({
       ref={expandedSearchContentRef}
       className={cn(
         'mt-3 flex min-h-0 flex-1 flex-col space-y-3 overflow-hidden pb-6 transition-all duration-250 ease-out',
-        searchPanelSnap === 'collapsed' && !isSearchPanelDragging
+        searchPanelSnap === 'collapsed' && !isSearchPanelDragging && !isSearchPanelSettlingCollapsed
           ? 'pointer-events-none translate-y-2 opacity-0'
           : 'translate-y-0 opacity-100'
       )}

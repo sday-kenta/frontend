@@ -684,6 +684,7 @@ export default function MapScreen() {
   const searchPanelCanDragRef = useRef(false);
   const searchPanelStartHeightRef = useRef(COLLAPSED_SEARCH_PANEL_HEIGHT_PX);
   const searchPanelSettleTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const searchPanelCollapseRafRef = useRef<number | null>(null);
   const searchPanelDragRafRef = useRef<number | null>(null);
   const searchPanelPendingHeightRef = useRef<number | null>(null);
   const expandedSearchContentRef = useRef<HTMLDivElement | null>(null);
@@ -2417,6 +2418,10 @@ export default function MapScreen() {
         : 'collapsed';
   const shouldRenderExpandedSearchContent =
     searchPanelSnap === 'full' || isSearchPanelDragging || searchPanelDragHeight !== null;
+  const isSearchPanelSettlingCollapsed =
+    searchPanelSnap === 'collapsed' &&
+    searchPanelDragHeight !== null &&
+    !isSearchPanelDragging;
   const suggestionsListMaxHeightPx = isCompactSearchMode
     ? Math.max(120, compactSearchPanelHeight - SEARCH_PANEL_COMPACT_CHROME_HEIGHT_PX)
     : searchPanelSnap === 'full'
@@ -2443,6 +2448,11 @@ export default function MapScreen() {
       searchPanelDragRafRef.current = null;
     }
 
+    if (searchPanelCollapseRafRef.current !== null) {
+      cancelAnimationFrame(searchPanelCollapseRafRef.current);
+      searchPanelCollapseRafRef.current = null;
+    }
+
     searchPanelPendingHeightRef.current = null;
     searchPanelTouchStartYRef.current = null;
     searchPanelTouchTargetRef.current = null;
@@ -2462,6 +2472,11 @@ export default function MapScreen() {
     setIsSearchInputFocused(false);
     inputRef.current?.blur();
 
+    searchPanelCollapseRafRef.current = requestAnimationFrame(() => {
+      setSearchPanelDragHeight(collapsedSearchPanelHeight);
+      searchPanelCollapseRafRef.current = null;
+    });
+
     searchPanelSettleTimeoutRef.current = setTimeout(() => {
       setSearchPanelDragHeight(null);
       if (shouldClearSelectedIncident) {
@@ -2475,7 +2490,7 @@ export default function MapScreen() {
       }
       searchPanelSettleTimeoutRef.current = null;
     }, SEARCH_PANEL_TRANSITION_MS);
-  }, [currentSearchPanelHeight, reportFlowOpen, searchPanelDragHeight, selectedMapIncidentId]);
+  }, [collapsedSearchPanelHeight, currentSearchPanelHeight, reportFlowOpen, searchPanelDragHeight, selectedMapIncidentId]);
 
   const handleSearchPanelTouchStart = useCallback((event: React.TouchEvent<HTMLDivElement>) => {
     if (searchPanelSettleTimeoutRef.current) {
@@ -2485,6 +2500,7 @@ export default function MapScreen() {
 
     const touchTarget = event.target as HTMLElement | null;
     const scrollableTarget = touchTarget?.closest('[data-search-scrollable="true"]') as HTMLElement | null;
+    const isSearchInputShellTarget = Boolean(touchTarget?.closest('[data-search-input-shell="true"]'));
     const isTextEntryTarget = Boolean(
       touchTarget?.closest(
         'input, textarea, select, [contenteditable="true"], [contenteditable=""], [role="textbox"]'
@@ -2496,7 +2512,13 @@ export default function MapScreen() {
       scrollableTarget &&
       scrollableTarget.scrollTop <= 0
     );
-    const canStartDrag = !isTextEntryTarget || isScrollableStartAtTop;
+    const allowCollapsedSearchShellDrag =
+      isSearchInputShellTarget &&
+      searchPanelSnap === 'collapsed' &&
+      !isSearchInputFocused &&
+      selectedMapIncidentId === null &&
+      !reportFlowOpen;
+    const canStartDrag = allowCollapsedSearchShellDrag || !isTextEntryTarget || isScrollableStartAtTop;
 
     searchPanelTouchTargetRef.current = touchTarget;
     searchPanelStartSnapRef.current = searchPanelSnap;
@@ -2505,7 +2527,7 @@ export default function MapScreen() {
     searchPanelTouchStartYRef.current = canStartDrag ? touchY : null;
     searchPanelDragEligibleRef.current = canStartDrag;
     searchPanelCanDragRef.current = false;
-  }, [currentSearchPanelHeight, reportFlowOpen, searchPanelSnap]);
+  }, [currentSearchPanelHeight, isSearchInputFocused, reportFlowOpen, searchPanelSnap, selectedMapIncidentId]);
 
   const handleSearchPanelTouchMove = useCallback((event: React.TouchEvent<HTMLDivElement>) => {
     const startY = searchPanelTouchStartYRef.current;
@@ -2654,6 +2676,11 @@ export default function MapScreen() {
 
   useEffect(() => {
     return () => {
+      if (searchPanelCollapseRafRef.current !== null) {
+        cancelAnimationFrame(searchPanelCollapseRafRef.current);
+        searchPanelCollapseRafRef.current = null;
+      }
+
       if (searchPanelDragRafRef.current !== null) {
         cancelAnimationFrame(searchPanelDragRafRef.current);
         searchPanelDragRafRef.current = null;
@@ -3130,6 +3157,7 @@ export default function MapScreen() {
             expandedSearchContentRef={expandedSearchContentRef}
             searchPanelSnap={searchPanelSnap}
             isSearchPanelDragging={isSearchPanelDragging}
+            isSearchPanelSettlingCollapsed={isSearchPanelSettlingCollapsed}
             selectedMapIncident={selectedMapIncident}
             selectedMapIncidentDetails={selectedMapIncidentDetails}
             selectedMapIncidentDistanceLabel={selectedMapIncidentDistanceLabel}
