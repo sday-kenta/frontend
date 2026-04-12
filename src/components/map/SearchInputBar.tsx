@@ -1,22 +1,26 @@
 import { memo, type RefObject } from 'react';
-import { Loader2, Search, X } from 'lucide-react';
+import { ChevronDown, Loader2, Search, X } from 'lucide-react';
 
 type SearchInputBarProps = {
   inputRef: RefObject<HTMLInputElement | null>;
   query: string;
   loading: boolean;
+  isExpanded: boolean;
   onQueryChange: (value: string) => void;
   onFocus: () => void;
   onClear: () => void;
+  onCollapse: () => void;
 };
 
 export const SearchInputBar = memo(function SearchInputBar({
   inputRef,
   query,
   loading,
+  isExpanded,
   onQueryChange,
   onFocus,
   onClear,
+  onCollapse,
 }: SearchInputBarProps) {
   return (
     <div
@@ -36,6 +40,17 @@ export const SearchInputBar = memo(function SearchInputBar({
       {query && (
         <button type="button" onClick={onClear} className="text-muted-foreground hover:text-foreground">
           <X className="h-4 w-4" />
+        </button>
+      )}
+      {isExpanded && (
+        <button
+          type="button"
+          onClick={onCollapse}
+          className="text-muted-foreground transition-colors hover:text-foreground"
+          aria-label="Свернуть панель"
+          title="Свернуть"
+        >
+          <ChevronDown className="h-4 w-4" />
         </button>
       )}
       {loading && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
