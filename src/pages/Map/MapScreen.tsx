@@ -79,6 +79,9 @@ type IncidentPreview = {
 const DEBOUNCE_MS = 400;
 const REVERSE_GEOCODE_HOUSE_MAX_DISTANCE_METERS = 35;
 const COLLAPSED_SEARCH_PANEL_HEIGHT_PX = 160;
+const SEARCH_PANEL_TRANSITION_MS = 380;
+const SEARCH_PANEL_CLOSE_THRESHOLD_PX = 32;
+const SEARCH_PANEL_DRAG_START_THRESHOLD_PX = 6;
 const MAP_CONTROLS_BOTTOM_OFFSET_PX = 170;
 const MAP_CONTROLS_HEIGHT_PX = 164;
 const MAP_CONTROLS_TOP_SAFE_PX = 48;
@@ -680,6 +683,12 @@ export default function MapScreen() {
     height: typeof window === 'undefined' ? COLLAPSED_SEARCH_PANEL_HEIGHT_PX : window.innerHeight,
   });
   const [viewportHeight, setViewportHeight] = useState(viewportSizeRef.current.height);
+  const [visibleViewportHeight, setVisibleViewportHeight] = useState(() =>
+    typeof window === 'undefined'
+      ? COLLAPSED_SEARCH_PANEL_HEIGHT_PX
+      : Math.round(window.visualViewport?.height ?? window.innerHeight)
+  );
+  const [isSearchInputFocused, setIsSearchInputFocused] = useState(false);
 
   useEffect(() => {
     centerRef.current = center;
@@ -705,12 +714,15 @@ export default function MapScreen() {
     const syncViewportHeight = () => {
       const nextWidth = window.innerWidth;
       const nextHeight = window.innerHeight;
+      const nextVisibleHeight = Math.round(window.visualViewport?.height ?? nextHeight);
       const currentViewport = viewportSizeRef.current;
       const activeElement = document.activeElement;
       const keyboardResizeLikely =
         isKeyboardFocusableField(activeElement) &&
         Math.abs(nextWidth - currentViewport.width) < 32 &&
         nextHeight < currentViewport.height;
+
+      setVisibleViewportHeight((prev) => (prev === nextVisibleHeight ? prev : nextVisibleHeight));
 
       if (keyboardResizeLikely) {
         return;
@@ -2308,13 +2320,16 @@ export default function MapScreen() {
   }, []);
 
   const getSearchPanelSnapHeightPx = useCallback((snap: SearchPanelSnap) => {
-    const baseViewportHeight =
-      viewportHeight ||
-      (typeof window === 'undefined' ? COLLAPSED_SEARCH_PANEL_HEIGHT_PX : window.innerHeight);
+    const baseViewportHeight = Math.max(
+      isSearchInputFocused
+        ? visibleViewportHeight
+        : (viewportHeight || (typeof window === 'undefined' ? COLLAPSED_SEARCH_PANEL_HEIGHT_PX : window.innerHeight)),
+      COLLAPSED_SEARCH_PANEL_HEIGHT_PX
+    );
 
     if (snap === 'full') return baseViewportHeight;
     return COLLAPSED_SEARCH_PANEL_HEIGHT_PX;
-  }, [viewportHeight]);
+  }, [isSearchInputFocused, viewportHeight, visibleViewportHeight]);
 
   const getNearestSearchPanelSnap = useCallback((heightPx: number): SearchPanelSnap => {
     const collapsedHeight = getSearchPanelSnapHeightPx('collapsed');
@@ -2322,6 +2337,61 @@ export default function MapScreen() {
     const midpoint = collapsedHeight + (fullHeight - collapsedHeight) * 0.42;
     return heightPx >= midpoint ? 'full' : 'collapsed';
   }, [getSearchPanelSnapHeightPx]);
+
+  const stableViewportHeight = Math.max(viewportHeight, COLLAPSED_SEARCH_PANEL_HEIGHT_PX);
+  const effectiveViewportHeight = Math.max(
+    isSearchInputFocused ? visibleViewportHeight : stableViewportHeight,
+    COLLAPSED_SEARCH_PANEL_HEIGHT_PX
+  );
+  const collapsedSearchPanelHeight = getSearchPanelSnapHeightPx('collapsed');
+  const currentSearchPanelHeight = searchPanelDragHeight ?? getSearchPanelSnapHeightPx(searchPanelSnap);
+
+  const collapseSearchPanel = useCallback((options?: {
+    clearSelectedIncident?: boolean;
+    clearReportFlow?: boolean;
+  }) => {
+    if (searchPanelSettleTimeoutRef.current) {
+      clearTimeout(searchPanelSettleTimeoutRef.current);
+      searchPanelSettleTimeoutRef.current = null;
+    }
+
+    if (searchPanelDragRafRef.current !== null) {
+      cancelAnimationFrame(searchPanelDragRafRef.current);
+      searchPanelDragRafRef.current = null;
+    }
+
+    searchPanelPendingHeightRef.current = null;
+    searchPanelTouchStartYRef.current = null;
+    searchPanelTouchTargetRef.current = null;
+    searchPanelDragEligibleRef.current = false;
+    searchPanelScrollableAtTopOnTouchStartRef.current = false;
+    searchPanelCanDragRef.current = false;
+    const collapseStartHeight = searchPanelDragHeight ?? currentSearchPanelHeight;
+    const shouldClearSelectedIncident = options?.clearSelectedIncident ?? selectedMapIncidentId !== null;
+    const shouldClearReportFlow = options?.clearReportFlow ?? reportFlowOpen;
+
+    setSearchPanelDragHeight(collapseStartHeight);
+    setIsSearchPanelDragging(false);
+    setShowSuggestions(false);
+
+    setSearchPanelSnap('collapsed');
+    setIsSearchInputFocused(false);
+    inputRef.current?.blur();
+
+    searchPanelSettleTimeoutRef.current = setTimeout(() => {
+      setSearchPanelDragHeight(null);
+      if (shouldClearSelectedIncident) {
+        setSelectedMapIncidentId(null);
+      }
+      if (shouldClearReportFlow) {
+        setSelectedRubric(null);
+        setRubricStep('select');
+        setSheetMode(null);
+        setMarker(null);
+      }
+      searchPanelSettleTimeoutRef.current = null;
+    }, SEARCH_PANEL_TRANSITION_MS);
+  }, [currentSearchPanelHeight, reportFlowOpen, searchPanelDragHeight, selectedMapIncidentId]);
 
   const handleSearchPanelTouchStart = useCallback((event: React.TouchEvent<HTMLDivElement>) => {
     if (searchPanelSettleTimeoutRef.current) {
@@ -2381,7 +2451,7 @@ export default function MapScreen() {
     }
 
     if (!isSearchPanelDragging) {
-      if (absDelta < 4) return;
+      if (absDelta < SEARCH_PANEL_DRAG_START_THRESHOLD_PX) return;
 
       searchPanelCanDragRef.current = true;
       setIsSearchPanelDragging(true);
@@ -2429,7 +2499,7 @@ export default function MapScreen() {
       searchPanelDragHeight ??
       getSearchPanelSnapHeightPx(searchPanelStartSnapRef.current);
     const clampedHeight = Math.min(maxHeight, Math.max(minHeight, currentHeight));
-    const threshold = 24;
+    const threshold = SEARCH_PANEL_CLOSE_THRESHOLD_PX;
     let targetSnap = searchPanelStartSnapRef.current;
 
     const isClosingOpenedIncidentBySwipeDown =
@@ -2446,24 +2516,12 @@ export default function MapScreen() {
       searchPanelStartSnapRef.current !== 'collapsed' &&
       delta > threshold;
 
-    if (isClosingOpenedIncidentBySwipeDown) {
-      setSelectedMapIncidentId(null);
-      setShowSuggestions(false);
-      targetSnap = 'collapsed';
-    }
-
-    if (isClosingReportFlowBySwipeDown) {
-      setSelectedRubric(null);
-      setRubricStep('select');
-      setSheetMode(null);
-      setMarker(null);
-      setShowSuggestions(false);
-      targetSnap = 'collapsed';
-    }
-
-    if (isClosingExpandedSearchBySwipeDown) {
-      setShowSuggestions(false);
-      targetSnap = 'collapsed';
+    if (isClosingOpenedIncidentBySwipeDown || isClosingReportFlowBySwipeDown || isClosingExpandedSearchBySwipeDown) {
+      collapseSearchPanel({
+        clearSelectedIncident: isClosingOpenedIncidentBySwipeDown,
+        clearReportFlow: isClosingReportFlowBySwipeDown,
+      });
+      return;
     }
 
     if (
@@ -2505,8 +2563,8 @@ export default function MapScreen() {
     searchPanelSettleTimeoutRef.current = setTimeout(() => {
       setSearchPanelDragHeight(null);
       searchPanelSettleTimeoutRef.current = null;
-    }, 320);
-  }, [getNearestSearchPanelSnap, getSearchPanelSnapHeightPx, reportFlowOpen, searchPanelDragHeight, selectedMapIncidentId]);
+    }, SEARCH_PANEL_TRANSITION_MS);
+  }, [collapseSearchPanel, getNearestSearchPanelSnap, getSearchPanelSnapHeightPx, reportFlowOpen, searchPanelDragHeight, selectedMapIncidentId]);
 
   useEffect(() => {
     const shouldShowExpandedContent =
@@ -2572,19 +2630,16 @@ export default function MapScreen() {
   }, []);
 
   const isAuthFullscreen = sheetMode === 'tabs' && activeTab === 'auth';
-  const stableViewportHeight = Math.max(viewportHeight, COLLAPSED_SEARCH_PANEL_HEIGHT_PX);
-  const collapsedSearchPanelHeight = getSearchPanelSnapHeightPx('collapsed');
-  const currentSearchPanelHeight = searchPanelDragHeight ?? getSearchPanelSnapHeightPx(searchPanelSnap);
   const maxMapControlsLiftPx = Math.max(
     0,
-    stableViewportHeight - MAP_CONTROLS_BOTTOM_OFFSET_PX - MAP_CONTROLS_HEIGHT_PX - MAP_CONTROLS_TOP_SAFE_PX
+    effectiveViewportHeight - MAP_CONTROLS_BOTTOM_OFFSET_PX - MAP_CONTROLS_HEIGHT_PX - MAP_CONTROLS_TOP_SAFE_PX
   );
   const mapControlsLiftPx = Math.min(
     maxMapControlsLiftPx,
     Math.max(0, currentSearchPanelHeight - collapsedSearchPanelHeight)
   );
-  const tabsSheetHeightPx = Math.max(stableViewportHeight - 80, COLLAPSED_SEARCH_PANEL_HEIGHT_PX);
-  const markerSheetMaxHeightPx = Math.max(Math.round(stableViewportHeight * 0.65), 320);
+  const tabsSheetHeightPx = Math.max(effectiveViewportHeight - 80, COLLAPSED_SEARCH_PANEL_HEIGHT_PX);
+  const markerSheetMaxHeightPx = Math.max(Math.round(effectiveViewportHeight * 0.65), 320);
 
   const handleProfileFabClick = useCallback(() => {
     if (isAuthenticated) {
@@ -2595,11 +2650,16 @@ export default function MapScreen() {
   }, [isAuthenticated, openTab]);
 
   const handleSearchInputFocus = useCallback(() => {
+    setIsSearchInputFocused(true);
     setSearchPanelSnap('full');
     if (suggestions.length > 0) {
       setShowSuggestions(true);
     }
   }, [suggestions.length]);
+
+  const handleSearchInputBlur = useCallback(() => {
+    setIsSearchInputFocused(false);
+  }, []);
 
   const handleSearchInputClear = useCallback(() => {
     setQuery('');
@@ -2607,42 +2667,6 @@ export default function MapScreen() {
     setShowSuggestions(false);
     inputRef.current?.focus();
   }, []);
-
-  const collapseSearchPanel = useCallback(() => {
-    if (searchPanelSettleTimeoutRef.current) {
-      clearTimeout(searchPanelSettleTimeoutRef.current);
-      searchPanelSettleTimeoutRef.current = null;
-    }
-
-    if (searchPanelDragRafRef.current !== null) {
-      cancelAnimationFrame(searchPanelDragRafRef.current);
-      searchPanelDragRafRef.current = null;
-    }
-
-    searchPanelPendingHeightRef.current = null;
-    searchPanelTouchStartYRef.current = null;
-    searchPanelTouchTargetRef.current = null;
-    searchPanelDragEligibleRef.current = false;
-    searchPanelScrollableAtTopOnTouchStartRef.current = false;
-    searchPanelCanDragRef.current = false;
-    setSearchPanelDragHeight(null);
-    setIsSearchPanelDragging(false);
-    setShowSuggestions(false);
-
-    if (selectedMapIncidentId !== null) {
-      setSelectedMapIncidentId(null);
-    }
-
-    if (reportFlowOpen) {
-      setSelectedRubric(null);
-      setRubricStep('select');
-      setSheetMode(null);
-      setMarker(null);
-    }
-
-    setSearchPanelSnap('collapsed');
-    inputRef.current?.blur();
-  }, [reportFlowOpen, selectedMapIncidentId]);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -2901,7 +2925,7 @@ export default function MapScreen() {
     return (
       <div
         className="fixed inset-x-0 top-0 z-[1200] bg-background"
-        style={{ height: `${stableViewportHeight}px` }}
+        style={{ height: `${effectiveViewportHeight}px` }}
       >
         <AuthPanel
           onAuthenticated={handleAuthenticated}
@@ -2914,7 +2938,7 @@ export default function MapScreen() {
   return (
     <div
       className="fixed inset-x-0 top-0 z-0 overflow-hidden"
-      style={{ height: `${stableViewportHeight}px` }}
+      style={{ height: `${effectiveViewportHeight}px` }}
     >
       {topMapMessage && (
         <div className="pointer-events-none absolute left-1/2 top-4 z-[1300] -translate-x-1/2 rounded-full border border-border/70 bg-background/90 px-4 py-2 text-xs text-foreground shadow-lg backdrop-blur">
@@ -3016,7 +3040,7 @@ export default function MapScreen() {
 
       {/* Нижняя панель: только поиск */}
       <MapSearchPanel
-        viewportHeightPx={stableViewportHeight}
+        viewportHeightPx={effectiveViewportHeight}
         searchPanelDragHeight={searchPanelDragHeight}
         searchPanelSnap={searchPanelSnap}
         isSearchPanelDragging={isSearchPanelDragging}
@@ -3033,6 +3057,7 @@ export default function MapScreen() {
             isExpanded={searchPanelSnap !== 'collapsed' || searchPanelDragHeight !== null}
             onQueryChange={setQuery}
             onFocus={handleSearchInputFocus}
+            onBlur={handleSearchInputBlur}
             onClear={handleSearchInputClear}
             onCollapse={collapseSearchPanel}
           />
@@ -3156,7 +3181,7 @@ export default function MapScreen() {
               sheetMode === 'marker'
                 ? { maxHeight: `${markerSheetMaxHeightPx}px` }
                 : isAuthFullscreen
-                  ? { height: `${stableViewportHeight}px` }
+                  ? { height: `${effectiveViewportHeight}px` }
                   : { height: `${tabsSheetHeightPx}px` }
             }
           >
