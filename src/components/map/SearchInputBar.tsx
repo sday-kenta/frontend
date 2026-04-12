@@ -8,6 +8,7 @@ type SearchInputBarProps = {
   isExpanded: boolean;
   onQueryChange: (value: string) => void;
   onFocus: () => void;
+  onBlur: () => void;
   onClear: () => void;
   onCollapse: () => void;
 };
@@ -19,6 +20,7 @@ export const SearchInputBar = memo(function SearchInputBar({
   isExpanded,
   onQueryChange,
   onFocus,
+  onBlur,
   onClear,
   onCollapse,
 }: SearchInputBarProps) {
@@ -34,6 +36,7 @@ export const SearchInputBar = memo(function SearchInputBar({
         value={query}
         onChange={(e) => onQueryChange(e.target.value)}
         onFocus={onFocus}
+        onBlur={onBlur}
         placeholder="Поиск и выбор мест"
         className="flex-1 bg-transparent text-base text-foreground placeholder:text-muted-foreground outline-none"
       />

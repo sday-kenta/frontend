@@ -40,8 +40,11 @@ export const MapSearchPanel = memo(function MapSearchPanel({
             searchPanelSnap === 'collapsed'
               ? 'max(env(safe-area-inset-bottom),16px)'
               : 'max(env(safe-area-inset-bottom),10px)',
-          transition: isSearchPanelDragging ? 'none' : 'max-height 360ms cubic-bezier(0.22, 1, 0.36, 1)',
+          transition: isSearchPanelDragging
+            ? 'none'
+            : 'max-height 380ms cubic-bezier(0.2, 0.9, 0.2, 1), padding-bottom 240ms ease',
           touchAction: 'pan-y',
+          willChange: isSearchPanelDragging ? 'auto' : 'max-height',
         }}
         onTouchStart={onTouchStart}
         onTouchMove={onTouchMove}
