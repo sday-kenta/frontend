@@ -1,4 +1,4 @@
-import { Camera, Loader2, Settings, Trash2, User, X } from 'lucide-react';
+import { Camera, Loader2, Settings, User, X } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { cn, formatUserRoleLabel, resolveAvatarUrl } from '@/lib/utils';
 import type { IncidentDetailsMap, IncidentForMapAction, SheetMode, TrustProgress, UserProfile } from '@/components/map/tabs/types';
@@ -28,9 +28,6 @@ type ProfileTabContentProps = {
   getProfileIncidentCategoryTagClass: (category: string) => string;
   getProfileIncidentStatusTagClass: (status: string) => string;
   getStatusIcon: (status: string) => string;
-  canDeleteIncident: (incidentUserId?: number) => boolean;
-  deletingIncidentId: number | null;
-  handleDeleteIncident: (incident: Pick<IncidentForMapAction, 'id' | 'title' | 'userId'>) => void;
   incidentDetails: IncidentDetailsMap;
   nearbyIncidentsById: Map<number, { distanceLabel: string }>;
 };
@@ -60,9 +57,6 @@ export function ProfileTabContent({
   getProfileIncidentCategoryTagClass,
   getProfileIncidentStatusTagClass,
   getStatusIcon,
-  canDeleteIncident,
-  deletingIncidentId,
-  handleDeleteIncident,
   incidentDetails,
   nearbyIncidentsById,
 }: ProfileTabContentProps) {
@@ -207,17 +201,10 @@ export function ProfileTabContent({
       </div>
 
       <div className="space-y-2">
-        {filteredUserActiveIncidents.map((incident) => {
-          const deleteAllowed = canDeleteIncident(incident.userId);
-          const deletePending = deletingIncidentId === incident.id;
-
-          return (
-            <div
-              key={incident.id}
-              className="flex w-full items-start gap-2.5 rounded-[12px] border border-border/70 bg-background/65 p-3 transition-colors hover:bg-muted/40"
-            >
-              <button
-                type="button"
+        {filteredUserActiveIncidents.map((incident) => (
+          <button
+            key={incident.id}
+            type="button"
             onClick={() => {
               if (incident.status.toLowerCase().includes('чернов')) {
                 openDraftForEditing(incident.id);
@@ -227,7 +214,7 @@ export function ProfileTabContent({
               focusIncidentOnMap(incident);
               setSheetMode(null);
             }}
-            className="flex min-w-0 flex-1 items-start gap-2.5 text-left"
+            className="flex w-full items-start gap-2.5 rounded-[12px] border border-border/70 bg-background/65 p-3 text-left transition-colors hover:bg-muted/40"
           >
             <div className="mt-0.5 rounded-full border border-border/70 p-1.5 text-muted-foreground">
               <span className="text-base leading-none">{getTagIcon(incident.category)}</span>
@@ -267,26 +254,11 @@ export function ProfileTabContent({
                 </div>
               ) : null}
             </div>
-              </button>
-              <div className="flex shrink-0 flex-col items-end gap-2">
-                <span className="text-[11px] font-semibold text-muted-foreground">
-                  {nearbyIncidentsById.get(incident.id)?.distanceLabel ?? `#${incident.id}`}
-                </span>
-                {deleteAllowed ? (
-                  <button
-                    type="button"
-                    onClick={() => handleDeleteIncident(incident)}
-                    disabled={deletePending}
-                    aria-label={`delete-incident-${incident.id}`}
-                    className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-red-500/30 bg-red-500/10 text-red-700 transition hover:bg-red-500/15 disabled:cursor-not-allowed disabled:opacity-60 dark:text-red-200"
-                  >
-                    {deletePending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
-                  </button>
-                ) : null}
-              </div>
-            </div>
-          );
-        })}
+            <span className="shrink-0 text-[11px] font-semibold text-muted-foreground">
+              {nearbyIncidentsById.get(incident.id)?.distanceLabel ?? `#${incident.id}`}
+            </span>
+          </button>
+        ))}
         {filteredUserActiveIncidents.length === 0 && (
           <div className="rounded-2xl border border-border/70 bg-background/65 p-3 text-xs text-muted-foreground">
             По выбранным фильтрам обращений не найдено.

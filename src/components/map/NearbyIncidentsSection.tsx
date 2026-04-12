@@ -1,5 +1,4 @@
 import { useEffect, useRef } from 'react';
-import { Loader2, Trash2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 type BaseIncident = {
@@ -17,9 +16,6 @@ type NearbyIncidentsSectionProps<T extends BaseIncident> = {
   onSelectIncident: (incident: T) => void;
   isFullHeight: boolean;
   autoFocusScroll?: boolean;
-  canDeleteIncident: (incidentUserId?: number) => boolean;
-  deletingIncidentId: number | null;
-  onDeleteIncident: (incident: T) => void;
 };
 
 function getNearbyIncidentCategoryIcon(category: string) {
@@ -90,9 +86,6 @@ export function NearbyIncidentsSection<T extends BaseIncident>({
   onSelectIncident,
   isFullHeight,
   autoFocusScroll = false,
-  canDeleteIncident,
-  deletingIncidentId,
-  onDeleteIncident,
 }: NearbyIncidentsSectionProps<T>) {
   const incidentsScrollRef = useRef<HTMLDivElement | null>(null);
 
@@ -118,69 +111,47 @@ export function NearbyIncidentsSection<T extends BaseIncident>({
         tabIndex={-1}
         className={cn('space-y-2 overflow-y-auto pr-1', isFullHeight ? 'max-h-[46vh]' : 'max-h-56')}
       >
-        {incidents.map((incident) => {
-          const deleteAllowed = canDeleteIncident(incident.userId);
-          const deletePending = deletingIncidentId === incident.id;
-
-          return (
-            <div
-              key={incident.id}
-              className="flex w-full items-start gap-2.5 rounded-[12px] border border-border/70 bg-background/65 p-3 transition-colors hover:bg-muted/40"
-            >
-              <button
-                type="button"
-                onClick={() => onSelectIncident(incident)}
-                className="flex min-w-0 flex-1 items-start gap-2.5 text-left"
-              >
-                <div className="mt-0.5 rounded-full border border-border/70 p-1.5 text-muted-foreground">
-                  <span className="text-base leading-none">{getNearbyIncidentCategoryIcon(incident.category)}</span>
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="mb-1 flex items-center gap-1.5">
-                    <span
-                      className={cn(
-                        'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium',
-                        getIncidentCategoryTagClass(incident.category)
-                      )}
-                    >
-                      <span>{getNearbyIncidentCategoryIcon(incident.category)}</span>
-                      {incident.category}
-                    </span>
-                    <span
-                      className={cn(
-                        'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium',
-                        getIncidentStatusTagClass(incident.status)
-                      )}
-                    >
-                      <span>{getIncidentStatusIcon(incident.status)}</span>
-                      {incident.status}
-                    </span>
-                  </div>
-                  <p className="line-clamp-1 text-xs font-medium text-foreground">{incident.title}</p>
-                  {incident.address ? (
-                    <p className="mt-1 line-clamp-1 text-[11px] text-muted-foreground">{incident.address}</p>
-                  ) : null}
-                </div>
-              </button>
-              <div className="flex shrink-0 flex-col items-end gap-2">
-                <span className="text-[11px] font-semibold text-muted-foreground">
-                  {incident.distanceLabel}
-                </span>
-                {deleteAllowed ? (
-                  <button
-                    type="button"
-                    onClick={() => onDeleteIncident(incident)}
-                    disabled={deletePending}
-                    aria-label={`delete-incident-${incident.id}`}
-                    className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-red-500/30 bg-red-500/10 text-red-700 transition hover:bg-red-500/15 disabled:cursor-not-allowed disabled:opacity-60 dark:text-red-200"
-                  >
-                    {deletePending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
-                  </button>
-                ) : null}
-              </div>
+        {incidents.map((incident) => (
+          <button
+            key={incident.id}
+            type="button"
+            onClick={() => onSelectIncident(incident)}
+            className="flex w-full items-start gap-2.5 rounded-[12px] border border-border/70 bg-background/65 p-3 text-left transition-colors hover:bg-muted/40"
+          >
+            <div className="mt-0.5 rounded-full border border-border/70 p-1.5 text-muted-foreground">
+              <span className="text-base leading-none">{getNearbyIncidentCategoryIcon(incident.category)}</span>
             </div>
-          );
-        })}
+            <div className="min-w-0 flex-1">
+              <div className="mb-1 flex items-center gap-1.5">
+                <span
+                  className={cn(
+                    'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium',
+                    getIncidentCategoryTagClass(incident.category)
+                  )}
+                >
+                  <span>{getNearbyIncidentCategoryIcon(incident.category)}</span>
+                  {incident.category}
+                </span>
+                <span
+                  className={cn(
+                    'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium',
+                    getIncidentStatusTagClass(incident.status)
+                  )}
+                >
+                  <span>{getIncidentStatusIcon(incident.status)}</span>
+                  {incident.status}
+                </span>
+              </div>
+              <p className="line-clamp-1 text-xs font-medium text-foreground">{incident.title}</p>
+              {incident.address ? (
+                <p className="mt-1 line-clamp-1 text-[11px] text-muted-foreground">{incident.address}</p>
+              ) : null}
+            </div>
+            <span className="shrink-0 text-[11px] font-semibold text-muted-foreground">
+              {incident.distanceLabel}
+            </span>
+          </button>
+        ))}
         {incidents.length === 0 && (
           <div className="rounded-2xl border border-dashed border-border/70 bg-background/50 px-3 py-4 text-center text-xs text-muted-foreground">
             Для выбранной категории рядом инцидентов не найдено
