@@ -1,6 +1,6 @@
 import { memo, type ReactNode, type TouchEventHandler } from 'react';
 
-type SearchPanelSnap = 'collapsed' | 'half' | 'full';
+type SearchPanelSnap = 'collapsed' | 'full';
 
 type MapSearchPanelProps = {
   viewportHeightPx: number;
@@ -35,9 +35,7 @@ export const MapSearchPanel = memo(function MapSearchPanel({
               ? `${searchPanelDragHeight}px`
               : searchPanelSnap === 'full'
                 ? `${stableViewportHeightPx}px`
-                : searchPanelSnap === 'half'
-                  ? `${Math.round(stableViewportHeightPx * 0.44)}px`
-                  : '160px',
+                : '160px',
           paddingBottom:
             searchPanelSnap === 'collapsed'
               ? 'max(env(safe-area-inset-bottom),16px)'

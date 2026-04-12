@@ -4,7 +4,7 @@ import { NearbyIncidentsSection } from '@/components/map/NearbyIncidentsSection'
 import { SelectedIncidentPanel } from '@/components/map/SelectedIncidentPanel';
 import { MapRubricSheetContent } from '@/components/map/MapRubricSheetContent';
 
-type SearchPanelSnap = 'collapsed' | 'half' | 'full';
+type SearchPanelSnap = 'collapsed' | 'full';
 
 type IncidentForPanel = {
   id: number;
