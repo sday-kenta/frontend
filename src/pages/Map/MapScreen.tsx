@@ -2079,6 +2079,7 @@ export default function MapScreen() {
 
   const isOverlaySheetOpen = sheetMode === 'tabs' || sheetMode === 'marker' || sheetMode === 'rubric';
   const isSheetVisible = isOverlaySheetOpen || isSheetClosing;
+  const isRubricOverlayOpen = sheetMode === 'rubric';
 
   // Мягкое закрытие: даём анимации контейнера плавно
   // уехать вниз так же, как при нажатии на фон / крестик.
@@ -3265,14 +3266,16 @@ export default function MapScreen() {
         {/* сама «простыня» */}
         <div
           className={cn(
-            'relative w-full pointer-events-auto transform transition-transform duration-350 ease-[cubic-bezier(0.22,0.61,0.36,1)]',
+            'relative w-full pointer-events-auto transform transition-[transform,opacity] ease-[cubic-bezier(0.18,0.88,0.32,1)]',
             isSheetClosing && 'pointer-events-none',
+            isRubricOverlayOpen ? 'duration-[420ms]' : 'duration-350',
             isAuthFullscreen ? 'max-w-none' : 'max-w-xl'
           )}
           style={{
             transform: isOverlaySheetOpen && !isSheetClosing
-              ? `translateY(${sheetDragY}px)`
-              : 'translateY(calc(100% + 32px))',
+              ? `translateY(${sheetDragY}px) scale(1)`
+              : 'translateY(calc(100% + 32px)) scale(0.985)',
+            opacity: isOverlaySheetOpen && !isSheetClosing ? 1 : 0.88,
             transition: isSheetDragging ? 'none' : undefined,
             touchAction: 'pan-y',
           }}
@@ -3320,7 +3323,7 @@ export default function MapScreen() {
               />
             ) : sheetMode === 'rubric' && marker ? (
               <div
-                className="flex-1 overflow-y-auto overscroll-contain space-y-4 pb-2 text-white"
+                className="sheet-swap-enter flex-1 overflow-y-auto overscroll-contain space-y-4 pb-2 text-white"
                 data-sheet-scrollable="true"
                 onWheel={handleSheetContentWheel}
                 onTouchStart={handleSheetContentTouchStart}
