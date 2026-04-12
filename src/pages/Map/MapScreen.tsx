@@ -79,6 +79,9 @@ type IncidentPreview = {
 const DEBOUNCE_MS = 400;
 const REVERSE_GEOCODE_HOUSE_MAX_DISTANCE_METERS = 35;
 const COLLAPSED_SEARCH_PANEL_HEIGHT_PX = 160;
+const MAP_CONTROLS_BOTTOM_OFFSET_PX = 170;
+const MAP_CONTROLS_HEIGHT_PX = 164;
+const MAP_CONTROLS_TOP_SAFE_PX = 88;
 
 const MAP_TILES_URL =
   import.meta.env.VITE_MAP_TILES_URL ?? 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
@@ -664,6 +667,7 @@ export default function MapScreen() {
   const searchPanelStartSnapRef = useRef<SearchPanelSnap>('collapsed');
   const searchPanelDragEligibleRef = useRef(false);
   const searchPanelTouchTargetRef = useRef<HTMLElement | null>(null);
+  const searchPanelScrollableAtTopOnTouchStartRef = useRef(false);
   const searchPanelCanDragRef = useRef(false);
   const searchPanelSettleTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const searchPanelContentShowTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -2326,23 +2330,23 @@ export default function MapScreen() {
     }
 
     const touchTarget = event.target as HTMLElement | null;
-    const isFromHandle = Boolean(touchTarget?.closest('[data-search-drag-handle="true"]'));
     const scrollableTarget = touchTarget?.closest('[data-search-scrollable="true"]') as HTMLElement | null;
-    const isInteractiveTarget = Boolean(
-      touchTarget?.closest('input, textarea, button, a, select, label, [role="button"]')
+    const isTextEntryTarget = Boolean(
+      touchTarget?.closest(
+        'input, textarea, select, [contenteditable="true"], [contenteditable=""], [role="textbox"]'
+      )
     );
-    const panelTop = event.currentTarget.getBoundingClientRect().top;
-    const touchY = event.touches[0]?.clientY ?? panelTop;
-    const isFromTopZone = touchY - panelTop <= 88;
+    const touchY = event.touches[0]?.clientY ?? event.currentTarget.getBoundingClientRect().top;
     const isScrollableStartAtTop = Boolean(
       !reportFlowOpen &&
       scrollableTarget &&
       scrollableTarget.scrollTop <= 0
     );
-    const canStartDrag = isFromHandle || (!isInteractiveTarget && isFromTopZone) || isScrollableStartAtTop;
+    const canStartDrag = !isTextEntryTarget || isScrollableStartAtTop;
 
     searchPanelTouchTargetRef.current = touchTarget;
     searchPanelStartSnapRef.current = searchPanelSnap;
+    searchPanelScrollableAtTopOnTouchStartRef.current = isScrollableStartAtTop;
     searchPanelTouchStartYRef.current = canStartDrag ? touchY : null;
     searchPanelDragEligibleRef.current = canStartDrag;
     searchPanelCanDragRef.current = false;
@@ -2365,6 +2369,9 @@ export default function MapScreen() {
 
     if (startedFromScrollable) {
       if (reportFlowOpen) {
+        return;
+      }
+      if (!searchPanelScrollableAtTopOnTouchStartRef.current) {
         return;
       }
       const canDragScrollable = scrollableTarget != null && scrollableTarget.scrollTop <= 0 && delta > 0;
@@ -2407,6 +2414,7 @@ export default function MapScreen() {
       searchPanelTouchStartYRef.current = null;
       searchPanelDragEligibleRef.current = false;
       searchPanelTouchTargetRef.current = null;
+      searchPanelScrollableAtTopOnTouchStartRef.current = false;
       setSearchPanelDragHeight(null);
       setIsSearchPanelDragging(false);
       return;
@@ -2481,6 +2489,7 @@ export default function MapScreen() {
     searchPanelTouchStartYRef.current = null;
     searchPanelDragEligibleRef.current = false;
     searchPanelTouchTargetRef.current = null;
+    searchPanelScrollableAtTopOnTouchStartRef.current = false;
     searchPanelCanDragRef.current = false;
     setIsSearchPanelDragging(false);
 
@@ -2570,7 +2579,14 @@ export default function MapScreen() {
   const stableViewportHeight = Math.max(viewportHeight, COLLAPSED_SEARCH_PANEL_HEIGHT_PX);
   const collapsedSearchPanelHeight = getSearchPanelSnapHeightPx('collapsed');
   const currentSearchPanelHeight = searchPanelDragHeight ?? getSearchPanelSnapHeightPx(searchPanelSnap);
-  const mapControlsLiftPx = Math.max(0, currentSearchPanelHeight - collapsedSearchPanelHeight);
+  const maxMapControlsLiftPx = Math.max(
+    0,
+    stableViewportHeight - MAP_CONTROLS_BOTTOM_OFFSET_PX - MAP_CONTROLS_HEIGHT_PX - MAP_CONTROLS_TOP_SAFE_PX
+  );
+  const mapControlsLiftPx = Math.min(
+    maxMapControlsLiftPx,
+    Math.max(0, currentSearchPanelHeight - collapsedSearchPanelHeight)
+  );
   const tabsSheetHeightPx = Math.max(stableViewportHeight - 80, COLLAPSED_SEARCH_PANEL_HEIGHT_PX);
   const markerSheetMaxHeightPx = Math.max(Math.round(stableViewportHeight * 0.65), 320);
 
@@ -2611,6 +2627,7 @@ export default function MapScreen() {
     searchPanelTouchStartYRef.current = null;
     searchPanelTouchTargetRef.current = null;
     searchPanelDragEligibleRef.current = false;
+    searchPanelScrollableAtTopOnTouchStartRef.current = false;
     searchPanelCanDragRef.current = false;
     setSearchPanelDragHeight(null);
     setIsSearchPanelDragging(false);
@@ -2992,7 +3009,7 @@ export default function MapScreen() {
 
       {/* Справа: zoom + фильтр доносов + геолокация */}
       <MapControls
-        isHidden={searchPanelSnap === 'full'}
+        isHidden={false}
         mapControlsLiftPx={mapControlsLiftPx}
         isSearchPanelDragging={isSearchPanelDragging}
         onZoomIn={zoomIn}
