@@ -137,30 +137,31 @@ export const MapSearchExpandedContent = memo(function MapSearchExpandedContent({
     <div
       ref={expandedSearchContentRef}
       className={cn(
-        'mt-3 min-h-0 space-y-3 overflow-y-auto overscroll-contain pb-6 transition-all duration-250 ease-out',
+        'mt-3 flex min-h-0 flex-1 flex-col space-y-3 overflow-hidden pb-6 transition-all duration-250 ease-out',
         searchPanelSnap === 'collapsed' && !isSearchPanelDragging
           ? 'pointer-events-none translate-y-2 opacity-0'
           : 'translate-y-0 opacity-100'
       )}
-      data-search-scrollable="true"
     >
       {selectedMapIncident && !reportFlowOpen && (
-        <SelectedIncidentPanel
-          incident={selectedMapIncident}
-          incidentDetails={selectedMapIncidentDetails}
-          incidentDistanceLabel={selectedMapIncidentDistanceLabel}
-          getTagIcon={getTagIcon}
-          canPublishIncident={canPublishSelectedIncident}
-          publishPending={publishSelectedIncidentPending}
-          onPublishIncident={handlePublishSelectedIncident}
-          canDeleteIncident={canDeleteIncident(selectedMapIncident.userId)}
-          deletePending={deletingIncidentId === selectedMapIncident.id}
-          onDeleteIncident={() => handleDeleteIncident(selectedMapIncident)}
-        />
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain pr-1" data-search-scrollable="true">
+          <SelectedIncidentPanel
+            incident={selectedMapIncident}
+            incidentDetails={selectedMapIncidentDetails}
+            incidentDistanceLabel={selectedMapIncidentDistanceLabel}
+            getTagIcon={getTagIcon}
+            canPublishIncident={canPublishSelectedIncident}
+            publishPending={publishSelectedIncidentPending}
+            onPublishIncident={handlePublishSelectedIncident}
+            canDeleteIncident={canDeleteIncident(selectedMapIncident.userId)}
+            deletePending={deletingIncidentId === selectedMapIncident.id}
+            onDeleteIncident={() => handleDeleteIncident(selectedMapIncident)}
+          />
+        </div>
       )}
 
       {reportFlowOpen && marker && (
-        <div className="max-h-[calc(100vh-240px)] overflow-y-auto overscroll-contain pr-1" data-search-scrollable="true">
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain pr-1" data-search-scrollable="true">
           <MapRubricSheetContent
           marker={marker}
           selectedRubric={selectedRubric}
@@ -187,7 +188,7 @@ export const MapSearchExpandedContent = memo(function MapSearchExpandedContent({
       )}
 
       {!selectedMapIncident && !reportFlowOpen && (
-        <div>
+        <div className="min-h-0">
           <NearbyIncidentsSection
             incidents={filteredNearbyIncidents}
             isFullHeight={searchPanelSnap === 'full'}

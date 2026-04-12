@@ -1,12 +1,11 @@
 import { memo, type ReactNode, type TouchEventHandler } from 'react';
 
-type SearchPanelSnap = 'collapsed' | 'full';
+type SearchPanelMode = 'collapsed' | 'keyboard' | 'full';
 
 type MapSearchPanelProps = {
-  viewportHeightPx: number;
-  searchPanelDragHeight: number | null;
-  searchPanelSnap: SearchPanelSnap;
-  isInputFocused: boolean;
+  heightPx: number;
+  bottomOffsetPx: number;
+  mode: SearchPanelMode;
   isSearchPanelDragging: boolean;
   onTouchStart: TouchEventHandler<HTMLDivElement>;
   onTouchMove: TouchEventHandler<HTMLDivElement>;
@@ -15,41 +14,41 @@ type MapSearchPanelProps = {
 };
 
 export const MapSearchPanel = memo(function MapSearchPanel({
-  viewportHeightPx,
-  searchPanelDragHeight,
-  searchPanelSnap,
-  isInputFocused,
+  heightPx,
+  bottomOffsetPx,
+  mode,
   isSearchPanelDragging,
   onTouchStart,
   onTouchMove,
   onTouchEnd,
   children,
 }: MapSearchPanelProps) {
-  const stableViewportHeightPx = Math.max(viewportHeightPx, 160);
-  const focusedCompactHeightPx = Math.min(stableViewportHeightPx, 240);
+  const resolvedHeightPx = Math.max(96, Math.round(heightPx));
+  const resolvedBottomOffsetPx = Math.max(0, Math.round(bottomOffsetPx));
+  const panelPaddingBottom = mode === 'keyboard'
+    ? '8px'
+    : mode === 'collapsed'
+      ? 'max(env(safe-area-inset-bottom),16px)'
+      : 'max(env(safe-area-inset-bottom),10px)';
 
   return (
-    <div className="absolute inset-x-0 bottom-0 z-[900]">
+    <div
+      className="absolute inset-x-0 z-[900]"
+      style={{
+        bottom: `${resolvedBottomOffsetPx}px`,
+        transition: isSearchPanelDragging ? 'none' : 'bottom 220ms ease',
+      }}
+    >
       <div
-        className="w-full rounded-t-[40px] rounded-b-none border-t border-border/70 bg-background/95 px-4 pt-2 overflow-hidden"
+        className="flex min-h-0 w-full flex-col rounded-t-[40px] rounded-b-none border-t border-border/70 bg-background/95 px-4 pt-2 overflow-hidden"
         style={{
-          maxHeight:
-            searchPanelDragHeight !== null
-              ? `${searchPanelDragHeight}px`
-              : searchPanelSnap === 'full'
-                ? `${stableViewportHeightPx}px`
-                : isInputFocused
-                  ? `${focusedCompactHeightPx}px`
-                  : '160px',
-          paddingBottom:
-            searchPanelSnap === 'collapsed'
-              ? 'max(env(safe-area-inset-bottom),16px)'
-              : 'max(env(safe-area-inset-bottom),10px)',
+          height: `${resolvedHeightPx}px`,
+          paddingBottom: panelPaddingBottom,
           transition: isSearchPanelDragging
             ? 'none'
-            : 'max-height 380ms cubic-bezier(0.2, 0.9, 0.2, 1), padding-bottom 240ms ease',
+            : 'height 380ms cubic-bezier(0.2, 0.9, 0.2, 1), padding-bottom 240ms ease',
           touchAction: 'pan-y',
-          willChange: isSearchPanelDragging ? 'auto' : 'max-height',
+          willChange: isSearchPanelDragging ? 'auto' : 'height',
         }}
         onTouchStart={onTouchStart}
         onTouchMove={onTouchMove}
