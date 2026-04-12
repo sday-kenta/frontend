@@ -193,9 +193,6 @@ export const MapSearchExpandedContent = memo(function MapSearchExpandedContent({
             isFullHeight={searchPanelSnap === 'full'}
             autoFocusScroll={false}
             onSelectIncident={focusIncidentOnMap}
-            canDeleteIncident={canDeleteIncident}
-            deletingIncidentId={deletingIncidentId}
-            onDeleteIncident={handleDeleteIncident}
           />
         </div>
       )}

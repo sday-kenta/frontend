@@ -3054,9 +3054,6 @@ export default function MapScreen() {
                 getProfileIncidentCategoryTagClass={getProfileIncidentCategoryTagClass}
                 getProfileIncidentStatusTagClass={getProfileIncidentStatusTagClass}
                 getStatusIcon={getStatusIcon}
-                canDeleteIncident={canDeleteIncident}
-                deletingIncidentId={deletingIncidentId}
-                handleDeleteIncident={handleDeleteIncident}
                 incidentDetails={INCIDENT_DETAILS}
                 nearbyIncidentsById={nearbyIncidentsById}
                 onAuthenticated={handleAuthenticated}
