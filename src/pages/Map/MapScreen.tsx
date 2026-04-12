@@ -2394,13 +2394,6 @@ export default function MapScreen() {
 
     event.preventDefault();
 
-    const isActiveIncidentSwipeDownMode =
-      selectedMapIncidentId !== null && searchPanelStartSnapRef.current === 'full' && delta > 0;
-
-    if (isActiveIncidentSwipeDownMode) {
-      return;
-    }
-
     const minHeight = getSearchPanelSnapHeightPx('collapsed');
     const maxHeight = getSearchPanelSnapHeightPx('full');
     const baseHeight = getSearchPanelSnapHeightPx(searchPanelStartSnapRef.current);
@@ -2448,6 +2441,11 @@ export default function MapScreen() {
       reportFlowOpen &&
       searchPanelStartSnapRef.current === 'full' &&
       delta > threshold;
+    const isClosingExpandedSearchBySwipeDown =
+      selectedMapIncidentId === null &&
+      !reportFlowOpen &&
+      searchPanelStartSnapRef.current !== 'collapsed' &&
+      delta > threshold;
 
     if (isClosingOpenedIncidentBySwipeDown) {
       setSelectedMapIncidentId(null);
@@ -2464,9 +2462,23 @@ export default function MapScreen() {
       targetSnap = 'collapsed';
     }
 
-    if (!isClosingOpenedIncidentBySwipeDown && !isClosingReportFlowBySwipeDown && Math.abs(delta) < threshold) {
+    if (isClosingExpandedSearchBySwipeDown) {
+      setShowSuggestions(false);
+      targetSnap = 'collapsed';
+    }
+
+    if (
+      !isClosingOpenedIncidentBySwipeDown &&
+      !isClosingReportFlowBySwipeDown &&
+      !isClosingExpandedSearchBySwipeDown &&
+      Math.abs(delta) < threshold
+    ) {
       targetSnap = searchPanelStartSnapRef.current;
-    } else if (!isClosingOpenedIncidentBySwipeDown && !isClosingReportFlowBySwipeDown) {
+    } else if (
+      !isClosingOpenedIncidentBySwipeDown &&
+      !isClosingReportFlowBySwipeDown &&
+      !isClosingExpandedSearchBySwipeDown
+    ) {
       targetSnap = getNearestSearchPanelSnap(clampedHeight);
     }
 
@@ -2480,6 +2492,10 @@ export default function MapScreen() {
     searchPanelTouchTargetRef.current = null;
     searchPanelCanDragRef.current = false;
     setIsSearchPanelDragging(false);
+
+    if (targetSnap === 'collapsed') {
+      inputRef.current?.blur();
+    }
 
     if (searchPanelSettleTimeoutRef.current) {
       clearTimeout(searchPanelSettleTimeoutRef.current);
@@ -2588,6 +2604,61 @@ export default function MapScreen() {
     setShowSuggestions(false);
     inputRef.current?.focus();
   }, []);
+
+  const collapseSearchPanel = useCallback(() => {
+    if (searchPanelSettleTimeoutRef.current) {
+      clearTimeout(searchPanelSettleTimeoutRef.current);
+      searchPanelSettleTimeoutRef.current = null;
+    }
+
+    if (searchPanelDragRafRef.current !== null) {
+      cancelAnimationFrame(searchPanelDragRafRef.current);
+      searchPanelDragRafRef.current = null;
+    }
+
+    searchPanelPendingHeightRef.current = null;
+    searchPanelTouchStartYRef.current = null;
+    searchPanelTouchTargetRef.current = null;
+    searchPanelDragEligibleRef.current = false;
+    searchPanelCanDragRef.current = false;
+    setSearchPanelDragHeight(null);
+    setIsSearchPanelDragging(false);
+    setShowSuggestions(false);
+
+    if (selectedMapIncidentId !== null) {
+      setSelectedMapIncidentId(null);
+    }
+
+    if (reportFlowOpen) {
+      setSelectedRubric(null);
+      setRubricStep('select');
+      setSheetMode(null);
+      setMarker(null);
+    }
+
+    setSearchPanelSnap('collapsed');
+    inputRef.current?.blur();
+  }, [reportFlowOpen, selectedMapIncidentId]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return undefined;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      if (searchPanelSnap === 'collapsed' && searchPanelDragHeight === null && selectedMapIncidentId === null && !reportFlowOpen) {
+        return;
+      }
+
+      collapseSearchPanel();
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [collapseSearchPanel, reportFlowOpen, searchPanelDragHeight, searchPanelSnap, selectedMapIncidentId]);
 
   const handleTogglePushNotifications = useCallback(() => {
     void (async () => {
@@ -2955,9 +3026,11 @@ export default function MapScreen() {
             inputRef={inputRef}
             query={query}
             loading={loading}
+            isExpanded={searchPanelSnap !== 'collapsed' || searchPanelDragHeight !== null}
             onQueryChange={setQuery}
             onFocus={handleSearchInputFocus}
             onClear={handleSearchInputClear}
+            onCollapse={collapseSearchPanel}
           />
 
           {!selectedMapIncident && !reportFlowOpen && (
