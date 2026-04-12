@@ -48,9 +48,6 @@ type MapTabsSheetContentProps = {
   getProfileIncidentCategoryTagClass: (category: string) => string;
   getProfileIncidentStatusTagClass: (status: string) => string;
   getStatusIcon: (status: string) => string;
-  canDeleteIncident: (incidentUserId?: number) => boolean;
-  deletingIncidentId: number | null;
-  handleDeleteIncident: (incident: Pick<IncidentForMapAction, 'id' | 'title' | 'userId'>) => void;
   incidentDetails: IncidentDetailsMap;
   nearbyIncidentsById: Map<number, { distanceLabel: string }>;
   onAuthenticated: (payload: UserProfile | null) => void;
@@ -111,9 +108,6 @@ export const MapTabsSheetContent = memo(function MapTabsSheetContent({
   getProfileIncidentCategoryTagClass,
   getProfileIncidentStatusTagClass,
   getStatusIcon,
-  canDeleteIncident,
-  deletingIncidentId,
-  handleDeleteIncident,
   incidentDetails,
   nearbyIncidentsById,
   onAuthenticated,
@@ -177,9 +171,6 @@ export const MapTabsSheetContent = memo(function MapTabsSheetContent({
           getProfileIncidentCategoryTagClass={getProfileIncidentCategoryTagClass}
           getProfileIncidentStatusTagClass={getProfileIncidentStatusTagClass}
           getStatusIcon={getStatusIcon}
-          canDeleteIncident={canDeleteIncident}
-          deletingIncidentId={deletingIncidentId}
-          handleDeleteIncident={handleDeleteIncident}
           incidentDetails={incidentDetails}
           nearbyIncidentsById={nearbyIncidentsById}
         />
