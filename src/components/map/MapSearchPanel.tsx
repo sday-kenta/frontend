@@ -3,6 +3,7 @@ import { memo, type ReactNode, type TouchEventHandler } from 'react';
 type SearchPanelSnap = 'collapsed' | 'half' | 'full';
 
 type MapSearchPanelProps = {
+  viewportHeightPx: number;
   searchPanelDragHeight: number | null;
   searchPanelSnap: SearchPanelSnap;
   isSearchPanelDragging: boolean;
@@ -13,6 +14,7 @@ type MapSearchPanelProps = {
 };
 
 export const MapSearchPanel = memo(function MapSearchPanel({
+  viewportHeightPx,
   searchPanelDragHeight,
   searchPanelSnap,
   isSearchPanelDragging,
@@ -21,6 +23,8 @@ export const MapSearchPanel = memo(function MapSearchPanel({
   onTouchEnd,
   children,
 }: MapSearchPanelProps) {
+  const stableViewportHeightPx = Math.max(viewportHeightPx, 160);
+
   return (
     <div className="absolute inset-x-0 bottom-0 z-[900]">
       <div
@@ -30,9 +34,9 @@ export const MapSearchPanel = memo(function MapSearchPanel({
             searchPanelDragHeight !== null
               ? `${searchPanelDragHeight}px`
               : searchPanelSnap === 'full'
-                ? '100vh'
+                ? `${stableViewportHeightPx}px`
                 : searchPanelSnap === 'half'
-                  ? '44vh'
+                  ? `${Math.round(stableViewportHeightPx * 0.44)}px`
                   : '160px',
           paddingBottom:
             searchPanelSnap === 'collapsed'
